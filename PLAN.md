@@ -148,6 +148,26 @@ Hexagonal Architecture Key Principles:
 ### 1.1 Domain Models (messages/, options/)
 Priority: Critical
 Define core domain models that are free from infrastructure concerns:
+
+**Design Decision: When to Use `map[string]any` vs Typed Structs**
+
+This SDK strikes a balance between type safety and flexibility:
+
+**Use Typed Structs When:**
+- The structure is well-defined and stable (e.g., UsageStats, HookInput types)
+- The SDK needs to access specific fields (e.g., ResultMessage fields)
+- Type safety provides clear benefits (e.g., discriminated unions)
+
+**Use `map[string]any` When:**
+- Data varies by context and cannot be predetermined (e.g., tool inputs)
+- The SDK only passes data through without inspecting it (e.g., raw stream events)
+- Flexibility is more important than compile-time validation (e.g., SystemMessage.Data at message level)
+
+**Examples in this SDK:**
+- ✅ Typed: `HookInput` (9 different types), `ResultMessage` (2 variants), `UsageStats`
+- ❌ Flexible: `ToolUseBlock.Input` (varies by tool), `StreamEvent.Event` (raw API events)
+- 🔄 Hybrid: `SystemMessage.Data` is `map[string]any` but can be parsed into typed `SystemMessageData` variants
+
 messages/messages.go - Message Types:
 ```go
 // Message types
@@ -165,23 +185,81 @@ type AssistantMessage struct {
 }
 type SystemMessage struct {
     Subtype string
-    Data    map[string]any
+    Data    map[string]any // Intentionally flexible - varies by subtype (see SystemMessageData below)
 }
-type ResultMessage struct {
-    Subtype       string
-    DurationMs    int
-    DurationAPIMs int
-    IsError       bool
-    NumTurns      int
-    SessionID     string
-    TotalCostUSD  *float64
-    Usage         map[string]any
-    Result        *string
+// SystemMessageData is a discriminated union for SystemMessage.Data
+// Parse this from map[string]any based on Subtype field
+type SystemMessageData interface {
+    systemMessageData()
 }
+// SystemMessageInit is sent at the start of a session
+type SystemMessageInit struct {
+    Agents         []string `json:"agents,omitempty"`
+    APIKeySource   string   `json:"apiKeySource"`
+    Cwd            string   `json:"cwd"`
+    Tools          []string `json:"tools"`
+    MCPServers     []MCPServerStatus `json:"mcp_servers"`
+    Model          string   `json:"model"`
+    PermissionMode string   `json:"permissionMode"`
+    SlashCommands  []string `json:"slash_commands"`
+    OutputStyle    string   `json:"output_style"`
+}
+func (SystemMessageInit) systemMessageData() {}
+// SystemMessageCompactBoundary marks a conversation compaction point
+type SystemMessageCompactBoundary struct {
+    CompactMetadata struct {
+        Trigger   string `json:"trigger"` // "manual" | "auto"
+        PreTokens int    `json:"pre_tokens"`
+    } `json:"compact_metadata"`
+}
+func (SystemMessageCompactBoundary) systemMessageData() {}
+// MCPServerStatus represents the status of an MCP server
+type MCPServerStatus struct {
+    Name   string  `json:"name"`
+    Status string  `json:"status"` // "connected" | "failed" | "needs-auth" | "pending"
+    ServerInfo *struct {
+        Name    string `json:"name"`
+        Version string `json:"version"`
+    } `json:"serverInfo,omitempty"`
+}
+// ResultMessage is a discriminated union based on Subtype
+// Common fields are embedded in both variants
+type ResultMessage interface {
+    resultMessage()
+}
+// ResultMessageSuccess indicates a successful query completion
+type ResultMessageSuccess struct {
+    Subtype           string  `json:"subtype"` // "success"
+    DurationMs        int     `json:"duration_ms"`
+    DurationAPIMs     int     `json:"duration_api_ms"`
+    IsError           bool    `json:"is_error"`
+    NumTurns          int     `json:"num_turns"`
+    SessionID         string  `json:"session_id"`
+    Result            string  `json:"result"`
+    TotalCostUSD      float64 `json:"total_cost_usd"`
+    Usage             UsageStats `json:"usage"`
+    ModelUsage        map[string]ModelUsage `json:"modelUsage"` // Model name -> usage stats
+    PermissionDenials []PermissionDenial `json:"permission_denials"`
+}
+func (ResultMessageSuccess) resultMessage() {}
+// ResultMessageError indicates an error during execution
+type ResultMessageError struct {
+    Subtype           string  `json:"subtype"` // "error_max_turns" | "error_during_execution"
+    DurationMs        int     `json:"duration_ms"`
+    DurationAPIMs     int     `json:"duration_api_ms"`
+    IsError           bool    `json:"is_error"`
+    NumTurns          int     `json:"num_turns"`
+    SessionID         string  `json:"session_id"`
+    TotalCostUSD      float64 `json:"total_cost_usd"`
+    Usage             UsageStats `json:"usage"`
+    ModelUsage        map[string]ModelUsage `json:"modelUsage"`
+    PermissionDenials []PermissionDenial `json:"permission_denials"`
+}
+func (ResultMessageError) resultMessage() {}
 type StreamEvent struct {
     UUID            string
     SessionID       string
-    Event           map[string]any
+    Event           map[string]any // Intentionally flexible - raw Anthropic API stream event
     ParentToolUseID *string
 }
 // Content blocks
@@ -198,7 +276,7 @@ type ThinkingBlock struct {
 type ToolUseBlock struct {
     ID    string
     Name  string
-    Input map[string]any
+    Input map[string]any // Intentionally flexible - tool inputs vary by tool
 }
 // ToolResultContent can be string or a list of content blocks as maps
 type ToolResultContent interface {
@@ -221,6 +299,29 @@ type StringContent string
 type BlockListContent []ContentBlock
 func (StringContent) messageContent()    {}
 func (BlockListContent) messageContent() {}
+// UsageStats represents API usage statistics
+type UsageStats struct {
+    InputTokens            int `json:"input_tokens"`
+    OutputTokens           int `json:"output_tokens"`
+    CacheReadInputTokens   int `json:"cache_read_input_tokens"`
+    CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+}
+// ModelUsage represents usage statistics for a specific model
+type ModelUsage struct {
+    InputTokens              int     `json:"inputTokens"`
+    OutputTokens             int     `json:"outputTokens"`
+    CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+    CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+    WebSearchRequests        int     `json:"webSearchRequests"`
+    CostUSD                  float64 `json:"costUSD"`
+    ContextWindow            int     `json:"contextWindow"`
+}
+// PermissionDenial represents a tool use that was denied by permissions
+type PermissionDenial struct {
+    ToolName   string         `json:"tool_name"`
+    ToolUseID  string         `json:"tool_use_id"`
+    ToolInput  map[string]any `json:"tool_input"` // Intentionally flexible - varies by tool
+}
 ```
 options/domain.go - Pure Domain Configuration:
 ```go
@@ -741,11 +842,94 @@ const (
     HookEventSubagentStop     HookEvent = "SubagentStop"
     HookEventPreCompact       HookEvent = "PreCompact"
 )
+// BaseHookInput contains fields common to all hook inputs
+type BaseHookInput struct {
+    SessionID      string  `json:"session_id"`
+    TranscriptPath string  `json:"transcript_path"`
+    Cwd            string  `json:"cwd"`
+    PermissionMode *string `json:"permission_mode,omitempty"`
+}
+// HookInput is a discriminated union of all hook input types
+// The specific type can be determined by the HookEventName field
+type HookInput interface {
+    hookInput()
+}
+// PreToolUseHookInput is the input for PreToolUse hooks
+type PreToolUseHookInput struct {
+    BaseHookInput
+    HookEventName string `json:"hook_event_name"` // "PreToolUse"
+    ToolName      string `json:"tool_name"`
+    ToolInput     any    `json:"tool_input"` // Intentionally flexible - varies by tool
+}
+func (PreToolUseHookInput) hookInput() {}
+// PostToolUseHookInput is the input for PostToolUse hooks
+type PostToolUseHookInput struct {
+    BaseHookInput
+    HookEventName string `json:"hook_event_name"` // "PostToolUse"
+    ToolName      string `json:"tool_name"`
+    ToolInput     any    `json:"tool_input"`     // Intentionally flexible - varies by tool
+    ToolResponse  any    `json:"tool_response"`  // Intentionally flexible - varies by tool
+}
+func (PostToolUseHookInput) hookInput() {}
+// NotificationHookInput is the input for Notification hooks
+type NotificationHookInput struct {
+    BaseHookInput
+    HookEventName string  `json:"hook_event_name"` // "Notification"
+    Message       string  `json:"message"`
+    Title         *string `json:"title,omitempty"`
+}
+func (NotificationHookInput) hookInput() {}
+// UserPromptSubmitHookInput is the input for UserPromptSubmit hooks
+type UserPromptSubmitHookInput struct {
+    BaseHookInput
+    HookEventName string `json:"hook_event_name"` // "UserPromptSubmit"
+    Prompt        string `json:"prompt"`
+}
+func (UserPromptSubmitHookInput) hookInput() {}
+// SessionStartHookInput is the input for SessionStart hooks
+type SessionStartHookInput struct {
+    BaseHookInput
+    HookEventName string `json:"hook_event_name"` // "SessionStart"
+    Source        string `json:"source"` // "startup" | "resume" | "clear" | "compact"
+}
+func (SessionStartHookInput) hookInput() {}
+// SessionEndHookInput is the input for SessionEnd hooks
+type SessionEndHookInput struct {
+    BaseHookInput
+    HookEventName string `json:"hook_event_name"` // "SessionEnd"
+    Reason        string `json:"reason"` // Exit reason
+}
+func (SessionEndHookInput) hookInput() {}
+// StopHookInput is the input for Stop hooks
+type StopHookInput struct {
+    BaseHookInput
+    HookEventName  string `json:"hook_event_name"` // "Stop"
+    StopHookActive bool   `json:"stop_hook_active"`
+}
+func (StopHookInput) hookInput() {}
+// SubagentStopHookInput is the input for SubagentStop hooks
+type SubagentStopHookInput struct {
+    BaseHookInput
+    HookEventName  string `json:"hook_event_name"` // "SubagentStop"
+    StopHookActive bool   `json:"stop_hook_active"`
+}
+func (SubagentStopHookInput) hookInput() {}
+// PreCompactHookInput is the input for PreCompact hooks
+type PreCompactHookInput struct {
+    BaseHookInput
+    HookEventName       string  `json:"hook_event_name"` // "PreCompact"
+    Trigger             string  `json:"trigger"` // "manual" | "auto"
+    CustomInstructions  *string `json:"custom_instructions,omitempty"`
+}
+func (PreCompactHookInput) hookInput() {}
 // HookContext provides context for hook execution
 type HookContext struct {
     // Future: signal support for cancellation
 }
 // HookCallback is a function that handles hook events
+// Note: The input parameter is intentionally map[string]any at the callback level
+// to allow the protocol adapter to pass raw JSON. Domain services should parse
+// this into the appropriate HookInput type based on hook_event_name field.
 type HookCallback func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error)
 // HookMatcher defines when a hook should execute
 type HookMatcher struct {
@@ -829,7 +1013,7 @@ type PermissionResult interface {
 }
 // PermissionResultAllow indicates tool use is allowed
 type PermissionResultAllow struct {
-    UpdatedInput       map[string]any
+    UpdatedInput       map[string]any      // Intentionally flexible - tool inputs vary by tool
     UpdatedPermissions []PermissionUpdate
 }
 func (PermissionResultAllow) permissionResult() {}
@@ -870,6 +1054,7 @@ type ToolPermissionContext struct {
     Suggestions []PermissionUpdate
 }
 // CanUseToolFunc is a callback for permission checks
+// input is intentionally map[string]any as tool inputs vary by tool
 type CanUseToolFunc func(ctx context.Context, toolName string, input map[string]any, permCtx ToolPermissionContext) (PermissionResult, error)
 // PermissionsConfig holds permission service configuration
 type PermissionsConfig struct {
