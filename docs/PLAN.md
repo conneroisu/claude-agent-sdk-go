@@ -14,6 +14,57 @@ This plan outlines the implementation of a comprehensive Go SDK for Claude Agent
 4. **Error Handling**: Explicit error returns following Go best practices
 5. **Context Support**: Full context.Context integration for cancellation and timeouts
 6. **Zero Dependencies**: Minimize external dependencies where possible
+7. **Hexagonal Architecture**: Strict separation between domain logic and infrastructure
+
+### Hexagonal Architecture (Ports and Adapters)
+
+This SDK follows **hexagonal architecture** principles, also known as **ports and adapters pattern**. This architectural style isolates the core business logic (domain) from external concerns (infrastructure) by defining clear boundaries and dependency rules.
+
+#### Key Concepts
+
+```
+         ┌─────────────────────────────────────────────┐
+         │                                             │
+         │      External World (Infrastructure)        │
+         │                                             │
+         │   ┌──────────┐              ┌──────────┐   │
+         │   │   HTTP   │              │   CLI    │   │
+         │   │ Handlers │              │ Adapter  │   │
+         │   └────┬─────┘              └─────┬────┘   │
+         │        │                          │        │
+         │        │   ┌───────────────┐      │        │
+         │        └──►│     Ports     │◄─────┘        │
+         │            │  (Interfaces) │               │
+         │            └───────┬───────┘               │
+         │                    │                       │
+         │       ┌────────────▼────────────┐          │
+         │       │                         │          │
+         │       │    Core Domain          │          │
+         │       │  (Business Logic)       │          │
+         │       │                         │          │
+         │       │  - querying/            │          │
+         │       │  - streaming/           │          │
+         │       │  - hooking/             │          │
+         │       │  - permissions/         │          │
+         │       │                         │          │
+         │       └─────────────────────────┘          │
+         │                                             │
+         └─────────────────────────────────────────────┘
+```
+
+**Four Key Principles:**
+
+1. **Domain Independence**: Core domain never imports adapters or infrastructure code
+2. **Ports Define Contracts**: Interfaces defined by domain needs, not external systems
+3. **Adapters Implement Ports**: Infrastructure code implements domain-defined interfaces
+4. **Dependency Direction**: Always flows inward (adapters → domain), never outward
+
+**Why Hexagonal Architecture?**
+
+- **Testability**: Test domain logic without databases, HTTP servers, or external services
+- **Flexibility**: Swap implementations (e.g., different storage, transport mechanisms) without changing business logic
+- **Clarity**: Clear separation between "what" (domain) and "how" (infrastructure)
+- **Maintainability**: Infrastructure changes don't affect domain; domain changes don't ripple to all adapters
 
 ### Package Structure (Hexagonal Architecture)
 
@@ -21,52 +72,80 @@ Following hexagonal architecture principles (ports and adapters), the SDK separa
 
 ```
 claude-agent-sdk-go/
-├── cmd/
-│   └── examples/           # Example binaries
+├── cmd/                        # ═══ BINARIES (Entry Points) ═══
+│   └── examples/               # Example applications
 │       ├── quickstart/
 │       ├── streaming/
 │       ├── hooks/
 │       └── mcp/
-├── pkg/
-│   └── claude/
-│       # Core Domain (business logic - does not depend on adapters)
-│       ├── querying/       # Query execution domain service
-│       │   └── service.go
-│       ├── streaming/      # Streaming conversation domain service
-│       │   └── service.go
-│       ├── hooking/        # Hook execution domain logic
-│       │   └── service.go
-│       ├── permissions/    # Permission handling domain logic
-│       │   └── service.go
-│       │
-│       # Domain Models (shared types used by domain)
-│       ├── messages/       # Message type definitions
-│       │   └── messages.go
-│       ├── options/        # Configuration models
-│       │   └── options.go
-│       │
-│       # Input/Output Ports (interfaces defined by domain)
-│       ├── ports/
-│       │   ├── transport.go    # Transport port (interface)
-│       │   └── protocol.go     # Protocol port (interface)
-│       │
-│       # Adapters (implementations of ports - depend on domain)
-│       ├── adapters/
-│       │   ├── cli/            # CLI subprocess transport adapter
-│       │   │   └── transport.go
-│       │   ├── jsonrpc/        # Control protocol adapter
-│       │   │   └── protocol.go
-│       │   └── mcp/            # MCP server adapter
-│       │       └── server.go
-│       │
-│       # Public API (facade over domain services) (Used by application developers)
-│       ├── client.go       # Client (interactive conversations)
-│       ├── query.go        # Query() function (one-shot)
-│       ├── errors.go       # Error types
-│       │
-│       └── internal/       # Internal unexported utilities
-│           └── parse/
-│               └── parser.go
+│
+├── pkg/claude/
+│   # ═══════════════════════════════════════════════════════
+│   # LAYER 1: CORE DOMAIN (Business Logic)
+│   # - Never imports from adapters/
+│   # - Only imports from ports/ (interfaces it defines)
+│   # - Pure business logic, no infrastructure concerns
+│   # ═══════════════════════════════════════════════════════
+│   ├── querying/               # Domain service: "Execute one-shot queries"
+│   │   └── service.go
+│   ├── streaming/              # Domain service: "Manage streaming conversations"
+│   │   └── service.go
+│   ├── hooking/                # Domain service: "Execute lifecycle hooks"
+│   │   └── service.go
+│   ├── permissions/            # Domain service: "Check tool permissions"
+│   │   └── service.go
+│   │
+│   # ═══════════════════════════════════════════════════════
+│   # LAYER 1B: DOMAIN MODELS
+│   # - Shared types used across domain
+│   # - No infrastructure dependencies
+│   # ═══════════════════════════════════════════════════════
+│   ├── messages/               # Domain models: Message types
+│   │   └── messages.go
+│   ├── options/                # Domain models: Configuration
+│   │   ├── domain.go           # Pure domain options (PermissionMode, etc.)
+│   │   ├── transport.go        # Transport configuration
+│   │   └── mcp.go              # MCP server configuration
+│   │
+│   # ═══════════════════════════════════════════════════════
+│   # LAYER 2: PORTS (Domain-Defined Interfaces)
+│   # - Interfaces defined BY domain needs
+│   # - NOT defined by external systems
+│   # - This is the "contract" layer
+│   # ═══════════════════════════════════════════════════════
+│   ├── ports/
+│   │   ├── transport.go        # What domain needs from transport
+│   │   ├── protocol.go         # What domain needs from control protocol
+│   │   ├── parser.go           # What domain needs from message parsing
+│   │   └── mcp.go              # What domain needs from MCP servers
+│   │
+│   # ═══════════════════════════════════════════════════════
+│   # LAYER 3: ADAPTERS (Infrastructure Implementations)
+│   # - Implements port interfaces
+│   # - Handles external concerns (CLI, JSON-RPC, parsing)
+│   # - Can import from domain and ports
+│   # - Domain NEVER imports from here
+│   # ═══════════════════════════════════════════════════════
+│   ├── adapters/
+│   │   ├── cli/                # Adapter: CLI subprocess transport
+│   │   │   └── transport.go    # Implements ports.Transport
+│   │   ├── jsonrpc/            # Adapter: Control protocol handler
+│   │   │   └── protocol.go     # Implements ports.ProtocolHandler
+│   │   ├── parse/              # Adapter: Message parser
+│   │   │   └── parser.go       # Implements ports.MessageParser
+│   │   └── mcp/                # Adapter: MCP server implementation
+│   │       └── server.go       # Implements ports.MCPServer
+│   │
+│   # ═══════════════════════════════════════════════════════
+│   # LAYER 4: PUBLIC API (Facade)
+│   # - Wires domain services with adapters
+│   # - Entry point for SDK users
+│   # - Hides complexity of ports/adapters from users
+│   # ═══════════════════════════════════════════════════════
+│   ├── client.go               # Client for interactive conversations
+│   ├── query.go                # Query() for one-shot requests
+│   └── errors.go               # Public error types
+│
 ├── go.mod
 ├── go.sum
 ├── README.md
@@ -172,12 +251,13 @@ func (StringContent) messageContent()    {}
 func (BlockListContent) messageContent() {}
 ```
 
-**options/options.go - Configuration Models:**
+**options/domain.go - Pure Domain Configuration:**
 
 ```go
 package options
 
 // PermissionMode defines how permissions are handled
+// This is a DOMAIN concept - it affects business logic
 type PermissionMode string
 
 const (
@@ -196,49 +276,8 @@ const (
     SettingSourceLocal   SettingSource = "local"
 )
 
-// AgentOptions configures the Claude agent
-// Note: This is infrastructure configuration, NOT domain logic
-type AgentOptions struct {
-    // Basic settings
-    AllowedTools             []string
-    DisallowedTools          []string
-    Model                    *string
-    MaxTurns                 *int
-    Cwd                      *string
-    Settings                 *string
-    AddDirs                  []string
-    Env                      map[string]string
-    User                     *string
-
-    // System prompt configuration
-    SystemPrompt             SystemPromptConfig
-
-    // MCP server configuration (just the config, not instances)
-    MCPServers               map[string]MCPServerConfig
-
-    // Permission settings
-    PermissionMode           *PermissionMode
-    PermissionPromptToolName *string
-
-    // Session management
-    ContinueConversation     bool
-    Resume                   *string
-    ForkSession              bool
-    IncludePartialMessages   bool
-
-    // Agent definitions (configuration only)
-    Agents                   map[string]AgentDefinition
-
-    // Setting sources
-    SettingSources           []SettingSource
-
-    // Transport settings
-    MaxBufferSize            *int
-    StderrCallback           func(string)
-    ExtraArgs                map[string]*string
-}
-
 // AgentDefinition defines a subagent configuration
+// This is domain configuration - defines behavior of agents
 type AgentDefinition struct {
     Name          string
     Description   string
@@ -262,12 +301,63 @@ type PresetSystemPrompt struct {
 
 func (StringSystemPrompt) systemPromptConfig()  {}
 func (PresetSystemPrompt) systemPromptConfig() {}
+```
+
+**options/transport.go - Transport/Infrastructure Configuration:**
+
+```go
+package options
+
+// AgentOptions configures the Claude agent
+// This combines domain and infrastructure configuration
+type AgentOptions struct {
+    // Domain settings (affect business logic)
+    AllowedTools             []string
+    DisallowedTools          []string
+    Model                    *string
+    MaxTurns                 *int
+    SystemPrompt             SystemPromptConfig
+    PermissionMode           *PermissionMode
+    PermissionPromptToolName *string
+    Agents                   map[string]AgentDefinition
+
+    // Session management (domain concern)
+    ContinueConversation     bool
+    Resume                   *string
+    ForkSession              bool
+    IncludePartialMessages   bool
+
+    // Infrastructure settings (how to connect/execute)
+    Cwd                      *string
+    Settings                 *string
+    AddDirs                  []string
+    Env                      map[string]string
+    User                     *string
+    SettingSources           []SettingSource
+    MaxBufferSize            *int
+    StderrCallback           func(string)
+    ExtraArgs                map[string]*string
+
+    // MCP server configuration (infrastructure)
+    MCPServers               map[string]MCPServerConfig
+
+    // Internal flags (set by domain services, not by users)
+    _isStreaming             bool  // Internal: true for Client, false for Query
+}
+```
+
+**options/mcp.go - MCP Server Configuration:**
+
+```go
+package options
 
 // MCPServerConfig is configuration for MCP servers (not runtime instances)
+// These are infrastructure configurations for connecting to MCP servers
 type MCPServerConfig interface {
     mcpServerConfig()
 }
 
+// StdioServerConfig configures an MCP server using stdio transport
 type StdioServerConfig struct {
     Type    string // "stdio"
     Command string
@@ -277,6 +367,7 @@ type StdioServerConfig struct {
 
 func (StdioServerConfig) mcpServerConfig() {}
 
+// SSEServerConfig configures an MCP server using Server-Sent Events
 type SSEServerConfig struct {
     Type    string // "sse"
     URL     string
@@ -285,6 +376,7 @@ type SSEServerConfig struct {
 
 func (SSEServerConfig) mcpServerConfig() {}
 
+// HTTPServerConfig configures an MCP server using HTTP transport
 type HTTPServerConfig struct {
     Type    string // "http"
     URL     string
@@ -295,6 +387,7 @@ func (HTTPServerConfig) mcpServerConfig() {}
 
 // SDKServerConfig is a marker for SDK-managed MCP servers
 // The actual server instance is managed separately by the MCP adapter
+// This ONLY contains configuration, NOT the server instance itself
 type SDKServerConfig struct {
     Type string // "sdk"
     Name string
@@ -346,11 +439,63 @@ type ProtocolHandler interface {
 
     // HandleControlRequest routes inbound control requests by subtype
     // Subtypes: can_use_tool, hook_callback, mcp_message
-    HandleControlRequest(ctx context.Context, req map[string]any) (map[string]any, error)
+    // Dependencies are passed as arguments to avoid circular refs
+    HandleControlRequest(ctx context.Context, req map[string]any, perms *permissions.Service, hooks map[string]hooking.HookCallback, mcpServers map[string]MCPServer) (map[string]any, error)
 
     // StartMessageRouter continuously reads transport and partitions messages
     // Routes control_response, control_request, control_cancel_request separately from SDK messages
-    StartMessageRouter(ctx context.Context, msgCh chan<- map[string]any, errCh chan<- error) error
+    // Dependencies (perms, hooks, mcpServers) are passed by domain service for handling inbound control requests
+    StartMessageRouter(ctx context.Context, msgCh chan<- map[string]any, errCh chan<- error,
+        perms *permissions.Service, hooks map[string]hooking.HookCallback, mcpServers map[string]MCPServer) error
+}
+```
+
+**ports/parser.go - Message Parser Port:**
+
+```go
+package ports
+
+import (
+    "github.com/conneroisu/claude/pkg/claude/messages"
+)
+
+// MessageParser defines what the domain needs from message parsing
+// This is a port because the domain needs to convert raw transport messages
+// into typed domain messages, but doesn't care HOW that conversion happens
+type MessageParser interface {
+    Parse(raw map[string]any) (messages.Message, error)
+}
+```
+
+**ports/mcp.go - MCP Server Port:**
+
+```go
+package ports
+
+import "context"
+
+// MCPServer defines what the domain needs from MCP server implementations
+// This is a port because the domain needs to interact with MCP servers
+// but doesn't care about their internal implementation
+type MCPServer interface {
+    Name() string
+    Initialize(ctx context.Context, params any) (any, error)
+    ListTools(ctx context.Context) ([]MCPTool, error)
+    CallTool(ctx context.Context, name string, args map[string]any) (MCPToolResult, error)
+    HandleNotification(ctx context.Context, method string, params any) error
+}
+
+// MCPTool represents an MCP tool definition
+type MCPTool struct {
+    Name        string         `json:"name"`
+    Description string         `json:"description"`
+    InputSchema map[string]any `json:"inputSchema"`
+}
+
+// MCPToolResult represents the result of calling an MCP tool
+type MCPToolResult struct {
+    Content []map[string]any `json:"content"`
+    IsError bool             `json:"isError,omitempty"`
 }
 ```
 
@@ -410,179 +555,141 @@ func (e *JSONDecodeError) Unwrap() error {
 
 The querying service encapsulates the domain logic for executing one-shot queries.
 
+**Key Design Decision**: Control protocol state management (pending requests, callback IDs, request counters) is handled by the `jsonrpc` adapter, NOT by domain services. The domain only uses the port interface.
+
 ```go
 package querying
 
 import (
     "context"
-    "crypto/rand"
-    "encoding/hex"
     "encoding/json"
     "fmt"
-    "sync"
-    "time"
 
     "github.com/conneroisu/claude/pkg/claude/ports"
     "github.com/conneroisu/claude/pkg/claude/messages"
     "github.com/conneroisu/claude/pkg/claude/options"
     "github.com/conneroisu/claude/pkg/claude/hooking"
+    "github.com/conneroisu/claude/pkg/claude/permissions"
 )
 
-// controlResult holds the result of a control request
-type controlResult struct {
-    data map[string]any
-    err  error
-}
-
 // Service handles query execution
+// This is a DOMAIN service - it contains only business logic,
+// no infrastructure concerns like protocol state management
 type Service struct {
-    transport ports.Transport
-    protocol  ports.ProtocolHandler
-    hooking   *hooking.Service
-
-    // Control protocol state
-    isStreaming      bool
-    pendingRequests  map[string]chan controlResult
-    hookCallbacks    map[string]hooking.HookCallback
-    nextCallbackID   int
-    requestCounter   int
-    mu               sync.Mutex
+    transport   ports.Transport
+    protocol    ports.ProtocolHandler
+    parser      ports.MessageParser
+    hooks       *hooking.Service
+    permissions *permissions.Service
+    mcpServers  map[string]ports.MCPServer
 }
 
-func NewService(transport ports.Transport, protocol ports.ProtocolHandler, hooks *hooking.Service) *Service {
+func NewService(
+    transport ports.Transport,
+    protocol ports.ProtocolHandler,
+    parser ports.MessageParser,
+    hooks *hooking.Service,
+    perms *permissions.Service,
+    mcpServers map[string]ports.MCPServer,
+) *Service {
     return &Service{
-        transport:       transport,
-        protocol:        protocol,
-        hooking:         hooks,
-        isStreaming:     false, // Query is one-shot by default
-        pendingRequests: make(map[string]chan controlResult),
-        hookCallbacks:   make(map[string]hooking.HookCallback),
+        transport:   transport,
+        protocol:    protocol,
+        parser:      parser,
+        hooks:       hooks,
+        permissions: perms,
+        mcpServers:  mcpServers,
     }
-}
-
-// Initialize performs control protocol handshake (no-op for one-shot queries)
-func (s *Service) Initialize(ctx context.Context) error {
-    if !s.isStreaming {
-        return nil // One-shot queries don't need initialization
-    }
-
-    // Build hooks configuration by iterating hooking service
-    hooksConfig := make(map[string]any)
-
-    if s.hooking != nil {
-        hooks := s.hooking.GetHooks()
-
-        for event, matchers := range hooks {
-            eventConfig := []map[string]any{}
-
-            for _, matcher := range matchers {
-                callbackIDs := []string{}
-
-                for _, callback := range matcher.Hooks {
-                    // Assign callback ID matching Python format: hook_{counter}
-                    s.mu.Lock()
-                    callbackID := fmt.Sprintf("hook_%d", s.nextCallbackID)
-                    s.nextCallbackID++
-                    s.hookCallbacks[callbackID] = callback
-                    s.mu.Unlock()
-
-                    callbackIDs = append(callbackIDs, callbackID)
-                }
-
-                eventConfig = append(eventConfig, map[string]any{
-                    "matcher":         matcher.Matcher,
-                    "hookCallbackIds": callbackIDs,
-                })
-            }
-
-            hooksConfig[string(event)] = eventConfig
-        }
-    }
-
-    // Send initialize control request
-    request := map[string]any{
-        "subtype": "initialize",
-        "hooks":   hooksConfig,
-    }
-
-    _, err := s.sendControlRequest(ctx, request)
-    return err
 }
 
 func (s *Service) Execute(ctx context.Context, prompt string, opts *options.AgentOptions) (<-chan messages.Message, <-chan error) {
-    // Domain logic for query execution
-    // 1. Connect transport
-    // 2. Initialize control protocol if streaming
-    // 3. Start message router
-    // 4. Send prompt
-    // 5. Stream messages
-}
+    msgCh := make(chan messages.Message)
+    errCh := make(chan error, 1)
 
-func (s *Service) sendControlRequest(ctx context.Context, request map[string]any) (map[string]any, error) {
-    if !s.isStreaming {
-        return nil, fmt.Errorf("control requests require streaming mode")
-    }
+    go func() {
+        defer close(msgCh)
+        defer close(errCh)
 
-    // Generate unique request ID matching Python format: req_{counter}_{randomHex}
-    s.mu.Lock()
-    s.requestCounter++
-    requestID := fmt.Sprintf("req_%d_%s", s.requestCounter, randomHex(4))
-    s.mu.Unlock()
-
-    // Create result channel
-    resCh := make(chan controlResult, 1)
-    s.mu.Lock()
-    s.pendingRequests[requestID] = resCh
-    s.mu.Unlock()
-
-    // Build control request envelope
-    controlReq := map[string]any{
-        "type":       "control_request",
-        "request_id": requestID,
-        "request":    request,
-    }
-
-    // Send via protocol
-    reqBytes, err := json.Marshal(controlReq)
-    if err != nil {
-        s.mu.Lock()
-        delete(s.pendingRequests, requestID)
-        s.mu.Unlock()
-        return nil, fmt.Errorf("marshal control request: %w", err)
-    }
-
-    if err := s.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
-        s.mu.Lock()
-        delete(s.pendingRequests, requestID)
-        s.mu.Unlock()
-        return nil, fmt.Errorf("write control request: %w", err)
-    }
-
-    // Wait for response with 60s timeout
-    timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-    defer cancel()
-
-    select {
-    case <-timeoutCtx.Done():
-        s.mu.Lock()
-        delete(s.pendingRequests, requestID)
-        s.mu.Unlock()
-        if timeoutCtx.Err() == context.DeadlineExceeded {
-            return nil, fmt.Errorf("control request timeout: %s", request["subtype"])
+        // 1. Connect transport
+        if err := s.transport.Connect(ctx); err != nil {
+            errCh <- fmt.Errorf("transport connect: %w", err)
+            return
         }
-        return nil, timeoutCtx.Err()
-    case res := <-resCh:
-        if res.err != nil {
-            return nil, res.err
-        }
-        return res.data, nil
-    }
-}
 
-func randomHex(n int) string {
-    b := make([]byte, n)
-    rand.Read(b)
-    return hex.EncodeToString(b)
+        // 2. Build hook callbacks map (if hooks exist)
+        var hookCallbacks map[string]hooking.HookCallback
+        if s.hooks != nil {
+            hookCallbacks = make(map[string]hooking.HookCallback)
+            hooks := s.hooks.GetHooks()
+            for event, matchers := range hooks {
+                for _, matcher := range matchers {
+                    for i, callback := range matcher.Hooks {
+                        // Generate callback ID
+                        callbackID := fmt.Sprintf("hook_%s_%d", event, i)
+                        hookCallbacks[callbackID] = callback
+                    }
+                }
+            }
+        }
+
+        // 3. Start message router (protocol adapter handles control protocol)
+        // For one-shot queries, we don't need explicit initialization
+        // The protocol adapter will handle any necessary control messages
+        routerMsgCh := make(chan map[string]any)
+        routerErrCh := make(chan error, 1)
+        if err := s.protocol.StartMessageRouter(
+            ctx,
+            routerMsgCh,
+            routerErrCh,
+            s.permissions,
+            hookCallbacks,
+            s.mcpServers,
+        ); err != nil {
+            errCh <- fmt.Errorf("start message router: %w", err)
+            return
+        }
+
+        // 4. Send prompt
+        promptMsg := map[string]any{
+            "type":   "user",
+            "prompt": prompt,
+        }
+        promptBytes, err := json.Marshal(promptMsg)
+        if err != nil {
+            errCh <- fmt.Errorf("marshal prompt: %w", err)
+            return
+        }
+        if err := s.transport.Write(ctx, string(promptBytes)+"\n"); err != nil {
+            errCh <- fmt.Errorf("write prompt: %w", err)
+            return
+        }
+
+        // 5. Stream messages
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            case msg, ok := <-routerMsgCh:
+                if !ok {
+                    return
+                }
+                // Parse message using parser port
+                parsedMsg, err := s.parser.Parse(msg)
+                if err != nil {
+                    errCh <- fmt.Errorf("parse message: %w", err)
+                    return
+                }
+                msgCh <- parsedMsg
+            case err := <-routerErrCh:
+                if err != nil {
+                    errCh <- err
+                    return
+                }
+            }
+        }
+    }()
+
+    return msgCh, errCh
 }
 ```
 
@@ -592,17 +699,15 @@ func randomHex(n int) string {
 
 The streaming service handles bidirectional streaming conversations.
 
+**Key Design Decision**: Like the querying service, control protocol state management is delegated to the protocol adapter. The domain service focuses purely on conversation flow logic.
+
 ```go
 package streaming
 
 import (
     "context"
-    "crypto/rand"
-    "encoding/hex"
     "encoding/json"
     "fmt"
-    "sync"
-    "time"
 
     "github.com/conneroisu/claude/pkg/claude/ports"
     "github.com/conneroisu/claude/pkg/claude/messages"
@@ -610,181 +715,154 @@ import (
     "github.com/conneroisu/claude/pkg/claude/permissions"
 )
 
-// controlResult holds the result of a control request
-type controlResult struct {
-    data map[string]any
-    err  error
-}
-
 // Service handles streaming conversations
+// This is a DOMAIN service - pure business logic for managing conversations
 type Service struct {
-    transport    ports.Transport
-    protocol     ports.ProtocolHandler
-    hooking      *hooking.Service
-    permissions  *permissions.Service
+    transport   ports.Transport
+    protocol    ports.ProtocolHandler
+    parser      ports.MessageParser
+    hooks       *hooking.Service
+    permissions *permissions.Service
+    mcpServers  map[string]ports.MCPServer
 
-    // Control protocol state
-    isStreaming      bool
-    pendingRequests  map[string]chan controlResult
-    hookCallbacks    map[string]hooking.HookCallback
-    nextCallbackID   int
-    requestCounter   int
-    mu               sync.Mutex
+    // Message routing channels (internal to service)
+    msgCh chan map[string]any
+    errCh chan error
 }
 
-func NewService(transport ports.Transport, protocol ports.ProtocolHandler, hooks *hooking.Service, perms *permissions.Service) *Service {
+func NewService(
+    transport ports.Transport,
+    protocol ports.ProtocolHandler,
+    parser ports.MessageParser,
+    hooks *hooking.Service,
+    perms *permissions.Service,
+    mcpServers map[string]ports.MCPServer,
+) *Service {
     return &Service{
-        transport:       transport,
-        protocol:        protocol,
-        hooking:         hooks,
-        permissions:     perms,
-        isStreaming:     true, // Streaming service is always streaming
-        pendingRequests: make(map[string]chan controlResult),
-        hookCallbacks:   make(map[string]hooking.HookCallback),
-    }
-}
-
-// Initialize performs control protocol handshake
-func (s *Service) Initialize(ctx context.Context) error {
-    // Build hooks configuration by iterating hooking service
-    hooksConfig := make(map[string]any)
-
-    if s.hooking != nil {
-        hooks := s.hooking.GetHooks()
-
-        for event, matchers := range hooks {
-            eventConfig := []map[string]any{}
-
-            for _, matcher := range matchers {
-                callbackIDs := []string{}
-
-                for _, callback := range matcher.Hooks {
-                    // Assign callback ID matching Python format: hook_{counter}
-                    s.mu.Lock()
-                    callbackID := fmt.Sprintf("hook_%d", s.nextCallbackID)
-                    s.nextCallbackID++
-                    s.hookCallbacks[callbackID] = callback
-                    s.mu.Unlock()
-
-                    callbackIDs = append(callbackIDs, callbackID)
-                }
-
-                eventConfig = append(eventConfig, map[string]any{
-                    "matcher":         matcher.Matcher,
-                    "hookCallbackIds": callbackIDs,
-                })
-            }
-
-            hooksConfig[string(event)] = eventConfig
-        }
-    }
-
-    // Send initialize control request
-    request := map[string]any{
-        "subtype": "initialize",
-        "hooks":   hooksConfig,
-    }
-
-    _, err := s.sendControlRequest(ctx, request)
-    return err
-}
-
-func (s *Service) sendControlRequest(ctx context.Context, request map[string]any) (map[string]any, error) {
-    // Generate unique request ID matching Python format: req_{counter}_{randomHex}
-    s.mu.Lock()
-    s.requestCounter++
-    requestID := fmt.Sprintf("req_%d_%s", s.requestCounter, randomHex(4))
-    s.mu.Unlock()
-
-    // Create result channel
-    resCh := make(chan controlResult, 1)
-    s.mu.Lock()
-    s.pendingRequests[requestID] = resCh
-    s.mu.Unlock()
-
-    // Build control request envelope
-    controlReq := map[string]any{
-        "type":       "control_request",
-        "request_id": requestID,
-        "request":    request,
-    }
-
-    // Send via transport
-    reqBytes, err := json.Marshal(controlReq)
-    if err != nil {
-        s.mu.Lock()
-        delete(s.pendingRequests, requestID)
-        s.mu.Unlock()
-        return nil, fmt.Errorf("marshal control request: %w", err)
-    }
-
-    if err := s.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
-        s.mu.Lock()
-        delete(s.pendingRequests, requestID)
-        s.mu.Unlock()
-        return nil, fmt.Errorf("write control request: %w", err)
-    }
-
-    // Wait for response with 60s timeout
-    timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-    defer cancel()
-
-    select {
-    case <-timeoutCtx.Done():
-        s.mu.Lock()
-        delete(s.pendingRequests, requestID)
-        s.mu.Unlock()
-        if timeoutCtx.Err() == context.DeadlineExceeded {
-            return nil, fmt.Errorf("control request timeout: %s", request["subtype"])
-        }
-        return nil, timeoutCtx.Err()
-    case res := <-resCh:
-        if res.err != nil {
-            return nil, res.err
-        }
-        return res.data, nil
+        transport:   transport,
+        protocol:    protocol,
+        parser:      parser,
+        hooks:       hooks,
+        permissions: perms,
+        mcpServers:  mcpServers,
+        msgCh:       make(chan map[string]any),
+        errCh:       make(chan error, 1),
     }
 }
 
 func (s *Service) Connect(ctx context.Context, prompt any) error {
-    // Domain logic for establishing streaming connection
     // 1. Connect transport
-    // 2. Initialize control protocol
+    if err := s.transport.Connect(ctx); err != nil {
+        return fmt.Errorf("transport connect: %w", err)
+    }
+
+    // 2. Build hook callbacks map
+    var hookCallbacks map[string]hooking.HookCallback
+    if s.hooks != nil {
+        hookCallbacks = make(map[string]hooking.HookCallback)
+        hooks := s.hooks.GetHooks()
+        for event, matchers := range hooks {
+            for _, matcher := range matchers {
+                for i, callback := range matcher.Hooks {
+                    callbackID := fmt.Sprintf("hook_%s_%d", event, i)
+                    hookCallbacks[callbackID] = callback
+                }
+            }
+        }
+    }
+
     // 3. Start message router
-    // 4. Set up bidirectional message flow
+    // Protocol adapter handles all control protocol concerns
+    if err := s.protocol.StartMessageRouter(
+        ctx,
+        s.msgCh,
+        s.errCh,
+        s.permissions,
+        hookCallbacks,
+        s.mcpServers,
+    ); err != nil {
+        return fmt.Errorf("start message router: %w", err)
+    }
+
+    // 4. Send initial prompt if provided
+    if prompt != nil {
+        promptMsg := map[string]any{
+            "type":   "user",
+            "prompt": prompt,
+        }
+        promptBytes, err := json.Marshal(promptMsg)
+        if err != nil {
+            return fmt.Errorf("marshal prompt: %w", err)
+        }
+        if err := s.transport.Write(ctx, string(promptBytes)+"\n"); err != nil {
+            return fmt.Errorf("write prompt: %w", err)
+        }
+    }
+
     return nil
 }
 
 func (s *Service) SendMessage(ctx context.Context, msg string) error {
-    // Domain logic for sending messages
-    // 1. Format message
-    // 2. Send via transport
-    // 3. Handle errors
+    // Format message
+    userMsg := map[string]any{
+        "type":   "user",
+        "prompt": msg,
+    }
+
+    // Send via transport
+    msgBytes, err := json.Marshal(userMsg)
+    if err != nil {
+        return fmt.Errorf("marshal message: %w", err)
+    }
+
+    if err := s.transport.Write(ctx, string(msgBytes)+"\n"); err != nil {
+        return fmt.Errorf("write message: %w", err)
+    }
+
     return nil
 }
 
 func (s *Service) ReceiveMessages(ctx context.Context) (<-chan messages.Message, <-chan error) {
-    // Domain logic for receiving messages
-    // 1. Read from protocol
-    // 2. Parse messages
-    // 3. Stream to channels
-    msgCh := make(chan messages.Message)
-    errCh := make(chan error, 1)
-    return msgCh, errCh
+    msgOutCh := make(chan messages.Message)
+    errOutCh := make(chan error, 1)
+
+    go func() {
+        defer close(msgOutCh)
+        defer close(errOutCh)
+
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            case msg, ok := <-s.msgCh:
+                if !ok {
+                    return
+                }
+                // Parse message using parser port
+                parsedMsg, err := s.parser.Parse(msg)
+                if err != nil {
+                    errOutCh <- fmt.Errorf("parse message: %w", err)
+                    return
+                }
+                msgOutCh <- parsedMsg
+            case err := <-s.errCh:
+                if err != nil {
+                    errOutCh <- err
+                    return
+                }
+            }
+        }
+    }()
+
+    return msgOutCh, errOutCh
 }
 
 func (s *Service) Close() error {
-    // Cleanup resources
-    // 1. Close protocol connections
-    // 2. Close transport
-    // 3. Clean up channels
+    // Close transport
+    if s.transport != nil {
+        return s.transport.Close()
+    }
     return nil
-}
-
-func randomHex(n int) string {
-    b := make([]byte, n)
-    rand.Read(b)
-    return hex.EncodeToString(b)
 }
 ```
 
@@ -848,12 +926,49 @@ func (s *Service) GetHooks() map[HookEvent][]HookMatcher {
 
 // Execute runs hooks for a given event
 func (s *Service) Execute(ctx context.Context, event HookEvent, input map[string]any, toolUseID *string) (map[string]any, error) {
-    // Domain logic for hook execution
+    if s == nil || s.hooks == nil {
+        return nil, nil
+    }
+
     // 1. Find matching hooks for event
-    // 2. Execute hooks in order
-    // 3. Aggregate results
-    // 4. Handle blocking decisions
-    return nil, nil
+    matchers, exists := s.hooks[event]
+    if !exists || len(matchers) == 0 {
+        return nil, nil
+    }
+
+    // 2. Execute hooks in order and aggregate results
+    aggregatedResult := map[string]any{}
+    hookCtx := HookContext{}
+
+    for _, matcher := range matchers {
+        // Check if matcher applies to this input
+        // TODO: Implement pattern matching logic based on matcher.Matcher field
+
+        for _, callback := range matcher.Hooks {
+            // 3. Execute hook callback
+            result, err := callback(input, toolUseID, hookCtx)
+            if err != nil {
+                return nil, fmt.Errorf("hook execution failed: %w", err)
+            }
+
+            if result == nil {
+                continue
+            }
+
+            // 4. Handle blocking decisions
+            // If hook returns decision="block", stop execution immediately
+            if decision, ok := result["decision"].(string); ok && decision == "block" {
+                return result, nil
+            }
+
+            // Aggregate results (later hooks can override earlier ones)
+            for k, v := range result {
+                aggregatedResult[k] = v
+            }
+        }
+    }
+
+    return aggregatedResult, nil
 }
 
 // Register adds a new hook
@@ -966,10 +1081,37 @@ func NewService(config *PermissionsConfig) *Service {
 
 // CheckToolUse verifies if a tool can be used
 func (s *Service) CheckToolUse(ctx context.Context, toolName string, input map[string]any) (PermissionResult, error) {
-    // Domain logic for permission checking
     // 1. Check permission mode
-    // 2. Call canUseTool callback if set
-    // 3. Apply default behavior
+    switch s.mode {
+    case options.PermissionModeBypassPermissions:
+        // Always allow
+        return &PermissionResultAllow{}, nil
+
+    case options.PermissionModeDefault, options.PermissionModeAcceptEdits, options.PermissionModePlan:
+        // 2. Call canUseTool callback if set
+        if s.canUseTool != nil {
+            permCtx := ToolPermissionContext{
+                // TODO: Extract suggestions from control request if available
+                Suggestions: []PermissionUpdate{},
+            }
+            result, err := s.canUseTool(ctx, toolName, input, permCtx)
+            if err != nil {
+                return nil, fmt.Errorf("permission callback failed: %w", err)
+            }
+            return result, nil
+        }
+
+        // 3. Apply default behavior (ask user via CLI)
+        // In default mode without callback, we allow but this should be handled by CLI
+        return &PermissionResultAllow{}, nil
+
+    default:
+        // Unknown mode - deny for safety
+        return &PermissionResultDeny{
+            Message:   fmt.Sprintf("unknown permission mode: %s", s.mode),
+            Interrupt: false,
+        }, nil
+    }
 }
 
 // UpdateMode changes the permission mode
@@ -1219,9 +1361,9 @@ func (a *Adapter) Connect(ctx context.Context) error {
         go a.handleStderr()
     }
 
-    // Detect one-shot mode: not using stream-json input format
+    // Detect one-shot mode: _isStreaming flag set by domain services
     // In one-shot mode, stdin should be closed after first write
-    if a.options.InputFormat != "stream-json" {
+    if !a.options._isStreaming {
         a.closeStdinAfterWrite = true
     }
 
@@ -1368,32 +1510,37 @@ func (a *Adapter) IsReady() bool {
 
 **Priority**: High
 
+**Key Design:** This adapter implements `ports.ProtocolHandler` and manages all control protocol state (pending requests, request IDs, etc.). The domain services delegate this infrastructure concern to the adapter.
+
 ```go
 package jsonrpc
 
 import (
     "context"
+    "crypto/rand"
+    "encoding/hex"
     "encoding/json"
     "fmt"
     "sync"
+    "time"
 
     "github.com/conneroisu/claude/pkg/claude/ports"
-    "github.com/conneroisu/claude/pkg/claude/permissions"
     "github.com/conneroisu/claude/pkg/claude/hooking"
+    "github.com/conneroisu/claude/pkg/claude/permissions"
 )
 
 // Adapter implements ports.ProtocolHandler for control protocol
+// This is an INFRASTRUCTURE adapter - it handles protocol state management
 type Adapter struct {
     transport      ports.Transport
-    permissions    *permissions.Service
-    hookCallbacks  map[string]hooking.HookCallback
-    mcpServers     map[string]MCPServer
+
+    // Control protocol state (managed by adapter, not domain)
     pendingReqs    map[string]chan result
     requestCounter int
     mu             sync.Mutex
 }
 
-// Verify interface compliance
+// Verify interface compliance at compile time
 var _ ports.ProtocolHandler = (*Adapter)(nil)
 
 type result struct {
@@ -1401,76 +1548,109 @@ type result struct {
     err  error
 }
 
-// MCPServer interface for in-process MCP servers
-type MCPServer interface {
-    Name() string
-    Initialize(ctx context.Context, params any) (any, error)
-    ListTools(ctx context.Context) ([]MCPTool, error)
-    CallTool(ctx context.Context, name string, args map[string]any) (MCPToolResult, error)
-    HandleNotification(ctx context.Context, method string, params any) error
-}
-
-type MCPTool struct {
-    Name        string         `json:"name"`
-    Description string         `json:"description"`
-    InputSchema map[string]any `json:"inputSchema"`
-}
-
-type MCPToolResult struct {
-    Content []map[string]any `json:"content"`
-    IsError bool             `json:"isError,omitempty"`
-}
-
-func NewAdapter(transport ports.Transport, perms *permissions.Service, hooks map[string]hooking.HookCallback) *Adapter {
+func NewAdapter(transport ports.Transport) *Adapter {
     return &Adapter{
-        transport:     transport,
-        permissions:   perms,
-        hookCallbacks: hooks,
-        mcpServers:    make(map[string]MCPServer),
-        pendingReqs:   make(map[string]chan result),
+        transport:   transport,
+        pendingReqs: make(map[string]chan result),
     }
 }
 
-// RegisterMCPServer adds an MCP server to the registry
-func (a *Adapter) RegisterMCPServer(name string, server MCPServer) {
-    a.mu.Lock()
-    defer a.mu.Unlock()
-    a.mcpServers[name] = server
-}
-
-// Initialize is a no-op for the protocol adapter
-// Actual initialization is handled by domain services via SendControlRequest
+// Initialize is a no-op - initialization happens implicitly in StartMessageRouter
 func (a *Adapter) Initialize(ctx context.Context, config any) (map[string]any, error) {
-    // Protocol adapter doesn't need initialization
-    // Domain services will call SendControlRequest with initialize subtype
     return nil, nil
 }
 
-// SendControlRequest is not used by this adapter
-// Control requests are sent directly via transport by domain services
+// SendControlRequest sends a control request and waits for response
+// This method handles all request ID generation and timeout logic
 func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
-    return nil, fmt.Errorf("SendControlRequest should be called on domain services, not protocol adapter")
+    // Generate unique request ID: req_{counter}_{randomHex}
+    a.mu.Lock()
+    a.requestCounter++
+    requestID := fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(4))
+    a.mu.Unlock()
+
+    // Create result channel for this request
+    resCh := make(chan result, 1)
+    a.mu.Lock()
+    a.pendingReqs[requestID] = resCh
+    a.mu.Unlock()
+
+    // Build control request envelope
+    controlReq := map[string]any{
+        "type":       "control_request",
+        "request_id": requestID,
+        "request":    req,
+    }
+
+    // Send via transport
+    reqBytes, err := json.Marshal(controlReq)
+    if err != nil {
+        a.mu.Lock()
+        delete(a.pendingReqs, requestID)
+        a.mu.Unlock()
+        return nil, fmt.Errorf("marshal control request: %w", err)
+    }
+
+    if err := a.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
+        a.mu.Lock()
+        delete(a.pendingReqs, requestID)
+        a.mu.Unlock()
+        return nil, fmt.Errorf("write control request: %w", err)
+    }
+
+    // Wait for response with 60s timeout
+    timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+    defer cancel()
+
+    select {
+    case <-timeoutCtx.Done():
+        a.mu.Lock()
+        delete(a.pendingReqs, requestID)
+        a.mu.Unlock()
+        if timeoutCtx.Err() == context.DeadlineExceeded {
+            return nil, fmt.Errorf("control request timeout: %s", req["subtype"])
+        }
+        return nil, timeoutCtx.Err()
+    case res := <-resCh:
+        if res.err != nil {
+            return nil, res.err
+        }
+        return res.data, nil
+    }
 }
 
 // HandleControlRequest routes inbound control requests by subtype
-func (a *Adapter) HandleControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
+func (a *Adapter) HandleControlRequest(
+    ctx context.Context,
+    req map[string]any,
+    perms *permissions.Service,
+    hooks map[string]hooking.HookCallback,
+    mcpServers map[string]ports.MCPServer,
+) (map[string]any, error) {
     request, _ := req["request"].(map[string]any)
     subtype, _ := request["subtype"].(string)
 
     switch subtype {
     case "can_use_tool":
-        return a.handleCanUseTool(ctx, request)
+        return a.handleCanUseTool(ctx, request, perms)
     case "hook_callback":
-        return a.handleHookCallback(ctx, request)
+        return a.handleHookCallback(ctx, request, hooks)
     case "mcp_message":
-        return a.handleMCPMessage(ctx, request)
+        return a.handleMCPMessage(ctx, request, mcpServers)
     default:
         return nil, fmt.Errorf("unsupported control request subtype: %s", subtype)
     }
 }
 
 // StartMessageRouter continuously reads transport and partitions messages
-func (a *Adapter) StartMessageRouter(ctx context.Context, msgCh chan<- map[string]any, errCh chan<- error) error {
+func (a *Adapter) StartMessageRouter(
+    ctx context.Context,
+    msgCh chan<- map[string]any,
+    errCh chan<- error,
+    perms *permissions.Service,
+    hooks map[string]hooking.HookCallback,
+    mcpServers map[string]ports.MCPServer,
+) error {
     go func() {
         transportMsgCh, transportErrCh := a.transport.ReadMessages(ctx)
 
@@ -1493,7 +1673,7 @@ func (a *Adapter) StartMessageRouter(ctx context.Context, msgCh chan<- map[strin
 
                 case "control_request":
                     // Handle inbound control request
-                    go a.handleControlRequestAsync(ctx, msg)
+                    go a.handleControlRequestAsync(ctx, msg, perms, hooks, mcpServers)
 
                 case "control_cancel_request":
                     // TODO: Implement cancellation support
@@ -1545,11 +1725,18 @@ func (a *Adapter) routeControlResponse(msg map[string]any) {
 }
 
 // handleControlRequestAsync handles inbound control requests asynchronously
-func (a *Adapter) handleControlRequestAsync(ctx context.Context, msg map[string]any) {
+// Dependencies (perms, hooks, mcpServers) must be passed by the domain service that starts the router
+func (a *Adapter) handleControlRequestAsync(
+    ctx context.Context,
+    msg map[string]any,
+    perms *permissions.Service,
+    hooks map[string]hooking.HookCallback,
+    mcpServers map[string]ports.MCPServer,
+) {
     requestID, _ := msg["request_id"].(string)
 
     // Handle the request
-    responseData, err := a.HandleControlRequest(ctx, msg)
+    responseData, err := a.HandleControlRequest(ctx, msg, perms, hooks, mcpServers)
 
     // Build response
     var response map[string]any
@@ -1579,16 +1766,16 @@ func (a *Adapter) handleControlRequestAsync(ctx context.Context, msg map[string]
 }
 
 // handleCanUseTool handles can_use_tool control requests
-func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any) (map[string]any, error) {
+func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, perms *permissions.Service) (map[string]any, error) {
     toolName, _ := request["tool_name"].(string)
     input, _ := request["input"].(map[string]any)
     // suggestions, _ := request["permission_suggestions"].([]any) // TODO: Use suggestions
 
-    if a.permissions == nil {
+    if perms == nil {
         return nil, fmt.Errorf("permissions callback not provided")
     }
 
-    result, err := a.permissions.CheckToolUse(ctx, toolName, input)
+    result, err := perms.CheckToolUse(ctx, toolName, input)
     if err != nil {
         return nil, err
     }
@@ -1613,12 +1800,12 @@ func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any) 
 }
 
 // handleHookCallback handles hook_callback control requests
-func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any) (map[string]any, error) {
+func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any, hooks map[string]hooking.HookCallback) (map[string]any, error) {
     callbackID, _ := request["callback_id"].(string)
     input, _ := request["input"].(map[string]any)
     toolUseID, _ := request["tool_use_id"].(*string)
 
-    callback, exists := a.hookCallbacks[callbackID]
+    callback, exists := hooks[callbackID]
     if !exists {
         return nil, fmt.Errorf("no hook callback found for ID: %s", callbackID)
     }
@@ -1634,14 +1821,11 @@ func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any
 }
 
 // handleMCPMessage handles mcp_message control requests
-func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any) (map[string]any, error) {
+func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any, mcpServers map[string]ports.MCPServer) (map[string]any, error) {
     serverName, _ := request["server_name"].(string)
     mcpMessage, _ := request["message"].(map[string]any)
 
-    a.mu.Lock()
-    server, exists := a.mcpServers[serverName]
-    a.mu.Unlock()
-
+    server, exists := mcpServers[serverName]
     if !exists {
         return a.mcpErrorResponse(mcpMessage, -32601, fmt.Sprintf("Server '%s' not found", serverName)), nil
     }
@@ -1696,22 +1880,44 @@ func (a *Adapter) mcpErrorResponse(message map[string]any, code int, msg string)
         },
     }
 }
+
+// randomHex generates a random hex string of n bytes
+func randomHex(n int) string {
+    b := make([]byte, n)
+    rand.Read(b)
+    return hex.EncodeToString(b)
+}
 ```
 
-### 3.3 Message Parser (internal/parse/parser.go)
+### 3.3 Message Parser Adapter (adapters/parse/parser.go)
 
 **Priority**: High
 
-Internal utility for parsing messages (not exposed as port).
+This adapter implements `ports.MessageParser`, converting raw JSON messages from the transport into typed domain messages.
 
 ```go
 package parse
 
 import (
     "fmt"
+
+    "github.com/conneroisu/claude/pkg/claude/ports"
+    "github.com/conneroisu/claude/pkg/claude/messages"
 )
 
-func ParseMessage(data map[string]any) (Message, error) {
+// Adapter implements ports.MessageParser
+// This is an INFRASTRUCTURE adapter - handles low-level message parsing
+type Adapter struct{}
+
+// Verify interface compliance at compile time
+var _ ports.MessageParser = (*Adapter)(nil)
+
+func NewAdapter() *Adapter {
+    return &Adapter{}
+}
+
+// Parse implements ports.MessageParser
+func (a *Adapter) Parse(data map[string]any) (messages.Message, error) {
     msgType, ok := data["type"].(string)
     if !ok {
         return nil, fmt.Errorf("message missing type field")
@@ -1719,30 +1925,46 @@ func ParseMessage(data map[string]any) (Message, error) {
 
     switch msgType {
     case "user":
-        return parseUserMessage(data)
+        return a.parseUserMessage(data)
     case "assistant":
-        return parseAssistantMessage(data)
+        return a.parseAssistantMessage(data)
     case "system":
-        return parseSystemMessage(data)
+        return a.parseSystemMessage(data)
     case "result":
-        return parseResultMessage(data)
+        return a.parseResultMessage(data)
     case "stream_event":
-        return parseStreamEvent(data)
+        return a.parseStreamEvent(data)
     default:
         return nil, fmt.Errorf("unknown message type: %s", msgType)
     }
 }
 
-func parseUserMessage(data map[string]any) (*UserMessage, error) {
-    // Implementation
+func (a *Adapter) parseUserMessage(data map[string]any) (messages.Message, error) {
+    // TODO: Parse user message fields
+    return &messages.UserMessage{}, nil
 }
 
-func parseAssistantMessage(data map[string]any) (*AssistantMessage, error) {
+func (a *Adapter) parseSystemMessage(data map[string]any) (messages.Message, error) {
+    // TODO: Parse system message fields
+    return &messages.SystemMessage{}, nil
+}
+
+func (a *Adapter) parseResultMessage(data map[string]any) (messages.Message, error) {
+    // TODO: Parse result message fields
+    return &messages.ResultMessage{}, nil
+}
+
+func (a *Adapter) parseStreamEvent(data map[string]any) (messages.Message, error) {
+    // TODO: Parse stream event fields
+    return &messages.StreamEvent{}, nil
+}
+
+func (a *Adapter) parseAssistantMessage(data map[string]any) (messages.Message, error) {
     // Parse content blocks
     msg, _ := data["message"].(map[string]any)
     contentArray, _ := msg["content"].([]any)
 
-    var blocks []ContentBlock
+    var blocks []messages.ContentBlock
     for _, item := range contentArray {
         block, _ := item.(map[string]any)
         blockType, _ := block["type"].(string)
@@ -1750,11 +1972,11 @@ func parseAssistantMessage(data map[string]any) (*AssistantMessage, error) {
         switch blockType {
         case "text":
             text, _ := block["text"].(string)
-            blocks = append(blocks, TextBlock{Text: text})
+            blocks = append(blocks, messages.TextBlock{Text: text})
         case "thinking":
             thinking, _ := block["thinking"].(string)
             signature, _ := block["signature"].(string)
-            blocks = append(blocks, ThinkingBlock{
+            blocks = append(blocks, messages.ThinkingBlock{
                 Thinking:  thinking,
                 Signature: signature,
             })
@@ -1762,26 +1984,34 @@ func parseAssistantMessage(data map[string]any) (*AssistantMessage, error) {
             id, _ := block["id"].(string)
             name, _ := block["name"].(string)
             input, _ := block["input"].(map[string]any)
-            blocks = append(blocks, ToolUseBlock{
+            blocks = append(blocks, messages.ToolUseBlock{
                 ID:    id,
                 Name:  name,
                 Input: input,
             })
-        // ... other block types
+        case "tool_result":
+            toolUseID, _ := block["tool_use_id"].(string)
+            content := block["content"]
+            isError, _ := block["is_error"].(*bool)
+            blocks = append(blocks, messages.ToolResultBlock{
+                ToolUseID: toolUseID,
+                Content:   content,
+                IsError:   isError,
+            })
         }
     }
 
     model, _ := msg["model"].(string)
     parentToolUseID := getStringPtr(data, "parent_tool_use_id")
 
-    return &AssistantMessage{
+    return &messages.AssistantMessage{
         Content:         blocks,
         Model:           model,
         ParentToolUseID: parentToolUseID,
     }, nil
 }
 
-// Helper functions
+// Helper function for extracting optional string pointers
 func getStringPtr(data map[string]any, key string) *string {
     if val, ok := data[key].(string); ok {
         return &val
@@ -2073,7 +2303,9 @@ type sdkMCPServer struct {
     tools   map[string]*SDKMCPTool
 }
 
-func CreateSDKMCPServer(name, version string, tools []*SDKMCPTool) MCPServerConfig {
+// CreateSDKMCPServer creates both config and server instance
+// Config goes in AgentOptions.MCPServers, instance is registered separately
+func CreateSDKMCPServer(name, version string, tools []*SDKMCPTool) (SDKServerConfig, MCPServer) {
     toolMap := make(map[string]*SDKMCPTool)
     for _, tool := range tools {
         toolMap[tool.Name] = tool
@@ -2085,11 +2317,13 @@ func CreateSDKMCPServer(name, version string, tools []*SDKMCPTool) MCPServerConf
         tools:   toolMap,
     }
 
-    return SDKServerConfig{
-        Type:     "sdk",
-        Name:     name,
-        Instance: server,
+    config := SDKServerConfig{
+        Type: "sdk",
+        Name: name,
+        // NO Instance field - that's the whole point!
     }
+
+    return config, server
 }
 
 func (s *sdkMCPServer) Name() string {
@@ -2830,6 +3064,127 @@ func main() {
 6. Automated CI/CD
 7. Easy to use and well-documented
 
+## Hexagonal Architecture Summary
+
+### Dependency Flow
+
+The SDK strictly follows the **dependency rule** of hexagonal architecture:
+
+```
+┌─────────────────────────────────────────────────┐
+│  LAYER 4: Public API (client.go, query.go)     │
+│  - Entry point for SDK users                    │
+│  - Wires domain services with adapters          │
+└──────────────────┬──────────────────────────────┘
+                   │ depends on ↓
+┌──────────────────▼──────────────────────────────┐
+│  LAYER 3: ADAPTERS (adapters/*)                 │
+│  - cli/      → implements ports.Transport       │
+│  - jsonrpc/  → implements ports.ProtocolHandler │
+│  - parse/    → implements ports.MessageParser   │
+│  - mcp/      → implements ports.MCPServer       │
+└──────────────────┬──────────────────────────────┘
+                   │ depends on ↓
+┌──────────────────▼──────────────────────────────┐
+│  LAYER 2: PORTS (ports/*)                       │
+│  - Interfaces defined BY domain needs           │
+│  - Contract layer between domain and infra      │
+└──────────────────┬──────────────────────────────┘
+                   │ depends on ↓
+┌──────────────────▼──────────────────────────────┐
+│  LAYER 1: CORE DOMAIN (querying/, streaming/)  │
+│  - Pure business logic                          │
+│  - No infrastructure dependencies               │
+│  - Uses port interfaces, never adapters         │
+└─────────────────────────────────────────────────┘
+```
+
+### Key Architectural Decisions
+
+#### 1. **Ports Define Contracts**
+All interfaces are defined in `ports/` based on domain needs:
+- `ports.Transport` - What domain needs for I/O
+- `ports.ProtocolHandler` - What domain needs for control protocol
+- `ports.MessageParser` - What domain needs for parsing
+- `ports.MCPServer` - What domain needs from MCP servers
+
+#### 2. **Adapters Implement Ports**
+Infrastructure code implements these interfaces:
+- `adapters/cli.Adapter` implements `ports.Transport`
+- `adapters/jsonrpc.Adapter` implements `ports.ProtocolHandler`
+- `adapters/parse.Adapter` implements `ports.MessageParser`
+- `adapters/mcp.Adapter` implements `ports.MCPServer`
+
+#### 3. **Domain Services Are Pure**
+Domain services contain ONLY business logic:
+- **`querying.Service`** - Executes one-shot queries
+- **`streaming.Service`** - Manages bidirectional conversations
+- **`hooking.Service`** - Executes lifecycle hooks
+- **`permissions.Service`** - Checks tool permissions
+
+NO protocol state management (request IDs, timeouts, etc.) in domain.
+
+#### 4. **Infrastructure Concerns Stay in Adapters**
+Control protocol state management is in `adapters/jsonrpc`:
+- Pending request tracking
+- Request ID generation
+- Timeout handling
+- Response routing
+
+#### 5. **Configuration Separation**
+Options are split by concern:
+- **`options/domain.go`** - Pure domain config (PermissionMode, AgentDefinition)
+- **`options/transport.go`** - Infrastructure config (Cwd, Env, MaxBufferSize)
+- **`options/mcp.go`** - MCP server configurations
+
+### Benefits of This Architecture
+
+1. **Testability**
+   - Domain services testable without infrastructure
+   - Mock adapters via interfaces
+   - No subprocess spawning in unit tests
+
+2. **Flexibility**
+   - Swap CLI transport for HTTP transport
+   - Change JSON-RPC to gRPC
+   - Add new message parsers
+
+3. **Clarity**
+   - Clear boundaries between layers
+   - Easy to understand where code belongs
+   - Package names describe purpose
+
+4. **Maintainability**
+   - Infrastructure changes don't affect domain
+   - Domain changes don't ripple to all adapters
+   - Each layer has single responsibility
+
+### Compile-Time Guarantees
+
+All adapters verify interface compliance at compile time:
+
+```go
+// adapters/cli/transport.go
+var _ ports.Transport = (*Adapter)(nil)
+
+// adapters/jsonrpc/protocol.go
+var _ ports.ProtocolHandler = (*Adapter)(nil)
+
+// adapters/parse/parser.go
+var _ ports.MessageParser = (*Adapter)(nil)
+```
+
+If an adapter doesn't fully implement its port interface, the code won't compile.
+
 ## Conclusion
 
-This plan provides a comprehensive roadmap for implementing a production-ready Claude Agent SDK for Go. The implementation follows Go best practices while maintaining functional parity with the Python SDK.
+This plan provides a comprehensive roadmap for implementing a production-ready Claude Agent SDK for Go following strict hexagonal architecture principles. The implementation:
+
+- Separates domain logic from infrastructure
+- Uses interfaces (ports) to define contracts
+- Implements infrastructure via adapters
+- Enforces dependency direction (inward only)
+- Follows Go idioms and best practices
+- Maintains functional parity with Python SDK
+
+**Next Steps**: Begin implementation with Phase 1 (Core Domain & Ports), then Phase 2 (Domain Services), Phase 3 (Adapters), and finally Phase 4 (Public API).
