@@ -200,9 +200,17 @@ type ToolUseBlock struct {
     Name  string
     Input map[string]any
 }
+// ToolResultContent can be string or a list of content blocks as maps
+type ToolResultContent interface {
+    toolResultContent()
+}
+type ToolResultStringContent string
+type ToolResultBlockListContent []map[string]any
+func (ToolResultStringContent) toolResultContent() {}
+func (ToolResultBlockListContent) toolResultContent() {}
 type ToolResultBlock struct {
     ToolUseID string
-    Content   any // string or []map[string]any
+    Content   ToolResultContent
     IsError   *bool
 }
 // Message content can be string or []ContentBlock
@@ -356,7 +364,7 @@ import "context"
 // ProtocolHandler defines what the domain needs for control protocol
 type ProtocolHandler interface {
     // Initialize sends the initialize control request with hooks config
-    Initialize(ctx context.Context, config any) (map[string]any, error)
+Initialize(ctx context.Context, config map[string]any) (map[string]any, error)
     // SendControlRequest sends a control request and waits for response (60s timeout)
     SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error)
     // HandleControlRequest routes inbound control requests by subtype
@@ -387,26 +395,17 @@ ports/mcp.go - MCP Server Port:
 ```go
 package ports
 import "context"
-// MCPServer defines what the domain needs from MCP server implementations
-// This is a port because the domain needs to interact with MCP servers
-// but doesn't care about their internal implementation
+
+// MCPServer defines an interface for an in-process MCP Server.
+// It abstracts the underlying implementation, which should be a wrapper around
+// the official MCP Go SDK (github.com/modelcontextprotocol/go-sdk).
+// This allows the agent to route raw MCP messages from the Claude CLI
+// to a user-defined tool server.
 type MCPServer interface {
     Name() string
-    Initialize(ctx context.Context, params any) (any, error)
-    ListTools(ctx context.Context) ([]MCPTool, error)
-    CallTool(ctx context.Context, name string, args map[string]any) (MCPToolResult, error)
-    HandleNotification(ctx context.Context, method string, params any) error
-}
-// MCPTool represents an MCP tool definition
-type MCPTool struct {
-    Name        string         `json:"name"`
-    Description string         `json:"description"`
-    InputSchema map[string]any `json:"inputSchema"`
-}
-// MCPToolResult represents the result of calling an MCP tool
-type MCPToolResult struct {
-    Content []map[string]any `json:"content"`
-    IsError bool             `json:"isError,omitempty"`
+    // HandleMessage takes a raw JSON-RPC message, processes it, and returns
+    // a raw JSON-RPC response. This is used to proxy messages.
+    HandleMessage(ctx context.Context, message []byte) ([]byte, error)
 }
 ```
 ### 1.3 Error Types (errors.go)
@@ -622,7 +621,7 @@ func NewService(
         errCh:       make(chan error, 1),
     }
 }
-func (s *Service) Connect(ctx context.Context, prompt any) error {
+func (s *Service) Connect(ctx context.Context, prompt *string) error {
     // 1. Connect transport
     if err := s.transport.Connect(ctx); err != nil {
         return fmt.Errorf("transport connect: %w", err)
@@ -1515,7 +1514,8 @@ func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any
     }
     return result, nil
 }
-// handleMCPMessage handles mcp_message control requests
+// handleMCPMessage handles mcp_message control requests by proxying
+// the raw message to the appropriate in-process MCPServer.
 func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any, mcpServers map[string]ports.MCPServer) (map[string]any, error) {
     serverName, _ := request["server_name"].(string)
     mcpMessage, _ := request["message"].(map[string]any)
@@ -1523,36 +1523,27 @@ func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any, 
     if !exists {
         return a.mcpErrorResponse(mcpMessage, -32601, fmt.Sprintf("Server '%s' not found", serverName)), nil
     }
-    method, _ := mcpMessage["method"].(string)
-    messageID := mcpMessage["id"]
-    params := mcpMessage["params"]
-    var result any
-    var err error
-    switch method {
-    case "initialize":
-        result, err = server.Initialize(ctx, params)
-    case "tools/list":
-        result, err = server.ListTools(ctx)
-    case "tools/call":
-        callParams, _ := params.(map[string]any)
-        toolName, _ := callParams["name"].(string)
-        args, _ := callParams["arguments"].(map[string]any)
-        result, err = server.CallTool(ctx, toolName, args)
-    case "notifications/initialized":
-        err = server.HandleNotification(ctx, method, params)
-        result = nil // Notifications have no result
-    default:
-        return a.mcpErrorResponse(mcpMessage, -32601, "Method not found"), nil
+
+    // Marshal the message to be sent to the server wrapper.
+    mcpMessageBytes, err := json.Marshal(mcpMessage)
+    if err != nil {
+        return a.mcpErrorResponse(mcpMessage, -32603, "failed to marshal mcp message"), nil
     }
+
+    // The MCPServer port handles the message and returns a raw response.
+    responseBytes, err := server.HandleMessage(ctx, mcpMessageBytes)
     if err != nil {
         return a.mcpErrorResponse(mcpMessage, -32603, err.Error()), nil
     }
+
+    // Unmarshal the response to be embedded in the control protocol response.
+    var mcpResponse map[string]any
+    if err := json.Unmarshal(responseBytes, &mcpResponse); err != nil {
+        return a.mcpErrorResponse(mcpMessage, -32603, "failed to unmarshal mcp response"), nil
+    }
+
     return map[string]any{
-        "mcp_response": map[string]any{
-            "jsonrpc": "2.0",
-            "id":      messageID,
-            "result":  result,
-        },
+        "mcp_response": mcpResponse,
     }, nil
 }
 // mcpErrorResponse creates an MCP JSON-RPC error response
@@ -1695,8 +1686,11 @@ import (
     "context"
     "github.com/conneroisu/claude/pkg/claude/querying"
     "github.com/conneroisu/claude/pkg/claude/hooking"
+    "github.com/conneroisu/claude/pkg/claude/permissions"
+    "github.com/conneroisu/claude/pkg/claude/ports"
     "github.com/conneroisu/claude/pkg/claude/adapters/cli"
     "github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
+    "github.com/conneroisu/claude/pkg/claude/adapters/parse"
     "github.com/conneroisu/claude/pkg/claude/messages"
     "github.com/conneroisu/claude/pkg/claude/options"
 )
@@ -1709,12 +1703,22 @@ func Query(ctx context.Context, prompt string, opts *options.AgentOptions, hooks
     // Wire up adapters (infrastructure layer)
     transport := cli.NewAdapter(opts)
     protocol := jsonrpc.NewAdapter(transport)
+    parser := parse.NewAdapter()
+
     // Create domain services
     var hookingService *hooking.Service
     if hooks != nil {
         hookingService = hooking.NewService(hooks)
     }
-    queryService := querying.NewService(transport, protocol, hookingService)
+
+    // TODO: Create permissions config from options
+    var permissionsService *permissions.Service
+
+    // TODO: Create MCP servers from options
+    var mcpServers map[string]ports.MCPServer
+
+    queryService := querying.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
+
     // Execute domain logic
     return queryService.Execute(ctx, prompt, opts)
 }
@@ -1728,12 +1732,15 @@ import (
     "github.com/conneroisu/claude/pkg/claude/streaming"
     "github.com/conneroisu/claude/pkg/claude/hooking"
     "github.com/conneroisu/claude/pkg/claude/permissions"
+    "github.com/conneroisu/claude/pkg/claude/ports"
     "github.com/conneroisu/claude/pkg/claude/adapters/cli"
     "github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
+    "github.com/conneroisu/claude/pkg/claude/adapters/parse"
     "github.com/conneroisu/claude/pkg/claude/messages"
     "github.com/conneroisu/claude/pkg/claude/options"
     "sync"
 )
+
 // Client provides bidirectional, interactive conversations with Claude
 // It's a facade that wires domain services with adapters
 type Client struct {
@@ -1743,6 +1750,7 @@ type Client struct {
     streamingService *streaming.Service
     mu               sync.Mutex
 }
+
 // NewClient creates a new Claude client
 func NewClient(opts *options.AgentOptions, hooks map[HookEvent][]HookMatcher, perms *PermissionsConfig) *Client {
     if opts == nil {
@@ -1754,13 +1762,15 @@ func NewClient(opts *options.AgentOptions, hooks map[HookEvent][]HookMatcher, pe
         permissions: perms,
     }
 }
+
 // Connect establishes connection to Claude
-func (c *Client) Connect(ctx context.Context, prompt any) error {
+func (c *Client) Connect(ctx context.Context, prompt *string) error {
     c.mu.Lock()
     defer c.mu.Unlock()
     // Wire up adapters (infrastructure)
     transport := cli.NewAdapter(c.opts)
     protocol := jsonrpc.NewAdapter(transport)
+    parser := parse.NewAdapter()
     // Wire up domain services
     var hookingService *hooking.Service
     if c.hooks != nil {
@@ -1770,11 +1780,14 @@ func (c *Client) Connect(ctx context.Context, prompt any) error {
     if c.permissions != nil {
         permissionsService = permissions.NewService(c.permissions)
     }
+    // TODO: Create MCP servers from options
+    var mcpServers map[string]ports.MCPServer
     // Create streaming service with dependencies
-    c.streamingService = streaming.NewService(transport, protocol, hookingService, permissionsService)
+    c.streamingService = streaming.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
     // Execute domain logic
     return c.streamingService.Connect(ctx, prompt)
 }
+
 // SendMessage sends a message to Claude
 func (c *Client) SendMessage(ctx context.Context, msg string) error {
     c.mu.Lock()
@@ -1784,6 +1797,7 @@ func (c *Client) SendMessage(ctx context.Context, msg string) error {
     }
     return c.streamingService.SendMessage(ctx, msg)
 }
+
 // ReceiveMessages returns a channel of messages from Claude
 func (c *Client) ReceiveMessages(ctx context.Context) (<-chan messages.Message, <-chan error) {
     if c.streamingService == nil {
@@ -1794,6 +1808,7 @@ func (c *Client) ReceiveMessages(ctx context.Context) (<-chan messages.Message, 
     }
     return c.streamingService.ReceiveMessages(ctx)
 }
+
 // Close disconnects from Claude
 func (c *Client) Close() error {
     c.mu.Lock()
@@ -1804,6 +1819,7 @@ func (c *Client) Close() error {
     // Domain service handles cleanup
     return c.streamingService.Close()
 }
+
 ```
 ## Phase 5: Advanced Features
 ### 5.1 Hooks Support (hooks.go)
@@ -1864,140 +1880,41 @@ func BlockBashPatternHook(patterns []string) HookCallback {
 ```
 ### 5.2 MCP Server Support (mcp.go)
 Priority: Medium
+
+To support in-process user-defined tools, the SDK will provide a public API that wraps the official `github.com/modelcontextprotocol/go-sdk`. Instead of re-implementing the MCP server, the SDK will offer convenience functions to create and configure an `mcp.Server`.
+
 ```go
 package claude
 import (
     "context"
-    "fmt"
+    "github.com/modelcontextprotocol/go-sdk/mcp"
 )
-// MCPServer interface for in-process MCP servers
-type MCPServer interface {
-    Name() string
-    Version() string
-    ListTools(ctx context.Context) ([]MCPTool, error)
-    CallTool(ctx context.Context, name string, args map[string]any) (MCPToolResult, error)
+
+// NewMCPServer creates a new in-process MCP server using the go-sdk.
+// This server can be configured with tools and then passed to the Claude client
+// via AgentOptions.
+func NewMCPServer(name, version string) *mcp.Server {
+    return mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 }
-type MCPTool struct {
-    Name        string
-    Description string
-    InputSchema map[string]any
+
+// AddTool is a convenience wrapper around the go-sdk's generic AddTool function.
+// It allows users to add a tool with a typed handler to an mcp.Server instance,
+// benefiting from automatic schema inference and validation provided by the go-sdk.
+//
+// Example:
+//   server := NewMCPServer("my-server", "1.0")
+//   type myArgs struct { Arg1 string `json:"arg1"` }
+//   type myResult struct { Res string `json:"res"` }
+//   myHandler := func(ctx context.Context, req *mcp.CallToolRequest, args myArgs) (*mcp.CallToolResult, myResult, error) {
+//       return nil, myResult{Res: "Result for " + args.Arg1}, nil
+//   }
+//   AddTool(server, &mcp.Tool{Name: "my_tool", Description: "My test tool"}, myHandler)
+func AddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out]) {
+    mcp.AddTool(server, tool, handler)
 }
-type MCPToolResult struct {
-    Content []MCPContent
-    IsError bool
-}
-type MCPContent struct {
-    Type     string
-    Text     string
-    Data     string
-    MimeType string
-}
-// Tool decorator and server builder
-type SDKMCPTool struct {
-    Name        string
-    Description string
-    InputSchema any
-    Handler     func(context.Context, map[string]any) (map[string]any, error)
-}
-func Tool(name, description string, inputSchema any, handler func(context.Context, map[string]any) (map[string]any, error)) *SDKMCPTool {
-    return &SDKMCPTool{
-        Name:        name,
-        Description: description,
-        InputSchema: inputSchema,
-        Handler:     handler,
-    }
-}
-type sdkMCPServer struct {
-    name    string
-    version string
-    tools   map[string]*SDKMCPTool
-}
-// CreateSDKMCPServer creates both config and server instance
-// Config goes in AgentOptions.MCPServers, instance is registered separately
-func CreateSDKMCPServer(name, version string, tools []*SDKMCPTool) (SDKServerConfig, MCPServer) {
-    toolMap := make(map[string]*SDKMCPTool)
-    for _, tool := range tools {
-        toolMap[tool.Name] = tool
-    }
-    server := &sdkMCPServer{
-        name:    name,
-        version: version,
-        tools:   toolMap,
-    }
-    config := SDKServerConfig{
-        Type: "sdk",
-        Name: name,
-        // NO Instance field - that's the whole point!
-    }
-    return config, server
-}
-func (s *sdkMCPServer) Name() string {
-    return s.name
-}
-func (s *sdkMCPServer) Version() string {
-    return s.version
-}
-func (s *sdkMCPServer) ListTools(ctx context.Context) ([]MCPTool, error) {
-    var tools []MCPTool
-    for _, tool := range s.tools {
-        schema := convertInputSchema(tool.InputSchema)
-        tools = append(tools, MCPTool{
-            Name:        tool.Name,
-            Description: tool.Description,
-            InputSchema: schema,
-        })
-    }
-    return tools, nil
-}
-func (s *sdkMCPServer) CallTool(ctx context.Context, name string, args map[string]any) (MCPToolResult, error) {
-    tool, exists := s.tools[name]
-    if !exists {
-        return MCPToolResult{}, fmt.Errorf("tool not found: %s", name)
-    }
-    result, err := tool.Handler(ctx, args)
-    if err != nil {
-        return MCPToolResult{
-            Content: []MCPContent{{Type: "text", Text: err.Error()}},
-            IsError: true,
-        }, nil
-    }
-    // Convert result to MCP format
-    var content []MCPContent
-    if contentList, ok := result["content"].([]any); ok {
-        for _, item := range contentList {
-            if itemMap, ok := item.(map[string]any); ok {
-                itemType, _ := itemMap["type"].(string)
-                text, _ := itemMap["text"].(string)
-                content = append(content, MCPContent{
-                    Type: itemType,
-                    Text: text,
-                })
-            }
-        }
-    }
-    isError, _ := result["is_error"].(bool)
-    return MCPToolResult{
-        Content: content,
-        IsError: isError,
-    }, nil
-}
-func convertInputSchema(schema any) map[string]any {
-    switch s := schema.(type) {
-    case map[string]any:
-        // Check if already JSON schema
-        if _, hasType := s["type"]; hasType {
-            return s
-        }
-        // Convert simple map to JSON schema
-        properties := make(map[string]any)
-        required := []string{}
-        for name, typ := range s {
-            required = append(required, name)
-            switch typ {
-            case "string":
-                properties[name] = map[string]any{"type": "string"}
-            case "int", "integer":
-                properties[name] = map[string]any{"type": "integer"}
+```
+
+The `options.SDKServerConfig` will be updated to hold the `*mcp.Server` instance. The agent SDK will then be responsible for internally creating an adapter that implements the `ports.MCPServer` interface. This adapter will manage a pair of in-memory transports to communicate with the user's `mcp.Server` instance, proxying messages received from the Claude CLI.
             case "float", "number":
                 properties[name] = map[string]any{"type": "number"}
             case "bool", "boolean":
