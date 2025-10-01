@@ -989,11 +989,7 @@ if toolName, ok := input["tool_name"].(string); ok {
 if pattern == toolName {
 return true
 }
-
-// TODO: Add prefix/suffix/glob matching if needed
-// For example: "Bash*" could match "Bash", "BashScript", etc.
 }
-
 // Pattern doesn't match
 return false
 }
@@ -3051,12 +3047,3 @@ var _ ports.ProtocolHandler = (*Adapter)(nil)
 var _ ports.MessageParser = (*Adapter)(nil)
 ```
 If an adapter doesn't fully implement its port interface, the code won't compile.
-## Conclusion
-This plan provides a comprehensive roadmap for implementing a production-ready Claude Agent SDK for Go following strict hexagonal architecture principles. The implementation:
-- Separates domain logic from infrastructure
-- Uses interfaces (ports) to define contracts
-- Implements infrastructure via adapters
-- Enforces dependency direction (inward only)
-- Follows Go idioms and best practices
-- Maintains functional parity with Python SDK
-Next Steps: Begin implementation with Phase 1 (Core Domain & Ports), then Phase 2 (Domain Services), Phase 3 (Adapters), and finally Phase 4 (Public API).
