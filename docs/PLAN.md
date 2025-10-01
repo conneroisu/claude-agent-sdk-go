@@ -48,8 +48,7 @@ claude-agent-sdk-go/
 │       # Input/Output Ports (interfaces defined by domain)
 │       ├── ports/
 │       │   ├── transport.go    # Transport port (interface)
-│       │   ├── protocol.go     # Protocol port (interface)
-│       │   └── storage.go      # Storage port (interface)
+│       │   └── protocol.go     # Protocol port (interface)
 │       │
 │       # Adapters (implementations of ports - depend on domain)
 │       ├── adapters/
@@ -60,7 +59,7 @@ claude-agent-sdk-go/
 │       │   └── mcp/            # MCP server adapter
 │       │       └── server.go
 │       │
-│       # Public API (facade over domain services)
+│       # Public API (facade over domain services) (Used by application developers)
 │       ├── client.go       # Client (interactive conversations)
 │       ├── query.go        # Query() function (one-shot)
 │       ├── errors.go       # Error types
@@ -177,6 +176,8 @@ func (BlockListContent) messageContent() {}
 
 ```go
 package options
+
+// PermissionMode defines how permissions are handled
 type PermissionMode string
 
 const (
@@ -186,44 +187,73 @@ const (
     PermissionModeBypassPermissions PermissionMode = "bypassPermissions"
 )
 
+// SettingSource specifies where settings come from
+type SettingSource string
+
+const (
+    SettingSourceUser    SettingSource = "user"
+    SettingSourceProject SettingSource = "project"
+    SettingSourceLocal   SettingSource = "local"
+)
+
+// AgentOptions configures the Claude agent
+// Note: This is infrastructure configuration, NOT domain logic
 type AgentOptions struct {
+    // Basic settings
     AllowedTools             []string
-    SystemPrompt             SystemPromptConfig
-    MCPServers               map[string]MCPServerConfig
-    PermissionMode           *PermissionMode
-    ContinueConversation     bool
-    Resume                   *string
-    MaxTurns                 *int
     DisallowedTools          []string
     Model                    *string
-    PermissionPromptToolName *string
+    MaxTurns                 *int
     Cwd                      *string
     Settings                 *string
     AddDirs                  []string
     Env                      map[string]string
-    ExtraArgs                map[string]*string
+    User                     *string
+
+    // System prompt configuration
+    SystemPrompt             SystemPromptConfig
+
+    // MCP server configuration (just the config, not instances)
+    MCPServers               map[string]MCPServerConfig
+
+    // Permission settings
+    PermissionMode           *PermissionMode
+    PermissionPromptToolName *string
+
+    // Session management
+    ContinueConversation     bool
+    Resume                   *string
+    ForkSession              bool
+    IncludePartialMessages   bool
+
+    // Agent definitions (configuration only)
+    Agents                   map[string]AgentDefinition
+
+    // Setting sources
+    SettingSources           []SettingSource
+
+    // Transport settings
     MaxBufferSize            *int
     StderrCallback           func(string)
-
-    // Callbacks
-    CanUseTool               CanUseToolFunc
-
-    // Hooks
-    Hooks                    map[HookEvent][]HookMatcher
-
-    // Advanced features
-    IncludePartialMessages   bool
-    ForkSession              bool
-    Agents                   map[string]AgentDefinition
-    SettingSources           []SettingSource
-    User                     *string
+    ExtraArgs                map[string]*string
 }
 
+// AgentDefinition defines a subagent configuration
+type AgentDefinition struct {
+    Name          string
+    Description   string
+    SystemPrompt  *string
+    AllowedTools  []string
+    Model         *string
+}
+
+// SystemPromptConfig is configuration for system prompts
 type SystemPromptConfig interface {
     systemPromptConfig()
 }
 
 type StringSystemPrompt string
+
 type PresetSystemPrompt struct {
     Type   string
     Preset string
@@ -233,16 +263,19 @@ type PresetSystemPrompt struct {
 func (StringSystemPrompt) systemPromptConfig()  {}
 func (PresetSystemPrompt) systemPromptConfig() {}
 
+// MCPServerConfig is configuration for MCP servers (not runtime instances)
 type MCPServerConfig interface {
     mcpServerConfig()
 }
 
 type StdioServerConfig struct {
-    Type    *string // "stdio" or nil for backward compat
+    Type    string // "stdio"
     Command string
     Args    []string
     Env     map[string]string
 }
+
+func (StdioServerConfig) mcpServerConfig() {}
 
 type SSEServerConfig struct {
     Type    string // "sse"
@@ -250,17 +283,26 @@ type SSEServerConfig struct {
     Headers map[string]string
 }
 
+func (SSEServerConfig) mcpServerConfig() {}
+
 type HTTPServerConfig struct {
     Type    string // "http"
     URL     string
     Headers map[string]string
 }
 
+func (HTTPServerConfig) mcpServerConfig() {}
+
+// SDKServerConfig is a marker for SDK-managed MCP servers
+// The actual server instance is managed separately by the MCP adapter
 type SDKServerConfig struct {
-    Type     string // "sdk"
-    Name     string
-    Instance MCPServer
+    Type string // "sdk"
+    Name string
+    // Note: Instance is NOT stored here to avoid circular dependencies
+    // The MCP adapter will manage server instances separately
 }
+
+func (SDKServerConfig) mcpServerConfig() {}
 ```
 
 ### 1.2 Ports (Interfaces)
@@ -296,9 +338,19 @@ import "context"
 
 // ProtocolHandler defines what the domain needs for control protocol
 type ProtocolHandler interface {
+    // Initialize sends the initialize control request with hooks config
     Initialize(ctx context.Context, config any) (map[string]any, error)
-    SendRequest(ctx context.Context, req map[string]any) (map[string]any, error)
-    HandleRequest(ctx context.Context, req map[string]any) (map[string]any, error)
+
+    // SendControlRequest sends a control request and waits for response (60s timeout)
+    SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error)
+
+    // HandleControlRequest routes inbound control requests by subtype
+    // Subtypes: can_use_tool, hook_callback, mcp_message
+    HandleControlRequest(ctx context.Context, req map[string]any) (map[string]any, error)
+
+    // StartMessageRouter continuously reads transport and partitions messages
+    // Routes control_response, control_request, control_cancel_request separately from SDK messages
+    StartMessageRouter(ctx context.Context, msgCh chan<- map[string]any, errCh chan<- error) error
 }
 ```
 
@@ -363,26 +415,174 @@ package querying
 
 import (
     "context"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/ports"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/messages"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/options"
+    "crypto/rand"
+    "encoding/hex"
+    "encoding/json"
+    "fmt"
+    "sync"
+    "time"
+
+    "github.com/conneroisu/claude/pkg/claude/ports"
+    "github.com/conneroisu/claude/pkg/claude/messages"
+    "github.com/conneroisu/claude/pkg/claude/options"
+    "github.com/conneroisu/claude/pkg/claude/hooking"
 )
+
+// controlResult holds the result of a control request
+type controlResult struct {
+    data map[string]any
+    err  error
+}
 
 // Service handles query execution
 type Service struct {
     transport ports.Transport
     protocol  ports.ProtocolHandler
+    hooking   *hooking.Service
+
+    // Control protocol state
+    isStreaming      bool
+    pendingRequests  map[string]chan controlResult
+    hookCallbacks    map[string]hooking.HookCallback
+    nextCallbackID   int
+    requestCounter   int
+    mu               sync.Mutex
 }
 
-func NewService(transport ports.Transport, protocol ports.ProtocolHandler) *Service {
+func NewService(transport ports.Transport, protocol ports.ProtocolHandler, hooks *hooking.Service) *Service {
     return &Service{
-        transport: transport,
-        protocol:  protocol,
+        transport:       transport,
+        protocol:        protocol,
+        hooking:         hooks,
+        isStreaming:     false, // Query is one-shot by default
+        pendingRequests: make(map[string]chan controlResult),
+        hookCallbacks:   make(map[string]hooking.HookCallback),
     }
+}
+
+// Initialize performs control protocol handshake (no-op for one-shot queries)
+func (s *Service) Initialize(ctx context.Context) error {
+    if !s.isStreaming {
+        return nil // One-shot queries don't need initialization
+    }
+
+    // Build hooks configuration by iterating hooking service
+    hooksConfig := make(map[string]any)
+
+    if s.hooking != nil {
+        hooks := s.hooking.GetHooks()
+
+        for event, matchers := range hooks {
+            eventConfig := []map[string]any{}
+
+            for _, matcher := range matchers {
+                callbackIDs := []string{}
+
+                for _, callback := range matcher.Hooks {
+                    // Assign callback ID matching Python format: hook_{counter}
+                    s.mu.Lock()
+                    callbackID := fmt.Sprintf("hook_%d", s.nextCallbackID)
+                    s.nextCallbackID++
+                    s.hookCallbacks[callbackID] = callback
+                    s.mu.Unlock()
+
+                    callbackIDs = append(callbackIDs, callbackID)
+                }
+
+                eventConfig = append(eventConfig, map[string]any{
+                    "matcher":         matcher.Matcher,
+                    "hookCallbackIds": callbackIDs,
+                })
+            }
+
+            hooksConfig[string(event)] = eventConfig
+        }
+    }
+
+    // Send initialize control request
+    request := map[string]any{
+        "subtype": "initialize",
+        "hooks":   hooksConfig,
+    }
+
+    _, err := s.sendControlRequest(ctx, request)
+    return err
 }
 
 func (s *Service) Execute(ctx context.Context, prompt string, opts *options.AgentOptions) (<-chan messages.Message, <-chan error) {
     // Domain logic for query execution
+    // 1. Connect transport
+    // 2. Initialize control protocol if streaming
+    // 3. Start message router
+    // 4. Send prompt
+    // 5. Stream messages
+}
+
+func (s *Service) sendControlRequest(ctx context.Context, request map[string]any) (map[string]any, error) {
+    if !s.isStreaming {
+        return nil, fmt.Errorf("control requests require streaming mode")
+    }
+
+    // Generate unique request ID matching Python format: req_{counter}_{randomHex}
+    s.mu.Lock()
+    s.requestCounter++
+    requestID := fmt.Sprintf("req_%d_%s", s.requestCounter, randomHex(4))
+    s.mu.Unlock()
+
+    // Create result channel
+    resCh := make(chan controlResult, 1)
+    s.mu.Lock()
+    s.pendingRequests[requestID] = resCh
+    s.mu.Unlock()
+
+    // Build control request envelope
+    controlReq := map[string]any{
+        "type":       "control_request",
+        "request_id": requestID,
+        "request":    request,
+    }
+
+    // Send via protocol
+    reqBytes, err := json.Marshal(controlReq)
+    if err != nil {
+        s.mu.Lock()
+        delete(s.pendingRequests, requestID)
+        s.mu.Unlock()
+        return nil, fmt.Errorf("marshal control request: %w", err)
+    }
+
+    if err := s.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
+        s.mu.Lock()
+        delete(s.pendingRequests, requestID)
+        s.mu.Unlock()
+        return nil, fmt.Errorf("write control request: %w", err)
+    }
+
+    // Wait for response with 60s timeout
+    timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+    defer cancel()
+
+    select {
+    case <-timeoutCtx.Done():
+        s.mu.Lock()
+        delete(s.pendingRequests, requestID)
+        s.mu.Unlock()
+        if timeoutCtx.Err() == context.DeadlineExceeded {
+            return nil, fmt.Errorf("control request timeout: %s", request["subtype"])
+        }
+        return nil, timeoutCtx.Err()
+    case res := <-resCh:
+        if res.err != nil {
+            return nil, res.err
+        }
+        return res.data, nil
+    }
+}
+
+func randomHex(n int) string {
+    b := make([]byte, n)
+    rand.Read(b)
+    return hex.EncodeToString(b)
 }
 ```
 
@@ -397,33 +597,384 @@ package streaming
 
 import (
     "context"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/ports"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/messages"
+    "crypto/rand"
+    "encoding/hex"
+    "encoding/json"
+    "fmt"
+    "sync"
+    "time"
+
+    "github.com/conneroisu/claude/pkg/claude/ports"
+    "github.com/conneroisu/claude/pkg/claude/messages"
+    "github.com/conneroisu/claude/pkg/claude/hooking"
+    "github.com/conneroisu/claude/pkg/claude/permissions"
 )
+
+// controlResult holds the result of a control request
+type controlResult struct {
+    data map[string]any
+    err  error
+}
 
 // Service handles streaming conversations
 type Service struct {
-    transport ports.Transport
-    protocol  ports.ProtocolHandler
+    transport    ports.Transport
+    protocol     ports.ProtocolHandler
+    hooking      *hooking.Service
+    permissions  *permissions.Service
+
+    // Control protocol state
+    isStreaming      bool
+    pendingRequests  map[string]chan controlResult
+    hookCallbacks    map[string]hooking.HookCallback
+    nextCallbackID   int
+    requestCounter   int
+    mu               sync.Mutex
 }
 
-func NewService(transport ports.Transport, protocol ports.ProtocolHandler) *Service {
+func NewService(transport ports.Transport, protocol ports.ProtocolHandler, hooks *hooking.Service, perms *permissions.Service) *Service {
     return &Service{
-        transport: transport,
-        protocol:  protocol,
+        transport:       transport,
+        protocol:        protocol,
+        hooking:         hooks,
+        permissions:     perms,
+        isStreaming:     true, // Streaming service is always streaming
+        pendingRequests: make(map[string]chan controlResult),
+        hookCallbacks:   make(map[string]hooking.HookCallback),
+    }
+}
+
+// Initialize performs control protocol handshake
+func (s *Service) Initialize(ctx context.Context) error {
+    // Build hooks configuration by iterating hooking service
+    hooksConfig := make(map[string]any)
+
+    if s.hooking != nil {
+        hooks := s.hooking.GetHooks()
+
+        for event, matchers := range hooks {
+            eventConfig := []map[string]any{}
+
+            for _, matcher := range matchers {
+                callbackIDs := []string{}
+
+                for _, callback := range matcher.Hooks {
+                    // Assign callback ID matching Python format: hook_{counter}
+                    s.mu.Lock()
+                    callbackID := fmt.Sprintf("hook_%d", s.nextCallbackID)
+                    s.nextCallbackID++
+                    s.hookCallbacks[callbackID] = callback
+                    s.mu.Unlock()
+
+                    callbackIDs = append(callbackIDs, callbackID)
+                }
+
+                eventConfig = append(eventConfig, map[string]any{
+                    "matcher":         matcher.Matcher,
+                    "hookCallbackIds": callbackIDs,
+                })
+            }
+
+            hooksConfig[string(event)] = eventConfig
+        }
+    }
+
+    // Send initialize control request
+    request := map[string]any{
+        "subtype": "initialize",
+        "hooks":   hooksConfig,
+    }
+
+    _, err := s.sendControlRequest(ctx, request)
+    return err
+}
+
+func (s *Service) sendControlRequest(ctx context.Context, request map[string]any) (map[string]any, error) {
+    // Generate unique request ID matching Python format: req_{counter}_{randomHex}
+    s.mu.Lock()
+    s.requestCounter++
+    requestID := fmt.Sprintf("req_%d_%s", s.requestCounter, randomHex(4))
+    s.mu.Unlock()
+
+    // Create result channel
+    resCh := make(chan controlResult, 1)
+    s.mu.Lock()
+    s.pendingRequests[requestID] = resCh
+    s.mu.Unlock()
+
+    // Build control request envelope
+    controlReq := map[string]any{
+        "type":       "control_request",
+        "request_id": requestID,
+        "request":    request,
+    }
+
+    // Send via transport
+    reqBytes, err := json.Marshal(controlReq)
+    if err != nil {
+        s.mu.Lock()
+        delete(s.pendingRequests, requestID)
+        s.mu.Unlock()
+        return nil, fmt.Errorf("marshal control request: %w", err)
+    }
+
+    if err := s.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
+        s.mu.Lock()
+        delete(s.pendingRequests, requestID)
+        s.mu.Unlock()
+        return nil, fmt.Errorf("write control request: %w", err)
+    }
+
+    // Wait for response with 60s timeout
+    timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+    defer cancel()
+
+    select {
+    case <-timeoutCtx.Done():
+        s.mu.Lock()
+        delete(s.pendingRequests, requestID)
+        s.mu.Unlock()
+        if timeoutCtx.Err() == context.DeadlineExceeded {
+            return nil, fmt.Errorf("control request timeout: %s", request["subtype"])
+        }
+        return nil, timeoutCtx.Err()
+    case res := <-resCh:
+        if res.err != nil {
+            return nil, res.err
+        }
+        return res.data, nil
     }
 }
 
 func (s *Service) Connect(ctx context.Context, prompt any) error {
     // Domain logic for establishing streaming connection
+    // 1. Connect transport
+    // 2. Initialize control protocol
+    // 3. Start message router
+    // 4. Set up bidirectional message flow
+    return nil
 }
 
 func (s *Service) SendMessage(ctx context.Context, msg string) error {
     // Domain logic for sending messages
+    // 1. Format message
+    // 2. Send via transport
+    // 3. Handle errors
+    return nil
 }
 
 func (s *Service) ReceiveMessages(ctx context.Context) (<-chan messages.Message, <-chan error) {
     // Domain logic for receiving messages
+    // 1. Read from protocol
+    // 2. Parse messages
+    // 3. Stream to channels
+    msgCh := make(chan messages.Message)
+    errCh := make(chan error, 1)
+    return msgCh, errCh
+}
+
+func (s *Service) Close() error {
+    // Cleanup resources
+    // 1. Close protocol connections
+    // 2. Close transport
+    // 3. Clean up channels
+    return nil
+}
+
+func randomHex(n int) string {
+    b := make([]byte, n)
+    rand.Read(b)
+    return hex.EncodeToString(b)
+}
+```
+
+### 2.3 Hooking Service (hooking/service.go)
+
+**Priority**: High
+
+The hooking service manages hook execution and lifecycle.
+
+```go
+package hooking
+
+import (
+    "context"
+)
+
+// HookEvent represents different hook trigger points
+type HookEvent string
+
+const (
+    HookEventPreToolUse       HookEvent = "PreToolUse"
+    HookEventPostToolUse      HookEvent = "PostToolUse"
+    HookEventUserPromptSubmit HookEvent = "UserPromptSubmit"
+    HookEventStop             HookEvent = "Stop"
+    HookEventSubagentStop     HookEvent = "SubagentStop"
+    HookEventPreCompact       HookEvent = "PreCompact"
+)
+
+// HookContext provides context for hook execution
+type HookContext struct {
+    // Future: signal support for cancellation
+}
+
+// HookCallback is a function that handles hook events
+type HookCallback func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error)
+
+// HookMatcher defines when a hook should execute
+type HookMatcher struct {
+    Matcher string          // Pattern to match (e.g., tool name, event type)
+    Hooks   []HookCallback  // Callbacks to execute
+}
+
+// Service manages hook execution
+type Service struct {
+    hooks map[HookEvent][]HookMatcher
+}
+
+func NewService(hooks map[HookEvent][]HookMatcher) *Service {
+    return &Service{
+        hooks: hooks,
+    }
+}
+
+// GetHooks returns the hook configuration
+func (s *Service) GetHooks() map[HookEvent][]HookMatcher {
+    if s == nil {
+        return nil
+    }
+    return s.hooks
+}
+
+// Execute runs hooks for a given event
+func (s *Service) Execute(ctx context.Context, event HookEvent, input map[string]any, toolUseID *string) (map[string]any, error) {
+    // Domain logic for hook execution
+    // 1. Find matching hooks for event
+    // 2. Execute hooks in order
+    // 3. Aggregate results
+    // 4. Handle blocking decisions
+    return nil, nil
+}
+
+// Register adds a new hook
+func (s *Service) Register(event HookEvent, matcher HookMatcher) {
+    if s.hooks == nil {
+        s.hooks = make(map[HookEvent][]HookMatcher)
+    }
+    s.hooks[event] = append(s.hooks[event], matcher)
+}
+```
+
+### 2.4 Permissions Service (permissions/service.go)
+
+**Priority**: High
+
+The permissions service handles tool permission checks and updates.
+
+```go
+package permissions
+
+import (
+    "context"
+    "github.com/conneroisu/claude/pkg/claude/options"
+)
+
+// PermissionResult represents the outcome of a permission check
+type PermissionResult interface {
+    permissionResult()
+}
+
+// PermissionResultAllow indicates tool use is allowed
+type PermissionResultAllow struct {
+    UpdatedInput       map[string]any
+    UpdatedPermissions []PermissionUpdate
+}
+
+func (PermissionResultAllow) permissionResult() {}
+
+// PermissionResultDeny indicates tool use is denied
+type PermissionResultDeny struct {
+    Message   string
+    Interrupt bool
+}
+
+func (PermissionResultDeny) permissionResult() {}
+
+// PermissionUpdate represents a permission change
+type PermissionUpdate struct {
+    Type        string
+    Rules       []PermissionRuleValue
+    Behavior    *PermissionBehavior
+    Mode        *options.PermissionMode
+    Directories []string
+    Destination *PermissionUpdateDestination
+}
+
+type PermissionRuleValue struct {
+    ToolName    string
+    RuleContent *string
+}
+
+type PermissionBehavior string
+
+const (
+    PermissionBehaviorAllow PermissionBehavior = "allow"
+    PermissionBehaviorDeny  PermissionBehavior = "deny"
+    PermissionBehaviorAsk   PermissionBehavior = "ask"
+)
+
+type PermissionUpdateDestination string
+
+const (
+    PermissionDestinationUserSettings    PermissionUpdateDestination = "userSettings"
+    PermissionDestinationProjectSettings PermissionUpdateDestination = "projectSettings"
+    PermissionDestinationLocalSettings   PermissionUpdateDestination = "localSettings"
+    PermissionDestinationSession         PermissionUpdateDestination = "session"
+)
+
+// ToolPermissionContext provides context for permission decisions
+type ToolPermissionContext struct {
+    Suggestions []PermissionUpdate
+}
+
+// CanUseToolFunc is a callback for permission checks
+type CanUseToolFunc func(ctx context.Context, toolName string, input map[string]any, permCtx ToolPermissionContext) (PermissionResult, error)
+
+// PermissionsConfig holds permission service configuration
+type PermissionsConfig struct {
+    Mode       options.PermissionMode
+    CanUseTool CanUseToolFunc
+}
+
+// Service manages tool permissions
+type Service struct {
+    mode        options.PermissionMode
+    canUseTool  CanUseToolFunc
+}
+
+func NewService(config *PermissionsConfig) *Service {
+    if config == nil {
+        return &Service{
+            mode: options.PermissionModeAsk,
+        }
+    }
+    return &Service{
+        mode:       config.Mode,
+        canUseTool: config.CanUseTool,
+    }
+}
+
+// CheckToolUse verifies if a tool can be used
+func (s *Service) CheckToolUse(ctx context.Context, toolName string, input map[string]any) (PermissionResult, error) {
+    // Domain logic for permission checking
+    // 1. Check permission mode
+    // 2. Call canUseTool callback if set
+    // 3. Apply default behavior
+}
+
+// UpdateMode changes the permission mode
+func (s *Service) UpdateMode(mode options.PermissionMode) {
+    s.mode = mode
 }
 ```
 
@@ -442,50 +993,368 @@ import (
     "bufio"
     "context"
     "encoding/json"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/ports"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/options"
+    "fmt"
+    "io"
+    "os"
     "os/exec"
+    "path/filepath"
+    "strings"
     "sync"
+
+    "github.com/conneroisu/claude/pkg/claude/ports"
+    "github.com/conneroisu/claude/pkg/claude/options"
 )
 
 // Adapter implements ports.Transport using CLI subprocess
 type Adapter struct {
-    options       *options.AgentOptions
-    cliPath       string
-    cmd           *exec.Cmd
-    stdin         io.WriteCloser
-    stdout        io.ReadCloser
-    ready         bool
-    mu            sync.RWMutex
+    options            *options.AgentOptions
+    cliPath            string
+    cmd                *exec.Cmd
+    stdin              io.WriteCloser
+    stdout             io.ReadCloser
+    stderr             io.ReadCloser
+    ready              bool
+    exitErr            error
+    closeStdinAfterWrite bool  // For one-shot queries
+    mu                 sync.RWMutex
+    maxBufferSize      int
 }
 
 // Verify interface compliance at compile time
 var _ ports.Transport = (*Adapter)(nil)
 
+const defaultMaxBufferSize = 1024 * 1024 // 1MB
+
 func NewAdapter(opts *options.AgentOptions) *Adapter {
+    maxBuf := defaultMaxBufferSize
+    if opts.MaxBufferSize != nil {
+        maxBuf = *opts.MaxBufferSize
+    }
+
     return &Adapter{
-        options: opts,
+        options:       opts,
+        maxBufferSize: maxBuf,
     }
 }
 
+// findCLI locates the Claude CLI binary
+func (a *Adapter) findCLI() (string, error) {
+    // Check PATH first
+    if path, err := exec.LookPath("claude"); err == nil {
+        return path, nil
+    }
+
+    // Check common installation locations
+    homeDir, _ := os.UserHomeDir()
+    locations := []string{
+        filepath.Join(homeDir, ".npm-global", "bin", "claude"),
+        "/usr/local/bin/claude",
+        filepath.Join(homeDir, ".local", "bin", "claude"),
+        filepath.Join(homeDir, "node_modules", ".bin", "claude"),
+        filepath.Join(homeDir, ".yarn", "bin", "claude"),
+    }
+
+    for _, loc := range locations {
+        if _, err := os.Stat(loc); err == nil {
+            return loc, nil
+        }
+    }
+
+    return "", fmt.Errorf("claude CLI not found in PATH or common locations")
+}
+
+// BuildCommand constructs the CLI command with all options
+// Exported for testing purposes
+func (a *Adapter) BuildCommand() ([]string, error) {
+    cmd := []string{a.cliPath, "--output-format", "stream-json", "--verbose"}
+
+    // System prompt
+    if a.options.SystemPrompt != nil {
+        switch sp := a.options.SystemPrompt.(type) {
+        case options.StringSystemPrompt:
+            cmd = append(cmd, "--system-prompt", string(sp))
+        case options.PresetSystemPrompt:
+            if sp.Append != nil {
+                cmd = append(cmd, "--append-system-prompt", *sp.Append)
+            }
+        }
+    }
+
+    // Tools
+    if len(a.options.AllowedTools) > 0 {
+        cmd = append(cmd, "--allowedTools", strings.Join(a.options.AllowedTools, ","))
+    }
+    if len(a.options.DisallowedTools) > 0 {
+        cmd = append(cmd, "--disallowedTools", strings.Join(a.options.DisallowedTools, ","))
+    }
+
+    // Model and turns
+    if a.options.Model != nil {
+        cmd = append(cmd, "--model", *a.options.Model)
+    }
+    if a.options.MaxTurns != nil {
+        cmd = append(cmd, "--max-turns", fmt.Sprintf("%d", *a.options.MaxTurns))
+    }
+
+    // Permissions
+    if a.options.PermissionMode != nil {
+        cmd = append(cmd, "--permission-mode", string(*a.options.PermissionMode))
+    }
+    if a.options.PermissionPromptToolName != nil {
+        cmd = append(cmd, "--permission-prompt-tool", *a.options.PermissionPromptToolName)
+    }
+
+    // Session
+    if a.options.ContinueConversation {
+        cmd = append(cmd, "--continue")
+    }
+    if a.options.Resume != nil {
+        cmd = append(cmd, "--resume", *a.options.Resume)
+    }
+    if a.options.ForkSession {
+        cmd = append(cmd, "--fork-session")
+    }
+
+    // Settings
+    if a.options.Settings != nil {
+        cmd = append(cmd, "--settings", *a.options.Settings)
+    }
+    if len(a.options.SettingSources) > 0 {
+        sources := make([]string, len(a.options.SettingSources))
+        for i, s := range a.options.SettingSources {
+            sources[i] = string(s)
+        }
+        cmd = append(cmd, "--setting-sources", strings.Join(sources, ","))
+    }
+
+    // Directories
+    for _, dir := range a.options.AddDirs {
+        cmd = append(cmd, "--add-dir", dir)
+    }
+
+    // MCP servers (configuration only, instances handled separately)
+    if len(a.options.MCPServers) > 0 {
+        // Convert to JSON config
+        mcpConfig := map[string]any{"mcpServers": a.options.MCPServers}
+        jsonBytes, err := json.Marshal(mcpConfig)
+        if err != nil {
+            return nil, fmt.Errorf("failed to marshal MCP config: %w", err)
+        }
+        cmd = append(cmd, "--mcp-config", string(jsonBytes))
+    }
+
+    // Extra arguments
+    for flag, value := range a.options.ExtraArgs {
+        if value == nil {
+            cmd = append(cmd, "--"+flag)
+        } else {
+            cmd = append(cmd, "--"+flag, *value)
+        }
+    }
+
+    return cmd, nil
+}
+
 func (a *Adapter) Connect(ctx context.Context) error {
-    // Implementation: Start CLI subprocess
+    a.mu.Lock()
+    defer a.mu.Unlock()
+
+    if a.ready {
+        return nil
+    }
+
+    // Find CLI
+    cliPath, err := a.findCLI()
+    if err != nil {
+        return fmt.Errorf("CLI discovery failed: %w", err)
+    }
+    a.cliPath = cliPath
+
+    // Build command
+    cmdArgs, err := a.BuildCommand()
+    if err != nil {
+        return fmt.Errorf("command construction failed: %w", err)
+    }
+
+    // Set up environment
+    env := os.Environ()
+    env = append(env, "CLAUDE_CODE_ENTRYPOINT=sdk-go")
+    for k, v := range a.options.Env {
+        env = append(env, k+"="+v)
+    }
+
+    // Create command
+    a.cmd = exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+    a.cmd.Env = env
+    if a.options.Cwd != nil {
+        a.cmd.Dir = *a.options.Cwd
+    }
+
+    // Set up pipes
+    stdin, err := a.cmd.StdinPipe()
+    if err != nil {
+        return fmt.Errorf("stdin pipe failed: %w", err)
+    }
+    a.stdin = stdin
+
+    stdout, err := a.cmd.StdoutPipe()
+    if err != nil {
+        return fmt.Errorf("stdout pipe failed: %w", err)
+    }
+    a.stdout = stdout
+
+    stderr, err := a.cmd.StderrPipe()
+    if err != nil {
+        return fmt.Errorf("stderr pipe failed: %w", err)
+    }
+    a.stderr = stderr
+
+    // Start process
+    if err := a.cmd.Start(); err != nil {
+        return fmt.Errorf("process start failed: %w", err)
+    }
+
+    // Start stderr handler if callback is set
+    if a.options.StderrCallback != nil {
+        go a.handleStderr()
+    }
+
+    // Detect one-shot mode: not using stream-json input format
+    // In one-shot mode, stdin should be closed after first write
+    if a.options.InputFormat != "stream-json" {
+        a.closeStdinAfterWrite = true
+    }
+
+    a.ready = true
+    return nil
+}
+
+func (a *Adapter) handleStderr() {
+    scanner := bufio.NewScanner(a.stderr)
+    for scanner.Scan() {
+        line := scanner.Text()
+        if a.options.StderrCallback != nil {
+            a.options.StderrCallback(line)
+        }
+    }
 }
 
 func (a *Adapter) Write(ctx context.Context, data string) error {
-    // Implementation: Write to stdin
+    a.mu.RLock()
+    shouldClose := a.closeStdinAfterWrite
+    a.mu.RUnlock()
+
+    a.mu.Lock()
+    defer a.mu.Unlock()
+
+    if !a.ready {
+        return fmt.Errorf("transport not ready")
+    }
+
+    if a.exitErr != nil {
+        return fmt.Errorf("transport has exited: %w", a.exitErr)
+    }
+
+    _, err := a.stdin.Write([]byte(data))
+    if err != nil {
+        return err
+    }
+
+    // Close stdin after write for one-shot queries
+    if shouldClose {
+        a.closeStdinAfterWrite = false
+        a.stdin.Close()
+    }
+
+    return nil
 }
 
 func (a *Adapter) ReadMessages(ctx context.Context) (<-chan map[string]any, <-chan error) {
-    // Implementation: Read from stdout
+    msgCh := make(chan map[string]any, 10)
+    errCh := make(chan error, 1)
+
+    go func() {
+        defer close(msgCh)
+        defer close(errCh)
+
+        scanner := bufio.NewScanner(a.stdout)
+
+        // Configure scanner buffer to handle large Claude responses
+        // Default is 64KB which is insufficient for large responses
+        scanBuf := make([]byte, 64*1024)
+        scanner.Buffer(scanBuf, a.maxBufferSize)
+
+        buffer := ""
+
+        for scanner.Scan() {
+            select {
+            case <-ctx.Done():
+                errCh <- ctx.Err()
+                return
+            default:
+            }
+
+            line := scanner.Text()
+            buffer += line
+
+            // Check buffer size
+            if len(buffer) > a.maxBufferSize {
+                errCh <- fmt.Errorf("message buffer exceeded %d bytes", a.maxBufferSize)
+                return
+            }
+
+            // Try to parse JSON
+            var msg map[string]any
+            if err := json.Unmarshal([]byte(buffer), &msg); err == nil {
+                buffer = ""
+                msgCh <- msg
+            }
+            // Continue buffering if incomplete
+        }
+
+        if err := scanner.Err(); err != nil {
+            errCh <- err
+        }
+
+        // Check exit status
+        if a.cmd != nil {
+            if err := a.cmd.Wait(); err != nil {
+                errCh <- fmt.Errorf("process exited with error: %w", err)
+            }
+        }
+    }()
+
+    return msgCh, errCh
 }
 
 func (a *Adapter) EndInput() error {
-    // Implementation: Close stdin
+    a.mu.Lock()
+    defer a.mu.Unlock()
+
+    if a.stdin != nil {
+        return a.stdin.Close()
+    }
+    return nil
 }
 
 func (a *Adapter) Close() error {
-    // Implementation: Cleanup subprocess
+    a.mu.Lock()
+    defer a.mu.Unlock()
+
+    a.ready = false
+
+    // Close stdin
+    if a.stdin != nil {
+        a.stdin.Close()
+    }
+
+    // Terminate process
+    if a.cmd != nil && a.cmd.Process != nil {
+        a.cmd.Process.Kill()
+        a.cmd.Wait()
+    }
+
+    return nil
 }
 
 func (a *Adapter) IsReady() bool {
@@ -505,13 +1374,20 @@ package jsonrpc
 import (
     "context"
     "encoding/json"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/ports"
+    "fmt"
     "sync"
+
+    "github.com/conneroisu/claude/pkg/claude/ports"
+    "github.com/conneroisu/claude/pkg/claude/permissions"
+    "github.com/conneroisu/claude/pkg/claude/hooking"
 )
 
-// Adapter implements ports.ProtocolHandler using JSON-RPC
+// Adapter implements ports.ProtocolHandler for control protocol
 type Adapter struct {
     transport      ports.Transport
+    permissions    *permissions.Service
+    hookCallbacks  map[string]hooking.HookCallback
+    mcpServers     map[string]MCPServer
     pendingReqs    map[string]chan result
     requestCounter int
     mu             sync.Mutex
@@ -525,23 +1401,300 @@ type result struct {
     err  error
 }
 
-func NewAdapter(transport ports.Transport) *Adapter {
+// MCPServer interface for in-process MCP servers
+type MCPServer interface {
+    Name() string
+    Initialize(ctx context.Context, params any) (any, error)
+    ListTools(ctx context.Context) ([]MCPTool, error)
+    CallTool(ctx context.Context, name string, args map[string]any) (MCPToolResult, error)
+    HandleNotification(ctx context.Context, method string, params any) error
+}
+
+type MCPTool struct {
+    Name        string         `json:"name"`
+    Description string         `json:"description"`
+    InputSchema map[string]any `json:"inputSchema"`
+}
+
+type MCPToolResult struct {
+    Content []map[string]any `json:"content"`
+    IsError bool             `json:"isError,omitempty"`
+}
+
+func NewAdapter(transport ports.Transport, perms *permissions.Service, hooks map[string]hooking.HookCallback) *Adapter {
     return &Adapter{
-        transport:   transport,
-        pendingReqs: make(map[string]chan result),
+        transport:     transport,
+        permissions:   perms,
+        hookCallbacks: hooks,
+        mcpServers:    make(map[string]MCPServer),
+        pendingReqs:   make(map[string]chan result),
     }
 }
 
+// RegisterMCPServer adds an MCP server to the registry
+func (a *Adapter) RegisterMCPServer(name string, server MCPServer) {
+    a.mu.Lock()
+    defer a.mu.Unlock()
+    a.mcpServers[name] = server
+}
+
+// Initialize is a no-op for the protocol adapter
+// Actual initialization is handled by domain services via SendControlRequest
 func (a *Adapter) Initialize(ctx context.Context, config any) (map[string]any, error) {
-    // Implementation
+    // Protocol adapter doesn't need initialization
+    // Domain services will call SendControlRequest with initialize subtype
+    return nil, nil
 }
 
-func (a *Adapter) SendRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
-    // Implementation
+// SendControlRequest is not used by this adapter
+// Control requests are sent directly via transport by domain services
+func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
+    return nil, fmt.Errorf("SendControlRequest should be called on domain services, not protocol adapter")
 }
 
-func (a *Adapter) HandleRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
-    // Implementation
+// HandleControlRequest routes inbound control requests by subtype
+func (a *Adapter) HandleControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
+    request, _ := req["request"].(map[string]any)
+    subtype, _ := request["subtype"].(string)
+
+    switch subtype {
+    case "can_use_tool":
+        return a.handleCanUseTool(ctx, request)
+    case "hook_callback":
+        return a.handleHookCallback(ctx, request)
+    case "mcp_message":
+        return a.handleMCPMessage(ctx, request)
+    default:
+        return nil, fmt.Errorf("unsupported control request subtype: %s", subtype)
+    }
+}
+
+// StartMessageRouter continuously reads transport and partitions messages
+func (a *Adapter) StartMessageRouter(ctx context.Context, msgCh chan<- map[string]any, errCh chan<- error) error {
+    go func() {
+        transportMsgCh, transportErrCh := a.transport.ReadMessages(ctx)
+
+        for {
+            select {
+            case <-ctx.Done():
+                return
+
+            case msg, ok := <-transportMsgCh:
+                if !ok {
+                    return
+                }
+
+                msgType, _ := msg["type"].(string)
+
+                switch msgType {
+                case "control_response":
+                    // Route to pending request
+                    a.routeControlResponse(msg)
+
+                case "control_request":
+                    // Handle inbound control request
+                    go a.handleControlRequestAsync(ctx, msg)
+
+                case "control_cancel_request":
+                    // TODO: Implement cancellation support
+                    continue
+
+                default:
+                    // Forward SDK messages to public stream
+                    select {
+                    case msgCh <- msg:
+                    case <-ctx.Done():
+                        return
+                    }
+                }
+
+            case err := <-transportErrCh:
+                if err != nil {
+                    select {
+                    case errCh <- err:
+                    case <-ctx.Done():
+                    }
+                    return
+                }
+            }
+        }
+    }()
+
+    return nil
+}
+
+// routeControlResponse routes control_response messages to pending requests
+func (a *Adapter) routeControlResponse(msg map[string]any) {
+    response, _ := msg["response"].(map[string]any)
+    requestID, _ := response["request_id"].(string)
+
+    a.mu.Lock()
+    defer a.mu.Unlock()
+
+    if ch, exists := a.pendingReqs[requestID]; exists {
+        subtype, _ := response["subtype"].(string)
+        if subtype == "error" {
+            errorMsg, _ := response["error"].(string)
+            ch <- result{err: fmt.Errorf("control error: %s", errorMsg)}
+        } else {
+            responseData, _ := response["response"].(map[string]any)
+            ch <- result{data: responseData}
+        }
+        delete(a.pendingReqs, requestID)
+    }
+}
+
+// handleControlRequestAsync handles inbound control requests asynchronously
+func (a *Adapter) handleControlRequestAsync(ctx context.Context, msg map[string]any) {
+    requestID, _ := msg["request_id"].(string)
+
+    // Handle the request
+    responseData, err := a.HandleControlRequest(ctx, msg)
+
+    // Build response
+    var response map[string]any
+    if err != nil {
+        response = map[string]any{
+            "type": "control_response",
+            "response": map[string]any{
+                "subtype":    "error",
+                "request_id": requestID,
+                "error":      err.Error(),
+            },
+        }
+    } else {
+        response = map[string]any{
+            "type": "control_response",
+            "response": map[string]any{
+                "subtype":    "success",
+                "request_id": requestID,
+                "response":   responseData,
+            },
+        }
+    }
+
+    // Send response
+    resBytes, _ := json.Marshal(response)
+    a.transport.Write(ctx, string(resBytes)+"\n")
+}
+
+// handleCanUseTool handles can_use_tool control requests
+func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any) (map[string]any, error) {
+    toolName, _ := request["tool_name"].(string)
+    input, _ := request["input"].(map[string]any)
+    // suggestions, _ := request["permission_suggestions"].([]any) // TODO: Use suggestions
+
+    if a.permissions == nil {
+        return nil, fmt.Errorf("permissions callback not provided")
+    }
+
+    result, err := a.permissions.CheckToolUse(ctx, toolName, input)
+    if err != nil {
+        return nil, err
+    }
+
+    // Convert PermissionResult to response format
+    switch r := result.(type) {
+    case *permissions.PermissionResultAllow:
+        response := map[string]any{"allow": true}
+        if r.UpdatedInput != nil {
+            response["input"] = r.UpdatedInput
+        }
+        // TODO: Handle updatedPermissions when control protocol supports it
+        return response, nil
+    case *permissions.PermissionResultDeny:
+        return map[string]any{
+            "allow":  false,
+            "reason": r.Message,
+        }, nil
+    default:
+        return nil, fmt.Errorf("unknown permission result type")
+    }
+}
+
+// handleHookCallback handles hook_callback control requests
+func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any) (map[string]any, error) {
+    callbackID, _ := request["callback_id"].(string)
+    input, _ := request["input"].(map[string]any)
+    toolUseID, _ := request["tool_use_id"].(*string)
+
+    callback, exists := a.hookCallbacks[callbackID]
+    if !exists {
+        return nil, fmt.Errorf("no hook callback found for ID: %s", callbackID)
+    }
+
+    // Execute callback
+    hookCtx := hooking.HookContext{} // TODO: Add signal support
+    result, err := callback(input, toolUseID, hookCtx)
+    if err != nil {
+        return nil, err
+    }
+
+    return result, nil
+}
+
+// handleMCPMessage handles mcp_message control requests
+func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any) (map[string]any, error) {
+    serverName, _ := request["server_name"].(string)
+    mcpMessage, _ := request["message"].(map[string]any)
+
+    a.mu.Lock()
+    server, exists := a.mcpServers[serverName]
+    a.mu.Unlock()
+
+    if !exists {
+        return a.mcpErrorResponse(mcpMessage, -32601, fmt.Sprintf("Server '%s' not found", serverName)), nil
+    }
+
+    method, _ := mcpMessage["method"].(string)
+    messageID := mcpMessage["id"]
+    params := mcpMessage["params"]
+
+    var result any
+    var err error
+
+    switch method {
+    case "initialize":
+        result, err = server.Initialize(ctx, params)
+    case "tools/list":
+        result, err = server.ListTools(ctx)
+    case "tools/call":
+        callParams, _ := params.(map[string]any)
+        toolName, _ := callParams["name"].(string)
+        args, _ := callParams["arguments"].(map[string]any)
+        result, err = server.CallTool(ctx, toolName, args)
+    case "notifications/initialized":
+        err = server.HandleNotification(ctx, method, params)
+        result = nil // Notifications have no result
+    default:
+        return a.mcpErrorResponse(mcpMessage, -32601, "Method not found"), nil
+    }
+
+    if err != nil {
+        return a.mcpErrorResponse(mcpMessage, -32603, err.Error()), nil
+    }
+
+    return map[string]any{
+        "mcp_response": map[string]any{
+            "jsonrpc": "2.0",
+            "id":      messageID,
+            "result":  result,
+        },
+    }, nil
+}
+
+// mcpErrorResponse creates an MCP JSON-RPC error response
+func (a *Adapter) mcpErrorResponse(message map[string]any, code int, msg string) map[string]any {
+    return map[string]any{
+        "mcp_response": map[string]any{
+            "jsonrpc": "2.0",
+            "id":      message["id"],
+            "error": map[string]any{
+                "code":    code,
+                "message": msg,
+            },
+        },
+    }
 }
 ```
 
@@ -650,16 +1803,17 @@ package claude
 
 import (
     "context"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/querying"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/adapters/cli"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/adapters/jsonrpc"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/messages"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/options"
+    "github.com/conneroisu/claude/pkg/claude/querying"
+    "github.com/conneroisu/claude/pkg/claude/hooking"
+    "github.com/conneroisu/claude/pkg/claude/adapters/cli"
+    "github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
+    "github.com/conneroisu/claude/pkg/claude/messages"
+    "github.com/conneroisu/claude/pkg/claude/options"
 )
 
 // Query performs a one-shot query to Claude
 // This is the main entry point that wires up domain services with adapters
-func Query(ctx context.Context, prompt string, opts *options.AgentOptions) (<-chan messages.Message, <-chan error) {
+func Query(ctx context.Context, prompt string, opts *options.AgentOptions, hooks map[HookEvent][]HookMatcher) (<-chan messages.Message, <-chan error) {
     if opts == nil {
         opts = &options.AgentOptions{}
     }
@@ -668,8 +1822,13 @@ func Query(ctx context.Context, prompt string, opts *options.AgentOptions) (<-ch
     transport := cli.NewAdapter(opts)
     protocol := jsonrpc.NewAdapter(transport)
 
-    // Create domain service
-    queryService := querying.NewService(transport, protocol)
+    // Create domain services
+    var hookingService *hooking.Service
+    if hooks != nil {
+        hookingService = hooking.NewService(hooks)
+    }
+
+    queryService := querying.NewService(transport, protocol, hookingService)
 
     // Execute domain logic
     return queryService.Execute(ctx, prompt, opts)
@@ -685,29 +1844,35 @@ package claude
 
 import (
     "context"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/streaming"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/adapters/cli"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/adapters/jsonrpc"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/messages"
-    "github.com/yourorg/claude-agent-sdk-go/pkg/claude/options"
+    "github.com/conneroisu/claude/pkg/claude/streaming"
+    "github.com/conneroisu/claude/pkg/claude/hooking"
+    "github.com/conneroisu/claude/pkg/claude/permissions"
+    "github.com/conneroisu/claude/pkg/claude/adapters/cli"
+    "github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
+    "github.com/conneroisu/claude/pkg/claude/messages"
+    "github.com/conneroisu/claude/pkg/claude/options"
     "sync"
 )
 
 // Client provides bidirectional, interactive conversations with Claude
 // It's a facade that wires domain services with adapters
 type Client struct {
-    opts            *options.AgentOptions
+    opts             *options.AgentOptions
+    hooks            map[HookEvent][]HookMatcher
+    permissions      *PermissionsConfig
     streamingService *streaming.Service
-    mu              sync.Mutex
+    mu               sync.Mutex
 }
 
 // NewClient creates a new Claude client
-func NewClient(opts *options.AgentOptions) *Client {
+func NewClient(opts *options.AgentOptions, hooks map[HookEvent][]HookMatcher, perms *PermissionsConfig) *Client {
     if opts == nil {
         opts = &options.AgentOptions{}
     }
     return &Client{
-        opts: opts,
+        opts:        opts,
+        hooks:       hooks,
+        permissions: perms,
     }
 }
 
@@ -720,8 +1885,19 @@ func (c *Client) Connect(ctx context.Context, prompt any) error {
     transport := cli.NewAdapter(c.opts)
     protocol := jsonrpc.NewAdapter(transport)
 
-    // Create domain service
-    c.streamingService = streaming.NewService(transport, protocol)
+    // Wire up domain services
+    var hookingService *hooking.Service
+    if c.hooks != nil {
+        hookingService = hooking.NewService(c.hooks)
+    }
+
+    var permissionsService *permissions.Service
+    if c.permissions != nil {
+        permissionsService = permissions.NewService(c.permissions)
+    }
+
+    // Create streaming service with dependencies
+    c.streamingService = streaming.NewService(transport, protocol, hookingService, permissionsService)
 
     // Execute domain logic
     return c.streamingService.Connect(ctx, prompt)
@@ -771,30 +1947,36 @@ func (c *Client) Close() error {
 
 **Priority**: Medium
 
+The facade re-exports domain hook types from the `hooking` package for public API convenience:
+
 ```go
 package claude
 
-type HookEvent string
-
-const (
-    HookEventPreToolUse       HookEvent = "PreToolUse"
-    HookEventPostToolUse      HookEvent = "PostToolUse"
-    HookEventUserPromptSubmit HookEvent = "UserPromptSubmit"
-    HookEventStop             HookEvent = "Stop"
-    HookEventSubagentStop     HookEvent = "SubagentStop"
-    HookEventPreCompact       HookEvent = "PreCompact"
+import (
+    "github.com/conneroisu/claude/pkg/claude/hooking"
+    "github.com/conneroisu/claude/pkg/claude/permissions"
 )
 
-type HookContext struct {
-    // Future: signal support for cancellation
-}
+// Re-export domain hook types for public API
+type HookEvent = hooking.HookEvent
+type HookContext = hooking.HookContext
+type HookCallback = hooking.HookCallback
+type HookMatcher = hooking.HookMatcher
 
-type HookCallbackFunc func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error)
+// Re-export hook event constants
+const (
+    HookEventPreToolUse       = hooking.HookEventPreToolUse
+    HookEventPostToolUse      = hooking.HookEventPostToolUse
+    HookEventUserPromptSubmit = hooking.HookEventUserPromptSubmit
+    HookEventStop             = hooking.HookEventStop
+    HookEventSubagentStop     = hooking.HookEventSubagentStop
+    HookEventPreCompact       = hooking.HookEventPreCompact
+)
 
-type HookMatcher struct {
-    Matcher string
-    Hooks   []HookCallbackFunc
-}
+// Re-export permissions types for public API
+type PermissionsConfig = permissions.PermissionsConfig
+type PermissionResult = permissions.PermissionResult
+type CanUseToolFunc = permissions.CanUseToolFunc
 
 type HookJSONOutput struct {
     Decision           *string        `json:"decision,omitempty"`           // "block"
@@ -803,7 +1985,7 @@ type HookJSONOutput struct {
 }
 
 // Example hook implementation
-func BlockBashPatternHook(patterns []string) HookCallbackFunc {
+func BlockBashPatternHook(patterns []string) HookCallback {
     return func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error) {
         toolName, _ := input["tool_name"].(string)
         if toolName != "Bash" {
@@ -1076,35 +2258,506 @@ const (
 
 **Priority**: Critical
 
-- Test all message parsing
-- Test transport layer
-- Test control protocol
-- Test error handling
-- Mock Claude CLI for testing
+**Testing Strategy:**
+
+Unit tests verify domain logic and adapters in isolation without external dependencies.
+
+**Tools & Framework:**
+- Standard library `testing` package
+- Table-driven tests for comprehensive coverage
+- `testify/assert` for readable assertions (optional)
+- Mock implementations of ports for testing domain services
+
+**Test Structure:**
+
+```go
+// Domain service tests (no infrastructure dependencies)
+// pkg/claude/querying/service_test.go
+package querying_test
+
+import (
+    "context"
+    "testing"
+
+    "github.com/conneroisu/claude/pkg/claude/querying"
+    "github.com/conneroisu/claude/pkg/claude/options"
+)
+
+// Mock transport implementing ports.Transport
+type mockTransport struct {
+    connectErr error
+    messages   []map[string]any
+}
+
+func (m *mockTransport) Connect(ctx context.Context) error { return m.connectErr }
+func (m *mockTransport) Write(ctx context.Context, data string) error { return nil }
+// ... implement other methods
+
+func TestService_Execute(t *testing.T) {
+    tests := []struct {
+        name       string
+        prompt     string
+        wantErr    bool
+        setupMock  func(*mockTransport)
+    }{
+        {
+            name:    "successful query",
+            prompt:  "test query",
+            wantErr: false,
+            setupMock: func(m *mockTransport) {
+                m.messages = []map[string]any{
+                    {"type": "assistant", "message": map[string]any{"content": "response"}},
+                }
+            },
+        },
+        // ... more test cases
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            transport := &mockTransport{}
+            if tt.setupMock != nil {
+                tt.setupMock(transport)
+            }
+
+            protocol := &mockProtocol{}
+            svc := querying.NewService(transport, protocol)
+
+            msgCh, errCh := svc.Execute(context.Background(), tt.prompt, &options.AgentOptions{})
+
+            // Verify results
+        })
+    }
+}
+```
+
+**Message Parsing Tests:**
+
+```go
+// internal/parse/parser_test.go
+package parse_test
+
+import (
+    "testing"
+
+    "github.com/conneroisu/claude/pkg/claude/internal/parse"
+    "github.com/conneroisu/claude/pkg/claude/messages"
+)
+
+func TestParseMessage(t *testing.T) {
+    tests := []struct {
+        name    string
+        input   map[string]any
+        want    messages.Message
+        wantErr bool
+    }{
+        {
+            name: "parse assistant message",
+            input: map[string]any{
+                "type": "assistant",
+                "message": map[string]any{
+                    "model": "claude-sonnet-4",
+                    "content": []any{
+                        map[string]any{"type": "text", "text": "Hello"},
+                    },
+                },
+            },
+            want: &messages.AssistantMessage{
+                Model: "claude-sonnet-4",
+                Content: []messages.ContentBlock{
+                    messages.TextBlock{Text: "Hello"},
+                },
+            },
+        },
+        // ... more cases
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got, err := parse.ParseMessage(tt.input)
+            if (err != nil) != tt.wantErr {
+                t.Errorf("ParseMessage() error = %v, wantErr %v", err, tt.wantErr)
+                return
+            }
+            // Compare got with want
+        })
+    }
+}
+```
+
+**Adapter Tests (with mocked subprocess):**
+
+```go
+// adapters/cli/transport_test.go
+package cli_test
+
+import (
+    "context"
+    "testing"
+
+    "github.com/conneroisu/claude/pkg/claude/adapters/cli"
+    "github.com/conneroisu/claude/pkg/claude/options"
+)
+
+func TestAdapter_FindCLI(t *testing.T) {
+    // Test CLI discovery logic
+    // Set up test PATH environment
+}
+
+func TestAdapter_BuildCommand(t *testing.T) {
+    tests := []struct {
+        name    string
+        opts    *options.AgentOptions
+        want    []string
+        wantErr bool
+    }{
+        {
+            name: "basic command",
+            opts: &options.AgentOptions{
+                Model: stringPtr("claude-sonnet-4"),
+            },
+            want: []string{"claude", "--output-format", "stream-json", "--model", "claude-sonnet-4"},
+        },
+        // ... more cases
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            adapter := cli.NewAdapter(tt.opts)
+            got, err := adapter.BuildCommand()
+            // Compare got with want
+        })
+    }
+}
+```
+
+**Run Unit Tests:**
+```bash
+go test -v ./pkg/claude/...
+go test -race ./pkg/claude/...  # Check for race conditions
+go test -cover ./pkg/claude/... # Check coverage
+```
 
 ### 6.2 Integration Tests
 
 **Priority**: High
 
-- Test against actual Claude CLI
-- Test streaming mode
-- Test hooks
-- Test MCP servers
+**Testing Strategy:**
 
-### 6.3 Examples
+Integration tests verify the SDK works with the actual Claude CLI.
+
+**Prerequisites:**
+- Claude CLI must be installed: `npm install -g @anthropic-ai/claude-code`
+- API key must be set in environment or config
+- Tests should be skippable if CLI is not available
+
+**Test Structure:**
+
+```go
+// tests/integration/query_test.go
+//go:build integration
+// +build integration
+
+package integration_test
+
+import (
+    "context"
+    "os"
+    "testing"
+    "time"
+
+    "github.com/conneroisu/claude/pkg/claude"
+    "github.com/conneroisu/claude/pkg/claude/options"
+    "github.com/conneroisu/claude/pkg/claude/messages"
+)
+
+func TestMain(m *testing.M) {
+    // Check if Claude CLI is available
+    if _, err := exec.LookPath("claude"); err != nil {
+        fmt.Println("Skipping integration tests: claude CLI not found")
+        os.Exit(0)
+    }
+    os.Exit(m.Run())
+}
+
+func TestQuery_BasicInteraction(t *testing.T) {
+    if testing.Short() {
+        t.Skip("skipping integration test")
+    }
+
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    opts := &options.AgentOptions{
+        MaxTurns: intPtr(1),
+    }
+
+    msgCh, errCh := claude.Query(ctx, "What is 2+2?", opts)
+
+    var gotResponse bool
+    for {
+        select {
+        case msg, ok := <-msgCh:
+            if !ok {
+                if !gotResponse {
+                    t.Fatal("no response received")
+                }
+                return
+            }
+
+            if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
+                gotResponse = true
+                t.Logf("Received: %+v", assistantMsg)
+            }
+
+        case err := <-errCh:
+            t.Fatalf("error: %v", err)
+
+        case <-ctx.Done():
+            t.Fatal("timeout")
+        }
+    }
+}
+
+func TestStreamingClient(t *testing.T) {
+    if testing.Short() {
+        t.Skip("skipping integration test")
+    }
+
+    ctx := context.Background()
+    client := claude.NewClient(&options.AgentOptions{})
+
+    if err := client.Connect(ctx, nil); err != nil {
+        t.Fatalf("connect failed: %v", err)
+    }
+    defer client.Close()
+
+    if err := client.SendMessage(ctx, "Hello"); err != nil {
+        t.Fatalf("send failed: %v", err)
+    }
+
+    msgCh, errCh := client.ReceiveMessages(ctx)
+
+    select {
+    case msg := <-msgCh:
+        t.Logf("Received: %+v", msg)
+    case err := <-errCh:
+        t.Fatalf("error: %v", err)
+    case <-time.After(30 * time.Second):
+        t.Fatal("timeout")
+    }
+}
+```
+
+**Run Integration Tests:**
+```bash
+# Run with integration tag
+go test -tags=integration -v ./tests/integration/...
+
+# Run with race detector and coverage
+go test -tags=integration -race -coverprofile=coverage.txt ./tests/integration/...
+```
+
+### 6.3 Test Fixtures & Mocking
+
+**Shared Mocks:**
+
+Create reusable mocks in a dedicated package:
+
+```go
+// pkg/claude/internal/testutil/mocks.go
+package testutil
+
+import (
+    "context"
+    "github.com/conneroisu/claude/pkg/claude/ports"
+)
+
+type MockTransport struct {
+    ConnectFunc      func(context.Context) error
+    WriteFunc        func(context.Context, string) error
+    ReadMessagesFunc func(context.Context) (<-chan map[string]any, <-chan error)
+    EndInputFunc     func() error
+    CloseFunc        func() error
+    IsReadyFunc      func() bool
+}
+
+func (m *MockTransport) Connect(ctx context.Context) error {
+    if m.ConnectFunc != nil {
+        return m.ConnectFunc(ctx)
+    }
+    return nil
+}
+// ... implement other methods
+
+var _ ports.Transport = (*MockTransport)(nil)
+```
+
+**Test Data:**
+
+```go
+// pkg/claude/internal/testutil/fixtures.go
+package testutil
+
+var (
+    AssistantMessageJSON = map[string]any{
+        "type": "assistant",
+        "message": map[string]any{
+            "model": "claude-sonnet-4",
+            "content": []any{
+                map[string]any{"type": "text", "text": "Hello"},
+            },
+        },
+    }
+
+    ResultMessageJSON = map[string]any{
+        "type": "result",
+        "subtype": "success",
+        "duration_ms": 1234,
+        "num_turns": 1,
+        "session_id": "test-session",
+    }
+)
+```
+
+### 6.4 CI/CD Test Automation
+
+**GitHub Actions Workflow:**
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.21', '1.22', '1.23']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Run unit tests
+      run: |
+        go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.txt
+
+  integration-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+
+    - name: Install Claude CLI
+      run: npm install -g @anthropic-ai/claude-code
+
+    - name: Run integration tests
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      run: |
+        go test -tags=integration -v ./tests/integration/...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v4
+      with:
+        version: latest
+        args: --timeout=5m
+```
+
+### 6.5 Examples
 
 **Priority**: High
 
-Create comprehensive examples for quick start, streaming, hooks, and MCP servers.
+Create comprehensive, runnable examples:
 
-### 6.4 Documentation
+**Quick Start Example:**
+```go
+// cmd/examples/quickstart/main.go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/conneroisu/claude/pkg/claude"
+    "github.com/conneroisu/claude/pkg/claude/messages"
+    "github.com/conneroisu/claude/pkg/claude/options"
+)
+
+func main() {
+    ctx := context.Background()
+
+    msgCh, errCh := claude.Query(ctx, "What is 2 + 2?", nil)
+
+    for {
+        select {
+        case msg, ok := <-msgCh:
+            if !ok {
+                return
+            }
+            if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
+                for _, block := range assistantMsg.Content {
+                    if textBlock, ok := block.(messages.TextBlock); ok {
+                        fmt.Printf("Claude: %s\n", textBlock.Text)
+                    }
+                }
+            }
+        case err := <-errCh:
+            if err != nil {
+                log.Fatal(err)
+            }
+            return
+        }
+    }
+}
+```
+
+**Examples to Create:**
+1. `quickstart/` - Basic query
+2. `streaming/` - Bidirectional conversation
+3. `hooks/` - Custom hooks
+4. `mcp/` - SDK MCP server
+5. `permissions/` - Permission callbacks
+6. `tools/` - Tool filtering
+
+### 6.6 Documentation
 
 **Priority**: High
 
-- Comprehensive README.md
-- API documentation with godoc
+- Comprehensive README.md with architecture diagram
+- API documentation with godoc comments
 - Migration guide from Python SDK
-- Architecture documentation
+- Architecture documentation (hexagonal structure)
+- Hook development guide
+- MCP server development guide
 
 ## Phase 7: Publishing & CI/CD
 
