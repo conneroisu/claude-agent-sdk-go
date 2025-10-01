@@ -882,7 +882,9 @@ CustomInstructions  *string `json:"custom_instructions,omitempty"`
 func (PreCompactHookInput) hookInput() {}
 // HookContext provides context for hook execution
 type HookContext struct {
-// Future: signal support for cancellation
+// Signal provides cancellation and timeout support via context
+// Hook implementations should check Signal.Done() for cancellation
+Signal context.Context
 }
 // HookCallback is a function that handles hook events
 // Note: The input parameter is intentionally map[string]any at the callback level
@@ -922,11 +924,24 @@ return nil, nil
 }
 // 2. Execute hooks in order and aggregate results
 aggregatedResult := map[string]any{}
-hookCtx := HookContext{}
+hookCtx := HookContext{
+Signal: ctx, // Pass context for cancellation support
+}
+
 for _, matcher := range matchers {
 // Check if matcher applies to this input
-// TODO: Implement pattern matching logic based on matcher.Matcher field
+if !s.matchesPattern(matcher.Matcher, input) {
+continue
+}
+
 for _, callback := range matcher.Hooks {
+// Check for cancellation before executing each hook
+select {
+case <-ctx.Done():
+return nil, ctx.Err()
+default:
+}
+
 // 3. Execute hook callback
 result, err := callback(input, toolUseID, hookCtx)
 if err != nil {
@@ -954,6 +969,33 @@ if s.hooks == nil {
 s.hooks = make(map[HookEvent][]HookMatcher)
 }
 s.hooks[event] = append(s.hooks[event], matcher)
+}
+
+// matchesPattern checks if a hook matcher pattern applies to the given input
+func (s *Service) matchesPattern(pattern string, input map[string]any) bool {
+// Empty matcher matches all events
+if pattern == "" {
+return true
+}
+
+// Wildcard matches all
+if pattern == "*" {
+return true
+}
+
+// For PreToolUse/PostToolUse hooks, match against tool_name
+if toolName, ok := input["tool_name"].(string); ok {
+// Exact match
+if pattern == toolName {
+return true
+}
+
+// TODO: Add prefix/suffix/glob matching if needed
+// For example: "Bash*" could match "Bash", "BashScript", etc.
+}
+
+// Pattern doesn't match
+return false
 }
 ```
 ### 2.4 Permissions Service (permissions/service.go)
@@ -1036,7 +1078,8 @@ canUseTool: config.CanUseTool,
 }
 }
 // CheckToolUse verifies if a tool can be used
-func (s *Service) CheckToolUse(ctx context.Context, toolName string, input map[string]any) (PermissionResult, error) {
+// suggestions parameter comes from the control protocol's permission_suggestions field
+func (s *Service) CheckToolUse(ctx context.Context, toolName string, input map[string]any, suggestions []PermissionUpdate) (PermissionResult, error) {
 // 1. Check permission mode
 switch s.mode {
 case options.PermissionModeBypassPermissions:
@@ -1045,9 +1088,10 @@ return &PermissionResultAllow{}, nil
 case options.PermissionModeDefault, options.PermissionModeAcceptEdits, options.PermissionModePlan:
 // 2. Call canUseTool callback if set
 if s.canUseTool != nil {
+// Pass suggestions from control protocol to callback
+// These suggestions can be used in "always allow" flow
 permCtx := ToolPermissionContext{
-// TODO: Extract suggestions from control request if available
-Suggestions: []PermissionUpdate{},
+Suggestions: suggestions,
 }
 result, err := s.canUseTool(ctx, toolName, input, permCtx)
 if err != nil {
@@ -1405,6 +1449,7 @@ import (
 "github.com/conneroisu/claude/pkg/claude/ports"
 "github.com/conneroisu/claude/pkg/claude/hooking"
 "github.com/conneroisu/claude/pkg/claude/permissions"
+"github.com/conneroisu/claude/pkg/claude/options"
 )
 // Adapter implements ports.ProtocolHandler for control protocol
 // This is an INFRASTRUCTURE adapter - it handles protocol state management
@@ -1532,7 +1577,19 @@ case "control_request":
 // Handle inbound control request
 go a.handleControlRequestAsync(ctx, msg, perms, hooks, mcpServers)
 case "control_cancel_request":
-// TODO: Implement cancellation support
+// Cancel a pending control request
+requestID, _ := msg["request_id"].(string)
+a.mu.Lock()
+if ch, exists := a.pendingReqs[requestID]; exists {
+// Send error to indicate cancellation
+select {
+case ch <- result{err: fmt.Errorf("request cancelled")}:
+default:
+}
+close(ch)
+delete(a.pendingReqs, requestID)
+}
+a.mu.Unlock()
 continue
 default:
 // Forward SDK messages to public stream
@@ -1614,14 +1671,27 @@ a.transport.Write(ctx, string(resBytes)+"\n")
 func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, perms *permissions.Service) (map[string]any, error) {
 toolName, _ := request["tool_name"].(string)
 input, _ := request["input"].(map[string]any)
-// suggestions, _ := request["permission_suggestions"].([]any) // TODO: Use suggestions
+
+// Parse permission suggestions from control request
+var suggestions []permissions.PermissionUpdate
+if suggestionsData, ok := request["permission_suggestions"].([]any); ok {
+for _, sugData := range suggestionsData {
+if sugMap, ok := sugData.(map[string]any); ok {
+update := parsePermissionUpdate(sugMap)
+suggestions = append(suggestions, update)
+}
+}
+}
+
 if perms == nil {
 return nil, fmt.Errorf("permissions callback not provided")
 }
-result, err := perms.CheckToolUse(ctx, toolName, input)
+
+result, err := perms.CheckToolUse(ctx, toolName, input, suggestions)
 if err != nil {
 return nil, err
 }
+
 // Convert PermissionResult to response format
 switch r := result.(type) {
 case *permissions.PermissionResultAllow:
@@ -1629,7 +1699,10 @@ response := map[string]any{"allow": true}
 if r.UpdatedInput != nil {
 response["input"] = r.UpdatedInput
 }
-// TODO: Handle updatedPermissions when control protocol supports it
+// Include updated permissions in response (for "always allow" flow)
+if r.UpdatedPermissions != nil && len(r.UpdatedPermissions) > 0 {
+response["updated_permissions"] = r.UpdatedPermissions
+}
 return response, nil
 case *permissions.PermissionResultDeny:
 return map[string]any{
@@ -1640,6 +1713,53 @@ default:
 return nil, fmt.Errorf("unknown permission result type")
 }
 }
+
+// parsePermissionUpdate parses a single permission update from raw data
+func parsePermissionUpdate(data map[string]any) permissions.PermissionUpdate {
+update := permissions.PermissionUpdate{}
+
+if updateType, ok := data["type"].(string); ok {
+update.Type = updateType
+}
+
+if rulesData, ok := data["rules"].([]any); ok {
+for _, ruleData := range rulesData {
+if ruleMap, ok := ruleData.(map[string]any); ok {
+toolName, _ := ruleMap["toolName"].(string)
+ruleContent := getStringPtr(ruleMap, "ruleContent")
+update.Rules = append(update.Rules, permissions.PermissionRuleValue{
+ToolName:    toolName,
+RuleContent: ruleContent,
+})
+}
+}
+}
+
+if behaviorStr, ok := data["behavior"].(string); ok {
+behavior := permissions.PermissionBehavior(behaviorStr)
+update.Behavior = &behavior
+}
+
+if modeStr, ok := data["mode"].(string); ok {
+mode := options.PermissionMode(modeStr)
+update.Mode = &mode
+}
+
+if dirsData, ok := data["directories"].([]any); ok {
+for _, dirData := range dirsData {
+if dir, ok := dirData.(string); ok {
+update.Directories = append(update.Directories, dir)
+}
+}
+}
+
+if destStr, ok := data["destination"].(string); ok {
+dest := permissions.PermissionUpdateDestination(destStr)
+update.Destination = &dest
+}
+
+return update
+}
 // handleHookCallback handles hook_callback control requests
 func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any, hooks map[string]hooking.HookCallback) (map[string]any, error) {
 callbackID, _ := request["callback_id"].(string)
@@ -1649,8 +1769,10 @@ callback, exists := hooks[callbackID]
 if !exists {
 return nil, fmt.Errorf("no hook callback found for ID: %s", callbackID)
 }
-// Execute callback
-hookCtx := hooking.HookContext{} // TODO: Add signal support
+// Execute callback with context for cancellation support
+hookCtx := hooking.HookContext{
+Signal: ctx, // Pass context for cancellation/timeout
+}
 result, err := callback(input, toolUseID, hookCtx)
 if err != nil {
 return nil, err
@@ -1745,20 +1867,140 @@ return nil, fmt.Errorf("unknown message type: %s", msgType)
 }
 }
 func (a *Adapter) parseUserMessage(data map[string]any) (messages.Message, error) {
-// TODO: Parse user message fields
-return &messages.UserMessage{}, nil
+msg, _ := data["message"].(map[string]any)
+
+// Parse content (can be string or array of blocks)
+var content messages.MessageContent
+if contentStr, ok := msg["content"].(string); ok {
+content = messages.StringContent(contentStr)
+} else if contentArr, ok := msg["content"].([]any); ok {
+blocks, err := parseContentBlocks(contentArr)
+if err != nil {
+return nil, fmt.Errorf("parse user message content blocks: %w", err)
 }
+content = messages.BlockListContent(blocks)
+} else {
+return nil, fmt.Errorf("user message content must be string or array")
+}
+
+parentToolUseID := getStringPtr(data, "parent_tool_use_id")
+isSynthetic, _ := data["isSynthetic"].(bool)
+
+return &messages.UserMessage{
+Content:         content,
+ParentToolUseID: parentToolUseID,
+IsSynthetic:     isSynthetic,
+}, nil
+}
+
 func (a *Adapter) parseSystemMessage(data map[string]any) (messages.Message, error) {
-// TODO: Parse system message fields
-return &messages.SystemMessage{}, nil
+subtype, ok := data["subtype"].(string)
+if !ok {
+return nil, fmt.Errorf("system message missing subtype field")
 }
+
+// Data field is intentionally kept as map[string]any
+// Users can parse it into specific SystemMessageData types if needed
+// (SystemMessageInit, SystemMessageCompactBoundary)
+systemData, _ := data["data"].(map[string]any)
+if systemData == nil {
+systemData = make(map[string]any)
+}
+
+return &messages.SystemMessage{
+Subtype: subtype,
+Data:    systemData,
+}, nil
+}
+
 func (a *Adapter) parseResultMessage(data map[string]any) (messages.Message, error) {
-// TODO: Parse result message fields
-return &messages.ResultMessage{}, nil
+subtype, ok := data["subtype"].(string)
+if !ok {
+return nil, fmt.Errorf("result message missing subtype field")
 }
+
+// Parse common fields
+durationMs, _ := data["duration_ms"].(float64)
+durationAPIMs, _ := data["duration_api_ms"].(float64)
+isError, _ := data["is_error"].(bool)
+numTurns, _ := data["num_turns"].(float64)
+sessionID, _ := data["session_id"].(string)
+totalCostUSD, _ := data["total_cost_usd"].(float64)
+
+// Parse usage statistics
+usage, err := parseUsageStats(data["usage"])
+if err != nil {
+return nil, fmt.Errorf("parse usage stats: %w", err)
+}
+
+modelUsage, err := parseModelUsage(data["modelUsage"])
+if err != nil {
+return nil, fmt.Errorf("parse model usage: %w", err)
+}
+
+permissionDenials, err := parsePermissionDenials(data["permission_denials"])
+if err != nil {
+return nil, fmt.Errorf("parse permission denials: %w", err)
+}
+
+switch subtype {
+case "success":
+result, _ := data["result"].(string)
+return &messages.ResultMessageSuccess{
+Subtype:           subtype,
+DurationMs:        int(durationMs),
+DurationAPIMs:     int(durationAPIMs),
+IsError:           isError,
+NumTurns:          int(numTurns),
+SessionID:         sessionID,
+Result:            result,
+TotalCostUSD:      totalCostUSD,
+Usage:             usage,
+ModelUsage:        modelUsage,
+PermissionDenials: permissionDenials,
+}, nil
+case "error_max_turns", "error_during_execution":
+return &messages.ResultMessageError{
+Subtype:           subtype,
+DurationMs:        int(durationMs),
+DurationAPIMs:     int(durationAPIMs),
+IsError:           isError,
+NumTurns:          int(numTurns),
+SessionID:         sessionID,
+TotalCostUSD:      totalCostUSD,
+Usage:             usage,
+ModelUsage:        modelUsage,
+PermissionDenials: permissionDenials,
+}, nil
+default:
+return nil, fmt.Errorf("unknown result subtype: %s", subtype)
+}
+}
+
 func (a *Adapter) parseStreamEvent(data map[string]any) (messages.Message, error) {
-// TODO: Parse stream event fields
-return &messages.StreamEvent{}, nil
+uuid, ok := data["uuid"].(string)
+if !ok {
+return nil, fmt.Errorf("stream event missing uuid field")
+}
+
+sessionID, ok := data["session_id"].(string)
+if !ok {
+return nil, fmt.Errorf("stream event missing session_id field")
+}
+
+event, ok := data["event"].(map[string]any)
+if !ok {
+return nil, fmt.Errorf("stream event missing event field")
+}
+
+parentToolUseID := getStringPtr(data, "parent_tool_use_id")
+
+return &messages.StreamEvent{
+UUID:            uuid,
+SessionID:       sessionID,
+Event:           event, // Keep as map[string]any (raw Anthropic API event)
+ParentToolUseID: parentToolUseID,
+}, nil
 }
 func (a *Adapter) parseAssistantMessage(data map[string]any) (messages.Message, error) {
 // Parse content blocks
@@ -1813,6 +2055,243 @@ if val, ok := data[key].(string); ok {
 return &val
 }
 return nil
+}
+
+// parseUsageStats parses usage statistics from raw data
+func parseUsageStats(data any) (messages.UsageStats, error) {
+if data == nil {
+return messages.UsageStats{}, nil
+}
+
+usageMap, ok := data.(map[string]any)
+if !ok {
+return messages.UsageStats{}, fmt.Errorf("usage must be an object")
+}
+
+inputTokens, _ := usageMap["input_tokens"].(float64)
+outputTokens, _ := usageMap["output_tokens"].(float64)
+cacheReadInputTokens, _ := usageMap["cache_read_input_tokens"].(float64)
+cacheCreationInputTokens, _ := usageMap["cache_creation_input_tokens"].(float64)
+
+return messages.UsageStats{
+InputTokens:              int(inputTokens),
+OutputTokens:             int(outputTokens),
+CacheReadInputTokens:     int(cacheReadInputTokens),
+CacheCreationInputTokens: int(cacheCreationInputTokens),
+}, nil
+}
+
+// parseModelUsage parses per-model usage statistics
+func parseModelUsage(data any) (map[string]messages.ModelUsage, error) {
+if data == nil {
+return make(map[string]messages.ModelUsage), nil
+}
+
+modelUsageMap, ok := data.(map[string]any)
+if !ok {
+return nil, fmt.Errorf("modelUsage must be an object")
+}
+
+result := make(map[string]messages.ModelUsage)
+for modelName, usageData := range modelUsageMap {
+usageMap, ok := usageData.(map[string]any)
+if !ok {
+continue
+}
+
+inputTokens, _ := usageMap["inputTokens"].(float64)
+outputTokens, _ := usageMap["outputTokens"].(float64)
+cacheReadInputTokens, _ := usageMap["cacheReadInputTokens"].(float64)
+cacheCreationInputTokens, _ := usageMap["cacheCreationInputTokens"].(float64)
+webSearchRequests, _ := usageMap["webSearchRequests"].(float64)
+costUSD, _ := usageMap["costUSD"].(float64)
+contextWindow, _ := usageMap["contextWindow"].(float64)
+
+result[modelName] = messages.ModelUsage{
+InputTokens:              int(inputTokens),
+OutputTokens:             int(outputTokens),
+CacheReadInputTokens:     int(cacheReadInputTokens),
+CacheCreationInputTokens: int(cacheCreationInputTokens),
+WebSearchRequests:        int(webSearchRequests),
+CostUSD:                  costUSD,
+ContextWindow:            int(contextWindow),
+}
+}
+
+return result, nil
+}
+
+// parsePermissionDenials parses array of permission denials
+func parsePermissionDenials(data any) ([]messages.PermissionDenial, error) {
+if data == nil {
+return []messages.PermissionDenial{}, nil
+}
+
+denialsArray, ok := data.([]any)
+if !ok {
+return nil, fmt.Errorf("permission_denials must be an array")
+}
+
+result := make([]messages.PermissionDenial, 0, len(denialsArray))
+for _, denialData := range denialsArray {
+denialMap, ok := denialData.(map[string]any)
+if !ok {
+continue
+}
+
+toolName, _ := denialMap["tool_name"].(string)
+toolUseID, _ := denialMap["tool_use_id"].(string)
+toolInput, _ := denialMap["tool_input"].(map[string]any)
+
+result = append(result, messages.PermissionDenial{
+ToolName:  toolName,
+ToolUseID: toolUseID,
+ToolInput: toolInput,
+})
+}
+
+return result, nil
+}
+
+// parseContentBlocks parses an array of content blocks
+func parseContentBlocks(contentArr []any) ([]messages.ContentBlock, error) {
+blocks := make([]messages.ContentBlock, 0, len(contentArr))
+
+for _, item := range contentArr {
+block, ok := item.(map[string]any)
+if !ok {
+return nil, fmt.Errorf("content block must be an object")
+}
+
+blockType, ok := block["type"].(string)
+if !ok {
+return nil, fmt.Errorf("content block missing type field")
+}
+
+switch blockType {
+case "text":
+textBlock, err := parseTextBlock(block)
+if err != nil {
+return nil, err
+}
+blocks = append(blocks, textBlock)
+
+case "thinking":
+thinkingBlock, err := parseThinkingBlock(block)
+if err != nil {
+return nil, err
+}
+blocks = append(blocks, thinkingBlock)
+
+case "tool_use":
+toolUseBlock, err := parseToolUseBlock(block)
+if err != nil {
+return nil, err
+}
+blocks = append(blocks, toolUseBlock)
+
+case "tool_result":
+toolResultBlock, err := parseToolResultBlock(block)
+if err != nil {
+return nil, err
+}
+blocks = append(blocks, toolResultBlock)
+
+default:
+return nil, fmt.Errorf("unknown content block type: %s", blockType)
+}
+}
+
+return blocks, nil
+}
+
+// parseTextBlock parses a text content block
+func parseTextBlock(block map[string]any) (messages.TextBlock, error) {
+text, ok := block["text"].(string)
+if !ok {
+return messages.TextBlock{}, fmt.Errorf("text block missing text field")
+}
+
+return messages.TextBlock{
+Text: text,
+}, nil
+}
+
+// parseThinkingBlock parses a thinking content block
+func parseThinkingBlock(block map[string]any) (messages.ThinkingBlock, error) {
+thinking, ok := block["thinking"].(string)
+if !ok {
+return messages.ThinkingBlock{}, fmt.Errorf("thinking block missing thinking field")
+}
+
+signature, _ := block["signature"].(string)
+
+return messages.ThinkingBlock{
+Thinking:  thinking,
+Signature: signature,
+}, nil
+}
+
+// parseToolUseBlock parses a tool_use content block
+func parseToolUseBlock(block map[string]any) (messages.ToolUseBlock, error) {
+id, ok := block["id"].(string)
+if !ok {
+return messages.ToolUseBlock{}, fmt.Errorf("tool_use block missing id field")
+}
+
+name, ok := block["name"].(string)
+if !ok {
+return messages.ToolUseBlock{}, fmt.Errorf("tool_use block missing name field")
+}
+
+input, ok := block["input"].(map[string]any)
+if !ok {
+// Input can be missing or null
+input = make(map[string]any)
+}
+
+return messages.ToolUseBlock{
+ID:    id,
+Name:  name,
+Input: input,
+}, nil
+}
+
+// parseToolResultBlock parses a tool_result content block
+func parseToolResultBlock(block map[string]any) (messages.ToolResultBlock, error) {
+toolUseID, ok := block["tool_use_id"].(string)
+if !ok {
+return messages.ToolResultBlock{}, fmt.Errorf("tool_result block missing tool_use_id field")
+}
+
+// Parse content (can be string or array of content blocks)
+var content messages.ToolResultContent
+if contentStr, ok := block["content"].(string); ok {
+content = messages.ToolResultStringContent(contentStr)
+} else if contentArr, ok := block["content"].([]any); ok {
+// Tool result content can be an array of raw content blocks (maps)
+blockMaps := make([]map[string]any, 0, len(contentArr))
+for _, item := range contentArr {
+if blockMap, ok := item.(map[string]any); ok {
+blockMaps = append(blockMaps, blockMap)
+}
+}
+content = messages.ToolResultBlockListContent(blockMaps)
+} else {
+return messages.ToolResultBlock{}, fmt.Errorf("tool_result content must be string or array")
+}
+
+// is_error is optional
+var isError *bool
+if isErrorVal, ok := block["is_error"].(bool); ok {
+isError = &isErrorVal
+}
+
+return messages.ToolResultBlock{
+ToolUseID: toolUseID,
+Content:   content,
+IsError:   isError,
+}, nil
 }
 ```
 ## Phase 4: Public API (Facade)
