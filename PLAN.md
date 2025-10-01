@@ -13,46 +13,11 @@ The Go SDK will provide idiomatic Go interfaces for interacting with Claude Code
 7. Hexagonal Architecture: Strict separation between domain logic and infrastructure
 ### Hexagonal Architecture (Ports and Adapters)
 This SDK follows hexagonal architecture principles, also known as ports and adapters pattern. This architectural style isolates the core business logic (domain) from external concerns (infrastructure) by defining clear boundaries and dependency rules.
-#### Key Concepts
-```
-         ┌─────────────────────────────────────────────┐
-         │                                             │
-         │      External World (Infrastructure)        │
-         │                                             │
-         │   ┌──────────┐              ┌──────────┐   │
-         │   │   HTTP   │              │   CLI    │   │
-         │   │ Handlers │              │ Adapter  │   │
-         │   └────┬─────┘              └─────┬────┘   │
-         │        │                          │        │
-         │        │   ┌───────────────┐      │        │
-         │        └──►│     Ports     │◄─────┘        │
-         │            │  (Interfaces) │               │
-         │            └───────┬───────┘               │
-         │                    │                       │
-         │       ┌────────────▼────────────┐          │
-         │       │                         │          │
-         │       │    Core Domain          │          │
-         │       │  (Business Logic)       │          │
-         │       │                         │          │
-         │       │  - querying/            │          │
-         │       │  - streaming/           │          │
-         │       │  - hooking/             │          │
-         │       │  - permissions/         │          │
-         │       │                         │          │
-         │       └─────────────────────────┘          │
-         │                                             │
-         └─────────────────────────────────────────────┘
-```
 Four Key Principles:
 1. Domain Independence: Core domain never imports adapters or infrastructure code
 2. Ports Define Contracts: Interfaces defined by domain needs, not external systems
 3. Adapters Implement Ports: Infrastructure code implements domain-defined interfaces
 4. Dependency Direction: Always flows inward (adapters → domain), never outward
-Why Hexagonal Architecture?
-- Testability: Test domain logic without databases, HTTP servers, or external services
-- Flexibility: Swap implementations (e.g., different storage, transport mechanisms) without changing business logic
-- Clarity: Clear separation between "what" (domain) and "how" (infrastructure)
-- Maintainability: Infrastructure changes don't affect domain; domain changes don't ripple to all adapters
 ### Package Structure (Hexagonal Architecture)
 Following hexagonal architecture principles (ports and adapters), the SDK separates the core domain from external dependencies. Package names describe what they provide (functionality/context), not what they contain (generic types).
 ```
@@ -148,152 +113,146 @@ Hexagonal Architecture Key Principles:
 ### 1.1 Domain Models (messages/, options/)
 Priority: Critical
 Define core domain models that are free from infrastructure concerns:
-
 **Design Decision: When to Use `map[string]any` vs Typed Structs**
-
 This SDK strikes a balance between type safety and flexibility:
-
 **Use Typed Structs When:**
 - The structure is well-defined and stable (e.g., UsageStats, HookInput types)
 - The SDK needs to access specific fields (e.g., ResultMessage fields)
 - Type safety provides clear benefits (e.g., discriminated unions)
-
 **Use `map[string]any` When:**
 - Data varies by context and cannot be predetermined (e.g., tool inputs)
 - The SDK only passes data through without inspecting it (e.g., raw stream events)
 - Flexibility is more important than compile-time validation (e.g., SystemMessage.Data at message level)
-
 **Examples in this SDK:**
 - ✅ Typed: `HookInput` (9 different types), `ResultMessage` (2 variants), `UsageStats`
 - ❌ Flexible: `ToolUseBlock.Input` (varies by tool), `StreamEvent.Event` (raw API events)
 - 🔄 Hybrid: `SystemMessage.Data` is `map[string]any` but can be parsed into typed `SystemMessageData` variants
-
 messages/messages.go - Message Types:
 ```go
 // Message types
 type Message interface {
-    message()
+message()
 }
 type UserMessage struct {
-    Content          MessageContent
-    ParentToolUseID  *string
+Content          MessageContent
+ParentToolUseID  *string
 }
 type AssistantMessage struct {
-    Content         []ContentBlock
-    Model           string
-    ParentToolUseID *string
+Content         []ContentBlock
+Model           string
+ParentToolUseID *string
 }
 type SystemMessage struct {
-    Subtype string
-    Data    map[string]any // Intentionally flexible - varies by subtype (see SystemMessageData below)
+Subtype string
+Data    map[string]any // Intentionally flexible - varies by subtype (see SystemMessageData below)
 }
 // SystemMessageData is a discriminated union for SystemMessage.Data
 // Parse this from map[string]any based on Subtype field
 type SystemMessageData interface {
-    systemMessageData()
+systemMessageData()
 }
 // SystemMessageInit is sent at the start of a session
 type SystemMessageInit struct {
-    Agents         []string `json:"agents,omitempty"`
-    APIKeySource   string   `json:"apiKeySource"`
-    Cwd            string   `json:"cwd"`
-    Tools          []string `json:"tools"`
-    MCPServers     []MCPServerStatus `json:"mcp_servers"`
-    Model          string   `json:"model"`
-    PermissionMode string   `json:"permissionMode"`
-    SlashCommands  []string `json:"slash_commands"`
-    OutputStyle    string   `json:"output_style"`
+Agents         []string `json:"agents,omitempty"`
+APIKeySource   string   `json:"apiKeySource"`
+Cwd            string   `json:"cwd"`
+Tools          []string `json:"tools"`
+MCPServers     []MCPServerStatus `json:"mcp_servers"`
+Model          string   `json:"model"`
+PermissionMode string   `json:"permissionMode"`
+SlashCommands  []string `json:"slash_commands"`
+OutputStyle    string   `json:"output_style"`
 }
 func (SystemMessageInit) systemMessageData() {}
 // SystemMessageCompactBoundary marks a conversation compaction point
 type SystemMessageCompactBoundary struct {
-    CompactMetadata struct {
-        Trigger   string `json:"trigger"` // "manual" | "auto"
-        PreTokens int    `json:"pre_tokens"`
-    } `json:"compact_metadata"`
+CompactMetadata struct {
+Trigger   string `json:"trigger"` // "manual" | "auto"
+PreTokens int    `json:"pre_tokens"`
+} `json:"compact_metadata"`
 }
 func (SystemMessageCompactBoundary) systemMessageData() {}
 // MCPServerStatus represents the status of an MCP server
 type MCPServerStatus struct {
-    Name   string  `json:"name"`
-    Status string  `json:"status"` // "connected" | "failed" | "needs-auth" | "pending"
-    ServerInfo *struct {
-        Name    string `json:"name"`
-        Version string `json:"version"`
-    } `json:"serverInfo,omitempty"`
+Name   string  `json:"name"`
+Status string  `json:"status"` // "connected" | "failed" | "needs-auth" | "pending"
+ServerInfo *struct {
+Name    string `json:"name"`
+Version string `json:"version"`
+} `json:"serverInfo,omitempty"`
 }
 // ResultMessage is a discriminated union based on Subtype
 // Common fields are embedded in both variants
 type ResultMessage interface {
-    resultMessage()
+resultMessage()
 }
 // ResultMessageSuccess indicates a successful query completion
 type ResultMessageSuccess struct {
-    Subtype           string  `json:"subtype"` // "success"
-    DurationMs        int     `json:"duration_ms"`
-    DurationAPIMs     int     `json:"duration_api_ms"`
-    IsError           bool    `json:"is_error"`
-    NumTurns          int     `json:"num_turns"`
-    SessionID         string  `json:"session_id"`
-    Result            string  `json:"result"`
-    TotalCostUSD      float64 `json:"total_cost_usd"`
-    Usage             UsageStats `json:"usage"`
-    ModelUsage        map[string]ModelUsage `json:"modelUsage"` // Model name -> usage stats
-    PermissionDenials []PermissionDenial `json:"permission_denials"`
+Subtype           string  `json:"subtype"` // "success"
+DurationMs        int     `json:"duration_ms"`
+DurationAPIMs     int     `json:"duration_api_ms"`
+IsError           bool    `json:"is_error"`
+NumTurns          int     `json:"num_turns"`
+SessionID         string  `json:"session_id"`
+Result            string  `json:"result"`
+TotalCostUSD      float64 `json:"total_cost_usd"`
+Usage             UsageStats `json:"usage"`
+ModelUsage        map[string]ModelUsage `json:"modelUsage"` // Model name -> usage stats
+PermissionDenials []PermissionDenial `json:"permission_denials"`
 }
 func (ResultMessageSuccess) resultMessage() {}
 // ResultMessageError indicates an error during execution
 type ResultMessageError struct {
-    Subtype           string  `json:"subtype"` // "error_max_turns" | "error_during_execution"
-    DurationMs        int     `json:"duration_ms"`
-    DurationAPIMs     int     `json:"duration_api_ms"`
-    IsError           bool    `json:"is_error"`
-    NumTurns          int     `json:"num_turns"`
-    SessionID         string  `json:"session_id"`
-    TotalCostUSD      float64 `json:"total_cost_usd"`
-    Usage             UsageStats `json:"usage"`
-    ModelUsage        map[string]ModelUsage `json:"modelUsage"`
-    PermissionDenials []PermissionDenial `json:"permission_denials"`
+Subtype           string  `json:"subtype"` // "error_max_turns" | "error_during_execution"
+DurationMs        int     `json:"duration_ms"`
+DurationAPIMs     int     `json:"duration_api_ms"`
+IsError           bool    `json:"is_error"`
+NumTurns          int     `json:"num_turns"`
+SessionID         string  `json:"session_id"`
+TotalCostUSD      float64 `json:"total_cost_usd"`
+Usage             UsageStats `json:"usage"`
+ModelUsage        map[string]ModelUsage `json:"modelUsage"`
+PermissionDenials []PermissionDenial `json:"permission_denials"`
 }
 func (ResultMessageError) resultMessage() {}
 type StreamEvent struct {
-    UUID            string
-    SessionID       string
-    Event           map[string]any // Intentionally flexible - raw Anthropic API stream event
-    ParentToolUseID *string
+UUID            string
+SessionID       string
+Event           map[string]any // Intentionally flexible - raw Anthropic API stream event
+ParentToolUseID *string
 }
 // Content blocks
 type ContentBlock interface {
-    contentBlock()
+contentBlock()
 }
 type TextBlock struct {
-    Text string
+Text string
 }
 type ThinkingBlock struct {
-    Thinking  string
-    Signature string
+Thinking  string
+Signature string
 }
 type ToolUseBlock struct {
-    ID    string
-    Name  string
-    Input map[string]any // Intentionally flexible - tool inputs vary by tool
+ID    string
+Name  string
+Input map[string]any // Intentionally flexible - tool inputs vary by tool
 }
 // ToolResultContent can be string or a list of content blocks as maps
 type ToolResultContent interface {
-    toolResultContent()
+toolResultContent()
 }
 type ToolResultStringContent string
 type ToolResultBlockListContent []map[string]any
 func (ToolResultStringContent) toolResultContent() {}
 func (ToolResultBlockListContent) toolResultContent() {}
 type ToolResultBlock struct {
-    ToolUseID string
-    Content   ToolResultContent
-    IsError   *bool
+ToolUseID string
+Content   ToolResultContent
+IsError   *bool
 }
 // Message content can be string or []ContentBlock
 type MessageContent interface {
-    messageContent()
+messageContent()
 }
 type StringContent string
 type BlockListContent []ContentBlock
@@ -301,26 +260,26 @@ func (StringContent) messageContent()    {}
 func (BlockListContent) messageContent() {}
 // UsageStats represents API usage statistics
 type UsageStats struct {
-    InputTokens            int `json:"input_tokens"`
-    OutputTokens           int `json:"output_tokens"`
-    CacheReadInputTokens   int `json:"cache_read_input_tokens"`
-    CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+InputTokens            int `json:"input_tokens"`
+OutputTokens           int `json:"output_tokens"`
+CacheReadInputTokens   int `json:"cache_read_input_tokens"`
+CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 // ModelUsage represents usage statistics for a specific model
 type ModelUsage struct {
-    InputTokens              int     `json:"inputTokens"`
-    OutputTokens             int     `json:"outputTokens"`
-    CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
-    CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
-    WebSearchRequests        int     `json:"webSearchRequests"`
-    CostUSD                  float64 `json:"costUSD"`
-    ContextWindow            int     `json:"contextWindow"`
+InputTokens              int     `json:"inputTokens"`
+OutputTokens             int     `json:"outputTokens"`
+CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+WebSearchRequests        int     `json:"webSearchRequests"`
+CostUSD                  float64 `json:"costUSD"`
+ContextWindow            int     `json:"contextWindow"`
 }
 // PermissionDenial represents a tool use that was denied by permissions
 type PermissionDenial struct {
-    ToolName   string         `json:"tool_name"`
-    ToolUseID  string         `json:"tool_use_id"`
-    ToolInput  map[string]any `json:"tool_input"` // Intentionally flexible - varies by tool
+ToolName   string         `json:"tool_name"`
+ToolUseID  string         `json:"tool_use_id"`
+ToolInput  map[string]any `json:"tool_input"` // Intentionally flexible - varies by tool
 }
 ```
 options/domain.go - Pure Domain Configuration:
@@ -330,36 +289,36 @@ package options
 // This is a DOMAIN concept - it affects business logic
 type PermissionMode string
 const (
-    PermissionModeDefault          PermissionMode = "default"
-    PermissionModeAcceptEdits      PermissionMode = "acceptEdits"
-    PermissionModePlan             PermissionMode = "plan"
-    PermissionModeBypassPermissions PermissionMode = "bypassPermissions"
+PermissionModeDefault          PermissionMode = "default"
+PermissionModeAcceptEdits      PermissionMode = "acceptEdits"
+PermissionModePlan             PermissionMode = "plan"
+PermissionModeBypassPermissions PermissionMode = "bypassPermissions"
 )
 // SettingSource specifies where settings come from
 type SettingSource string
 const (
-    SettingSourceUser    SettingSource = "user"
-    SettingSourceProject SettingSource = "project"
-    SettingSourceLocal   SettingSource = "local"
+SettingSourceUser    SettingSource = "user"
+SettingSourceProject SettingSource = "project"
+SettingSourceLocal   SettingSource = "local"
 )
 // AgentDefinition defines a subagent configuration
 // This is domain configuration - defines behavior of agents
 type AgentDefinition struct {
-    Name          string
-    Description   string
-    SystemPrompt  *string
-    AllowedTools  []string
-    Model         *string
+Name          string
+Description   string
+SystemPrompt  *string
+AllowedTools  []string
+Model         *string
 }
 // SystemPromptConfig is configuration for system prompts
 type SystemPromptConfig interface {
-    systemPromptConfig()
+systemPromptConfig()
 }
 type StringSystemPrompt string
 type PresetSystemPrompt struct {
-    Type   string
-    Preset string
-    Append *string
+Type   string
+Preset string
+Append *string
 }
 func (StringSystemPrompt) systemPromptConfig()  {}
 func (PresetSystemPrompt) systemPromptConfig() {}
@@ -370,34 +329,34 @@ package options
 // AgentOptions configures the Claude agent
 // This combines domain and infrastructure configuration
 type AgentOptions struct {
-    // Domain settings (affect business logic)
-    AllowedTools             []string
-    DisallowedTools          []string
-    Model                    *string
-    MaxTurns                 *int
-    SystemPrompt             SystemPromptConfig
-    PermissionMode           *PermissionMode
-    PermissionPromptToolName *string
-    Agents                   map[string]AgentDefinition
-    // Session management (domain concern)
-    ContinueConversation     bool
-    Resume                   *string
-    ForkSession              bool
-    IncludePartialMessages   bool
-    // Infrastructure settings (how to connect/execute)
-    Cwd                      *string
-    Settings                 *string
-    AddDirs                  []string
-    Env                      map[string]string
-    User                     *string
-    SettingSources           []SettingSource
-    MaxBufferSize            *int
-    StderrCallback           func(string)
-    ExtraArgs                map[string]*string
-    // MCP server configuration (infrastructure)
-    MCPServers               map[string]MCPServerConfig
-    // Internal flags (set by domain services, not by users)
-    _isStreaming             bool  // Internal: true for Client, false for Query
+// Domain settings (affect business logic)
+AllowedTools             []string
+DisallowedTools          []string
+Model                    *string
+MaxTurns                 *int
+SystemPrompt             SystemPromptConfig
+PermissionMode           *PermissionMode
+PermissionPromptToolName *string
+Agents                   map[string]AgentDefinition
+// Session management (domain concern)
+ContinueConversation     bool
+Resume                   *string
+ForkSession              bool
+IncludePartialMessages   bool
+// Infrastructure settings (how to connect/execute)
+Cwd                      *string
+Settings                 *string
+AddDirs                  []string
+Env                      map[string]string
+User                     *string
+SettingSources           []SettingSource
+MaxBufferSize            *int
+StderrCallback           func(string)
+ExtraArgs                map[string]*string
+// MCP server configuration (infrastructure)
+MCPServers               map[string]MCPServerConfig
+// Internal flags (set by domain services, not by users)
+_isStreaming             bool  // Internal: true for Client, false for Query
 }
 ```
 options/mcp.go - MCP Server Configuration:
@@ -406,38 +365,38 @@ package options
 // MCPServerConfig is configuration for MCP servers (not runtime instances)
 // These are infrastructure configurations for connecting to MCP servers
 type MCPServerConfig interface {
-    mcpServerConfig()
+mcpServerConfig()
 }
 // StdioServerConfig configures an MCP server using stdio transport
 type StdioServerConfig struct {
-    Type    string // "stdio"
-    Command string
-    Args    []string
-    Env     map[string]string
+Type    string // "stdio"
+Command string
+Args    []string
+Env     map[string]string
 }
 func (StdioServerConfig) mcpServerConfig() {}
 // SSEServerConfig configures an MCP server using Server-Sent Events
 type SSEServerConfig struct {
-    Type    string // "sse"
-    URL     string
-    Headers map[string]string
+Type    string // "sse"
+URL     string
+Headers map[string]string
 }
 func (SSEServerConfig) mcpServerConfig() {}
 // HTTPServerConfig configures an MCP server using HTTP transport
 type HTTPServerConfig struct {
-    Type    string // "http"
-    URL     string
-    Headers map[string]string
+Type    string // "http"
+URL     string
+Headers map[string]string
 }
 func (HTTPServerConfig) mcpServerConfig() {}
 // SDKServerConfig is a marker for SDK-managed MCP servers
 // The actual server instance is managed separately by the MCP adapter
 // This ONLY contains configuration, NOT the server instance itself
 type SDKServerConfig struct {
-    Type string // "sdk"
-    Name string
-    // Note: Instance is NOT stored here to avoid circular dependencies
-    // The MCP adapter will manage server instances separately
+Type string // "sdk"
+Name string
+// Note: Instance is NOT stored here to avoid circular dependencies
+// The MCP adapter will manage server instances separately
 }
 func (SDKServerConfig) mcpServerConfig() {}
 ```
@@ -450,12 +409,12 @@ package ports
 import "context"
 // Transport defines what the domain needs from a transport layer
 type Transport interface {
-    Connect(ctx context.Context) error
-    Write(ctx context.Context, data string) error
-    ReadMessages(ctx context.Context) (<-chan map[string]any, <-chan error)
-    EndInput() error
-    Close() error
-    IsReady() bool
+Connect(ctx context.Context) error
+Write(ctx context.Context, data string) error
+ReadMessages(ctx context.Context) (<-chan map[string]any, <-chan error)
+EndInput() error
+Close() error
+IsReady() bool
 }
 ```
 ports/protocol.go - Protocol Port:
@@ -464,49 +423,48 @@ package ports
 import "context"
 // ProtocolHandler defines what the domain needs for control protocol
 type ProtocolHandler interface {
-    // Initialize sends the initialize control request with hooks config
+// Initialize sends the initialize control request with hooks config
 Initialize(ctx context.Context, config map[string]any) (map[string]any, error)
-    // SendControlRequest sends a control request and waits for response (60s timeout)
-    SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error)
-    // HandleControlRequest routes inbound control requests by subtype
-    // Subtypes: can_use_tool, hook_callback, mcp_message
-    // Dependencies are passed as arguments to avoid circular refs
-    HandleControlRequest(ctx context.Context, req map[string]any, perms *permissions.Service, hooks map[string]hooking.HookCallback, mcpServers map[string]MCPServer) (map[string]any, error)
-    // StartMessageRouter continuously reads transport and partitions messages
-    // Routes control_response, control_request, control_cancel_request separately from SDK messages
-    // Dependencies (perms, hooks, mcpServers) are passed by domain service for handling inbound control requests
-    StartMessageRouter(ctx context.Context, msgCh chan<- map[string]any, errCh chan<- error,
-        perms *permissions.Service, hooks map[string]hooking.HookCallback, mcpServers map[string]MCPServer) error
+// SendControlRequest sends a control request and waits for response (60s timeout)
+SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error)
+// HandleControlRequest routes inbound control requests by subtype
+// Subtypes: can_use_tool, hook_callback, mcp_message
+// Dependencies are passed as arguments to avoid circular refs
+HandleControlRequest(ctx context.Context, req map[string]any, perms *permissions.Service, hooks map[string]hooking.HookCallback, mcpServers map[string]MCPServer) (map[string]any, error)
+// StartMessageRouter continuously reads transport and partitions messages
+// Routes control_response, control_request, control_cancel_request separately from SDK messages
+// Dependencies (perms, hooks, mcpServers) are passed by domain service for handling inbound control requests
+StartMessageRouter(ctx context.Context, msgCh chan<- map[string]any, errCh chan<- error,
+perms *permissions.Service, hooks map[string]hooking.HookCallback, mcpServers map[string]MCPServer) error
 }
 ```
 ports/parser.go - Message Parser Port:
 ```go
 package ports
 import (
-    "github.com/conneroisu/claude/pkg/claude/messages"
+"github.com/conneroisu/claude/pkg/claude/messages"
 )
 // MessageParser defines what the domain needs from message parsing
 // This is a port because the domain needs to convert raw transport messages
 // into typed domain messages, but doesn't care HOW that conversion happens
 type MessageParser interface {
-    Parse(raw map[string]any) (messages.Message, error)
+Parse(raw map[string]any) (messages.Message, error)
 }
 ```
 ports/mcp.go - MCP Server Port:
 ```go
 package ports
 import "context"
-
 // MCPServer defines an interface for an in-process MCP Server.
 // It abstracts the underlying implementation, which should be a wrapper around
 // the official MCP Go SDK (github.com/modelcontextprotocol/go-sdk).
 // This allows the agent to route raw MCP messages from the Claude CLI
 // to a user-defined tool server.
 type MCPServer interface {
-    Name() string
-    // HandleMessage takes a raw JSON-RPC message, processes it, and returns
-    // a raw JSON-RPC response. This is used to proxy messages.
-    HandleMessage(ctx context.Context, message []byte) ([]byte, error)
+Name() string
+// HandleMessage takes a raw JSON-RPC message, processes it, and returns
+// a raw JSON-RPC response. This is used to proxy messages.
+HandleMessage(ctx context.Context, message []byte) ([]byte, error)
 }
 ```
 ### 1.3 Error Types (errors.go)
@@ -514,37 +472,37 @@ Priority: Critical
 ```go
 package claude
 var (
-    ErrNotConnected      = errors.New("claude: not connected")
-    ErrCLINotFound      = errors.New("claude: CLI not found")
-    ErrCLIConnection    = errors.New("claude: connection failed")
-    ErrProcessFailed    = errors.New("claude: process failed")
-    ErrJSONDecode       = errors.New("claude: JSON decode failed")
-    ErrMessageParse     = errors.New("claude: message parse failed")
-    ErrControlTimeout   = errors.New("claude: control request timeout")
-    ErrInvalidInput     = errors.New("claude: invalid input")
+ErrNotConnected      = errors.New("claude: not connected")
+ErrCLINotFound      = errors.New("claude: CLI not found")
+ErrCLIConnection    = errors.New("claude: connection failed")
+ErrProcessFailed    = errors.New("claude: process failed")
+ErrJSONDecode       = errors.New("claude: JSON decode failed")
+ErrMessageParse     = errors.New("claude: message parse failed")
+ErrControlTimeout   = errors.New("claude: control request timeout")
+ErrInvalidInput     = errors.New("claude: invalid input")
 )
 type CLINotFoundError struct {
-    Path string
+Path string
 }
 func (e *CLINotFoundError) Error() string {
-    return fmt.Sprintf("Claude Code not found: %s", e.Path)
+return fmt.Sprintf("Claude Code not found: %s", e.Path)
 }
 type ProcessError struct {
-    ExitCode int
-    Stderr   string
+ExitCode int
+Stderr   string
 }
 func (e *ProcessError) Error() string {
-    return fmt.Sprintf("process failed with exit code %d: %s", e.ExitCode, e.Stderr)
+return fmt.Sprintf("process failed with exit code %d: %s", e.ExitCode, e.Stderr)
 }
 type JSONDecodeError struct {
-    Line string
-    Err  error
+Line string
+Err  error
 }
 func (e *JSONDecodeError) Error() string {
-    return fmt.Sprintf("failed to decode JSON: %v", e.Err)
+return fmt.Sprintf("failed to decode JSON: %v", e.Err)
 }
 func (e *JSONDecodeError) Unwrap() error {
-    return e.Err
+return e.Err
 }
 ```
 ## Phase 2: Domain Services
@@ -555,124 +513,124 @@ Key Design Decision: Control protocol state management (pending requests, callba
 ```go
 package querying
 import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "github.com/conneroisu/claude/pkg/claude/ports"
-    "github.com/conneroisu/claude/pkg/claude/messages"
-    "github.com/conneroisu/claude/pkg/claude/options"
-    "github.com/conneroisu/claude/pkg/claude/hooking"
-    "github.com/conneroisu/claude/pkg/claude/permissions"
+"context"
+"encoding/json"
+"fmt"
+"github.com/conneroisu/claude/pkg/claude/ports"
+"github.com/conneroisu/claude/pkg/claude/messages"
+"github.com/conneroisu/claude/pkg/claude/options"
+"github.com/conneroisu/claude/pkg/claude/hooking"
+"github.com/conneroisu/claude/pkg/claude/permissions"
 )
 // Service handles query execution
 // This is a DOMAIN service - it contains only business logic,
 // no infrastructure concerns like protocol state management
 type Service struct {
-    transport   ports.Transport
-    protocol    ports.ProtocolHandler
-    parser      ports.MessageParser
-    hooks       *hooking.Service
-    permissions *permissions.Service
-    mcpServers  map[string]ports.MCPServer
+transport   ports.Transport
+protocol    ports.ProtocolHandler
+parser      ports.MessageParser
+hooks       *hooking.Service
+permissions *permissions.Service
+mcpServers  map[string]ports.MCPServer
 }
 func NewService(
-    transport ports.Transport,
-    protocol ports.ProtocolHandler,
-    parser ports.MessageParser,
-    hooks *hooking.Service,
-    perms *permissions.Service,
-    mcpServers map[string]ports.MCPServer,
+transport ports.Transport,
+protocol ports.ProtocolHandler,
+parser ports.MessageParser,
+hooks *hooking.Service,
+perms *permissions.Service,
+mcpServers map[string]ports.MCPServer,
 ) *Service {
-    return &Service{
-        transport:   transport,
-        protocol:    protocol,
-        parser:      parser,
-        hooks:       hooks,
-        permissions: perms,
-        mcpServers:  mcpServers,
-    }
+return &Service{
+transport:   transport,
+protocol:    protocol,
+parser:      parser,
+hooks:       hooks,
+permissions: perms,
+mcpServers:  mcpServers,
+}
 }
 func (s *Service) Execute(ctx context.Context, prompt string, opts *options.AgentOptions) (<-chan messages.Message, <-chan error) {
-    msgCh := make(chan messages.Message)
-    errCh := make(chan error, 1)
-    go func() {
-        defer close(msgCh)
-        defer close(errCh)
-        // 1. Connect transport
-        if err := s.transport.Connect(ctx); err != nil {
-            errCh <- fmt.Errorf("transport connect: %w", err)
-            return
-        }
-        // 2. Build hook callbacks map (if hooks exist)
-        var hookCallbacks map[string]hooking.HookCallback
-        if s.hooks != nil {
-            hookCallbacks = make(map[string]hooking.HookCallback)
-            hooks := s.hooks.GetHooks()
-            for event, matchers := range hooks {
-                for _, matcher := range matchers {
-                    for i, callback := range matcher.Hooks {
-                        // Generate callback ID
-                        callbackID := fmt.Sprintf("hook_%s_%d", event, i)
-                        hookCallbacks[callbackID] = callback
-                    }
-                }
-            }
-        }
-        // 3. Start message router (protocol adapter handles control protocol)
-        // For one-shot queries, we don't need explicit initialization
-        // The protocol adapter will handle any necessary control messages
-        routerMsgCh := make(chan map[string]any)
-        routerErrCh := make(chan error, 1)
-        if err := s.protocol.StartMessageRouter(
-            ctx,
-            routerMsgCh,
-            routerErrCh,
-            s.permissions,
-            hookCallbacks,
-            s.mcpServers,
-        ); err != nil {
-            errCh <- fmt.Errorf("start message router: %w", err)
-            return
-        }
-        // 4. Send prompt
-        promptMsg := map[string]any{
-            "type":   "user",
-            "prompt": prompt,
-        }
-        promptBytes, err := json.Marshal(promptMsg)
-        if err != nil {
-            errCh <- fmt.Errorf("marshal prompt: %w", err)
-            return
-        }
-        if err := s.transport.Write(ctx, string(promptBytes)+"\n"); err != nil {
-            errCh <- fmt.Errorf("write prompt: %w", err)
-            return
-        }
-        // 5. Stream messages
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            case msg, ok := <-routerMsgCh:
-                if !ok {
-                    return
-                }
-                // Parse message using parser port
-                parsedMsg, err := s.parser.Parse(msg)
-                if err != nil {
-                    errCh <- fmt.Errorf("parse message: %w", err)
-                    return
-                }
-                msgCh <- parsedMsg
-            case err := <-routerErrCh:
-                if err != nil {
-                    errCh <- err
-                    return
-                }
-            }
-        }
-    }()
-    return msgCh, errCh
+msgCh := make(chan messages.Message)
+errCh := make(chan error, 1)
+go func() {
+defer close(msgCh)
+defer close(errCh)
+// 1. Connect transport
+if err := s.transport.Connect(ctx); err != nil {
+errCh <- fmt.Errorf("transport connect: %w", err)
+return
+}
+// 2. Build hook callbacks map (if hooks exist)
+var hookCallbacks map[string]hooking.HookCallback
+if s.hooks != nil {
+hookCallbacks = make(map[string]hooking.HookCallback)
+hooks := s.hooks.GetHooks()
+for event, matchers := range hooks {
+for _, matcher := range matchers {
+for i, callback := range matcher.Hooks {
+// Generate callback ID
+callbackID := fmt.Sprintf("hook_%s_%d", event, i)
+hookCallbacks[callbackID] = callback
+}
+}
+}
+}
+// 3. Start message router (protocol adapter handles control protocol)
+// For one-shot queries, we don't need explicit initialization
+// The protocol adapter will handle any necessary control messages
+routerMsgCh := make(chan map[string]any)
+routerErrCh := make(chan error, 1)
+if err := s.protocol.StartMessageRouter(
+ctx,
+routerMsgCh,
+routerErrCh,
+s.permissions,
+hookCallbacks,
+s.mcpServers,
+); err != nil {
+errCh <- fmt.Errorf("start message router: %w", err)
+return
+}
+// 4. Send prompt
+promptMsg := map[string]any{
+"type":   "user",
+"prompt": prompt,
+}
+promptBytes, err := json.Marshal(promptMsg)
+if err != nil {
+errCh <- fmt.Errorf("marshal prompt: %w", err)
+return
+}
+if err := s.transport.Write(ctx, string(promptBytes)+"\n"); err != nil {
+errCh <- fmt.Errorf("write prompt: %w", err)
+return
+}
+// 5. Stream messages
+for {
+select {
+case <-ctx.Done():
+return
+case msg, ok := <-routerMsgCh:
+if !ok {
+return
+}
+// Parse message using parser port
+parsedMsg, err := s.parser.Parse(msg)
+if err != nil {
+errCh <- fmt.Errorf("parse message: %w", err)
+return
+}
+msgCh <- parsedMsg
+case err := <-routerErrCh:
+if err != nil {
+errCh <- err
+return
+}
+}
+}
+}()
+return msgCh, errCh
 }
 ```
 ### 2.2 Streaming Service (streaming/service.go)
@@ -682,146 +640,146 @@ Key Design Decision: Like the querying service, control protocol state managemen
 ```go
 package streaming
 import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "github.com/conneroisu/claude/pkg/claude/ports"
-    "github.com/conneroisu/claude/pkg/claude/messages"
-    "github.com/conneroisu/claude/pkg/claude/hooking"
-    "github.com/conneroisu/claude/pkg/claude/permissions"
+"context"
+"encoding/json"
+"fmt"
+"github.com/conneroisu/claude/pkg/claude/ports"
+"github.com/conneroisu/claude/pkg/claude/messages"
+"github.com/conneroisu/claude/pkg/claude/hooking"
+"github.com/conneroisu/claude/pkg/claude/permissions"
 )
 // Service handles streaming conversations
 // This is a DOMAIN service - pure business logic for managing conversations
 type Service struct {
-    transport   ports.Transport
-    protocol    ports.ProtocolHandler
-    parser      ports.MessageParser
-    hooks       *hooking.Service
-    permissions *permissions.Service
-    mcpServers  map[string]ports.MCPServer
-    // Message routing channels (internal to service)
-    msgCh chan map[string]any
-    errCh chan error
+transport   ports.Transport
+protocol    ports.ProtocolHandler
+parser      ports.MessageParser
+hooks       *hooking.Service
+permissions *permissions.Service
+mcpServers  map[string]ports.MCPServer
+// Message routing channels (internal to service)
+msgCh chan map[string]any
+errCh chan error
 }
 func NewService(
-    transport ports.Transport,
-    protocol ports.ProtocolHandler,
-    parser ports.MessageParser,
-    hooks *hooking.Service,
-    perms *permissions.Service,
-    mcpServers map[string]ports.MCPServer,
+transport ports.Transport,
+protocol ports.ProtocolHandler,
+parser ports.MessageParser,
+hooks *hooking.Service,
+perms *permissions.Service,
+mcpServers map[string]ports.MCPServer,
 ) *Service {
-    return &Service{
-        transport:   transport,
-        protocol:    protocol,
-        parser:      parser,
-        hooks:       hooks,
-        permissions: perms,
-        mcpServers:  mcpServers,
-        msgCh:       make(chan map[string]any),
-        errCh:       make(chan error, 1),
-    }
+return &Service{
+transport:   transport,
+protocol:    protocol,
+parser:      parser,
+hooks:       hooks,
+permissions: perms,
+mcpServers:  mcpServers,
+msgCh:       make(chan map[string]any),
+errCh:       make(chan error, 1),
+}
 }
 func (s *Service) Connect(ctx context.Context, prompt *string) error {
-    // 1. Connect transport
-    if err := s.transport.Connect(ctx); err != nil {
-        return fmt.Errorf("transport connect: %w", err)
-    }
-    // 2. Build hook callbacks map
-    var hookCallbacks map[string]hooking.HookCallback
-    if s.hooks != nil {
-        hookCallbacks = make(map[string]hooking.HookCallback)
-        hooks := s.hooks.GetHooks()
-        for event, matchers := range hooks {
-            for _, matcher := range matchers {
-                for i, callback := range matcher.Hooks {
-                    callbackID := fmt.Sprintf("hook_%s_%d", event, i)
-                    hookCallbacks[callbackID] = callback
-                }
-            }
-        }
-    }
-    // 3. Start message router
-    // Protocol adapter handles all control protocol concerns
-    if err := s.protocol.StartMessageRouter(
-        ctx,
-        s.msgCh,
-        s.errCh,
-        s.permissions,
-        hookCallbacks,
-        s.mcpServers,
-    ); err != nil {
-        return fmt.Errorf("start message router: %w", err)
-    }
-    // 4. Send initial prompt if provided
-    if prompt != nil {
-        promptMsg := map[string]any{
-            "type":   "user",
-            "prompt": prompt,
-        }
-        promptBytes, err := json.Marshal(promptMsg)
-        if err != nil {
-            return fmt.Errorf("marshal prompt: %w", err)
-        }
-        if err := s.transport.Write(ctx, string(promptBytes)+"\n"); err != nil {
-            return fmt.Errorf("write prompt: %w", err)
-        }
-    }
-    return nil
+// 1. Connect transport
+if err := s.transport.Connect(ctx); err != nil {
+return fmt.Errorf("transport connect: %w", err)
+}
+// 2. Build hook callbacks map
+var hookCallbacks map[string]hooking.HookCallback
+if s.hooks != nil {
+hookCallbacks = make(map[string]hooking.HookCallback)
+hooks := s.hooks.GetHooks()
+for event, matchers := range hooks {
+for _, matcher := range matchers {
+for i, callback := range matcher.Hooks {
+callbackID := fmt.Sprintf("hook_%s_%d", event, i)
+hookCallbacks[callbackID] = callback
+}
+}
+}
+}
+// 3. Start message router
+// Protocol adapter handles all control protocol concerns
+if err := s.protocol.StartMessageRouter(
+ctx,
+s.msgCh,
+s.errCh,
+s.permissions,
+hookCallbacks,
+s.mcpServers,
+); err != nil {
+return fmt.Errorf("start message router: %w", err)
+}
+// 4. Send initial prompt if provided
+if prompt != nil {
+promptMsg := map[string]any{
+"type":   "user",
+"prompt": prompt,
+}
+promptBytes, err := json.Marshal(promptMsg)
+if err != nil {
+return fmt.Errorf("marshal prompt: %w", err)
+}
+if err := s.transport.Write(ctx, string(promptBytes)+"\n"); err != nil {
+return fmt.Errorf("write prompt: %w", err)
+}
+}
+return nil
 }
 func (s *Service) SendMessage(ctx context.Context, msg string) error {
-    // Format message
-    userMsg := map[string]any{
-        "type":   "user",
-        "prompt": msg,
-    }
-    // Send via transport
-    msgBytes, err := json.Marshal(userMsg)
-    if err != nil {
-        return fmt.Errorf("marshal message: %w", err)
-    }
-    if err := s.transport.Write(ctx, string(msgBytes)+"\n"); err != nil {
-        return fmt.Errorf("write message: %w", err)
-    }
-    return nil
+// Format message
+userMsg := map[string]any{
+"type":   "user",
+"prompt": msg,
+}
+// Send via transport
+msgBytes, err := json.Marshal(userMsg)
+if err != nil {
+return fmt.Errorf("marshal message: %w", err)
+}
+if err := s.transport.Write(ctx, string(msgBytes)+"\n"); err != nil {
+return fmt.Errorf("write message: %w", err)
+}
+return nil
 }
 func (s *Service) ReceiveMessages(ctx context.Context) (<-chan messages.Message, <-chan error) {
-    msgOutCh := make(chan messages.Message)
-    errOutCh := make(chan error, 1)
-    go func() {
-        defer close(msgOutCh)
-        defer close(errOutCh)
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            case msg, ok := <-s.msgCh:
-                if !ok {
-                    return
-                }
-                // Parse message using parser port
-                parsedMsg, err := s.parser.Parse(msg)
-                if err != nil {
-                    errOutCh <- fmt.Errorf("parse message: %w", err)
-                    return
-                }
-                msgOutCh <- parsedMsg
-            case err := <-s.errCh:
-                if err != nil {
-                    errOutCh <- err
-                    return
-                }
-            }
-        }
-    }()
-    return msgOutCh, errOutCh
+msgOutCh := make(chan messages.Message)
+errOutCh := make(chan error, 1)
+go func() {
+defer close(msgOutCh)
+defer close(errOutCh)
+for {
+select {
+case <-ctx.Done():
+return
+case msg, ok := <-s.msgCh:
+if !ok {
+return
+}
+// Parse message using parser port
+parsedMsg, err := s.parser.Parse(msg)
+if err != nil {
+errOutCh <- fmt.Errorf("parse message: %w", err)
+return
+}
+msgOutCh <- parsedMsg
+case err := <-s.errCh:
+if err != nil {
+errOutCh <- err
+return
+}
+}
+}
+}()
+return msgOutCh, errOutCh
 }
 func (s *Service) Close() error {
-    // Close transport
-    if s.transport != nil {
-        return s.transport.Close()
-    }
-    return nil
+// Close transport
+if s.transport != nil {
+return s.transport.Close()
+}
+return nil
 }
 ```
 ### 2.3 Hooking Service (hooking/service.go)
@@ -830,101 +788,101 @@ The hooking service manages hook execution and lifecycle.
 ```go
 package hooking
 import (
-    "context"
+"context"
 )
 // HookEvent represents different hook trigger points
 type HookEvent string
 const (
-    HookEventPreToolUse       HookEvent = "PreToolUse"
-    HookEventPostToolUse      HookEvent = "PostToolUse"
-    HookEventUserPromptSubmit HookEvent = "UserPromptSubmit"
-    HookEventStop             HookEvent = "Stop"
-    HookEventSubagentStop     HookEvent = "SubagentStop"
-    HookEventPreCompact       HookEvent = "PreCompact"
+HookEventPreToolUse       HookEvent = "PreToolUse"
+HookEventPostToolUse      HookEvent = "PostToolUse"
+HookEventUserPromptSubmit HookEvent = "UserPromptSubmit"
+HookEventStop             HookEvent = "Stop"
+HookEventSubagentStop     HookEvent = "SubagentStop"
+HookEventPreCompact       HookEvent = "PreCompact"
 )
 // BaseHookInput contains fields common to all hook inputs
 type BaseHookInput struct {
-    SessionID      string  `json:"session_id"`
-    TranscriptPath string  `json:"transcript_path"`
-    Cwd            string  `json:"cwd"`
-    PermissionMode *string `json:"permission_mode,omitempty"`
+SessionID      string  `json:"session_id"`
+TranscriptPath string  `json:"transcript_path"`
+Cwd            string  `json:"cwd"`
+PermissionMode *string `json:"permission_mode,omitempty"`
 }
 // HookInput is a discriminated union of all hook input types
 // The specific type can be determined by the HookEventName field
 type HookInput interface {
-    hookInput()
+hookInput()
 }
 // PreToolUseHookInput is the input for PreToolUse hooks
 type PreToolUseHookInput struct {
-    BaseHookInput
-    HookEventName string `json:"hook_event_name"` // "PreToolUse"
-    ToolName      string `json:"tool_name"`
-    ToolInput     any    `json:"tool_input"` // Intentionally flexible - varies by tool
+BaseHookInput
+HookEventName string `json:"hook_event_name"` // "PreToolUse"
+ToolName      string `json:"tool_name"`
+ToolInput     any    `json:"tool_input"` // Intentionally flexible - varies by tool
 }
 func (PreToolUseHookInput) hookInput() {}
 // PostToolUseHookInput is the input for PostToolUse hooks
 type PostToolUseHookInput struct {
-    BaseHookInput
-    HookEventName string `json:"hook_event_name"` // "PostToolUse"
-    ToolName      string `json:"tool_name"`
-    ToolInput     any    `json:"tool_input"`     // Intentionally flexible - varies by tool
-    ToolResponse  any    `json:"tool_response"`  // Intentionally flexible - varies by tool
+BaseHookInput
+HookEventName string `json:"hook_event_name"` // "PostToolUse"
+ToolName      string `json:"tool_name"`
+ToolInput     any    `json:"tool_input"`     // Intentionally flexible - varies by tool
+ToolResponse  any    `json:"tool_response"`  // Intentionally flexible - varies by tool
 }
 func (PostToolUseHookInput) hookInput() {}
 // NotificationHookInput is the input for Notification hooks
 type NotificationHookInput struct {
-    BaseHookInput
-    HookEventName string  `json:"hook_event_name"` // "Notification"
-    Message       string  `json:"message"`
-    Title         *string `json:"title,omitempty"`
+BaseHookInput
+HookEventName string  `json:"hook_event_name"` // "Notification"
+Message       string  `json:"message"`
+Title         *string `json:"title,omitempty"`
 }
 func (NotificationHookInput) hookInput() {}
 // UserPromptSubmitHookInput is the input for UserPromptSubmit hooks
 type UserPromptSubmitHookInput struct {
-    BaseHookInput
-    HookEventName string `json:"hook_event_name"` // "UserPromptSubmit"
-    Prompt        string `json:"prompt"`
+BaseHookInput
+HookEventName string `json:"hook_event_name"` // "UserPromptSubmit"
+Prompt        string `json:"prompt"`
 }
 func (UserPromptSubmitHookInput) hookInput() {}
 // SessionStartHookInput is the input for SessionStart hooks
 type SessionStartHookInput struct {
-    BaseHookInput
-    HookEventName string `json:"hook_event_name"` // "SessionStart"
-    Source        string `json:"source"` // "startup" | "resume" | "clear" | "compact"
+BaseHookInput
+HookEventName string `json:"hook_event_name"` // "SessionStart"
+Source        string `json:"source"` // "startup" | "resume" | "clear" | "compact"
 }
 func (SessionStartHookInput) hookInput() {}
 // SessionEndHookInput is the input for SessionEnd hooks
 type SessionEndHookInput struct {
-    BaseHookInput
-    HookEventName string `json:"hook_event_name"` // "SessionEnd"
-    Reason        string `json:"reason"` // Exit reason
+BaseHookInput
+HookEventName string `json:"hook_event_name"` // "SessionEnd"
+Reason        string `json:"reason"` // Exit reason
 }
 func (SessionEndHookInput) hookInput() {}
 // StopHookInput is the input for Stop hooks
 type StopHookInput struct {
-    BaseHookInput
-    HookEventName  string `json:"hook_event_name"` // "Stop"
-    StopHookActive bool   `json:"stop_hook_active"`
+BaseHookInput
+HookEventName  string `json:"hook_event_name"` // "Stop"
+StopHookActive bool   `json:"stop_hook_active"`
 }
 func (StopHookInput) hookInput() {}
 // SubagentStopHookInput is the input for SubagentStop hooks
 type SubagentStopHookInput struct {
-    BaseHookInput
-    HookEventName  string `json:"hook_event_name"` // "SubagentStop"
-    StopHookActive bool   `json:"stop_hook_active"`
+BaseHookInput
+HookEventName  string `json:"hook_event_name"` // "SubagentStop"
+StopHookActive bool   `json:"stop_hook_active"`
 }
 func (SubagentStopHookInput) hookInput() {}
 // PreCompactHookInput is the input for PreCompact hooks
 type PreCompactHookInput struct {
-    BaseHookInput
-    HookEventName       string  `json:"hook_event_name"` // "PreCompact"
-    Trigger             string  `json:"trigger"` // "manual" | "auto"
-    CustomInstructions  *string `json:"custom_instructions,omitempty"`
+BaseHookInput
+HookEventName       string  `json:"hook_event_name"` // "PreCompact"
+Trigger             string  `json:"trigger"` // "manual" | "auto"
+CustomInstructions  *string `json:"custom_instructions,omitempty"`
 }
 func (PreCompactHookInput) hookInput() {}
 // HookContext provides context for hook execution
 type HookContext struct {
-    // Future: signal support for cancellation
+// Future: signal support for cancellation
 }
 // HookCallback is a function that handles hook events
 // Note: The input parameter is intentionally map[string]any at the callback level
@@ -933,69 +891,69 @@ type HookContext struct {
 type HookCallback func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error)
 // HookMatcher defines when a hook should execute
 type HookMatcher struct {
-    Matcher string          // Pattern to match (e.g., tool name, event type)
-    Hooks   []HookCallback  // Callbacks to execute
+Matcher string          // Pattern to match (e.g., tool name, event type)
+Hooks   []HookCallback  // Callbacks to execute
 }
 // Service manages hook execution
 type Service struct {
-    hooks map[HookEvent][]HookMatcher
+hooks map[HookEvent][]HookMatcher
 }
 func NewService(hooks map[HookEvent][]HookMatcher) *Service {
-    return &Service{
-        hooks: hooks,
-    }
+return &Service{
+hooks: hooks,
+}
 }
 // GetHooks returns the hook configuration
 func (s *Service) GetHooks() map[HookEvent][]HookMatcher {
-    if s == nil {
-        return nil
-    }
-    return s.hooks
+if s == nil {
+return nil
+}
+return s.hooks
 }
 // Execute runs hooks for a given event
 func (s *Service) Execute(ctx context.Context, event HookEvent, input map[string]any, toolUseID *string) (map[string]any, error) {
-    if s == nil || s.hooks == nil {
-        return nil, nil
-    }
-    // 1. Find matching hooks for event
-    matchers, exists := s.hooks[event]
-    if !exists || len(matchers) == 0 {
-        return nil, nil
-    }
-    // 2. Execute hooks in order and aggregate results
-    aggregatedResult := map[string]any{}
-    hookCtx := HookContext{}
-    for _, matcher := range matchers {
-        // Check if matcher applies to this input
-        // TODO: Implement pattern matching logic based on matcher.Matcher field
-        for _, callback := range matcher.Hooks {
-            // 3. Execute hook callback
-            result, err := callback(input, toolUseID, hookCtx)
-            if err != nil {
-                return nil, fmt.Errorf("hook execution failed: %w", err)
-            }
-            if result == nil {
-                continue
-            }
-            // 4. Handle blocking decisions
-            // If hook returns decision="block", stop execution immediately
-            if decision, ok := result["decision"].(string); ok && decision == "block" {
-                return result, nil
-            }
-            // Aggregate results (later hooks can override earlier ones)
-            for k, v := range result {
-                aggregatedResult[k] = v
-            }
-        }
-    }
-    return aggregatedResult, nil
+if s == nil || s.hooks == nil {
+return nil, nil
+}
+// 1. Find matching hooks for event
+matchers, exists := s.hooks[event]
+if !exists || len(matchers) == 0 {
+return nil, nil
+}
+// 2. Execute hooks in order and aggregate results
+aggregatedResult := map[string]any{}
+hookCtx := HookContext{}
+for _, matcher := range matchers {
+// Check if matcher applies to this input
+// TODO: Implement pattern matching logic based on matcher.Matcher field
+for _, callback := range matcher.Hooks {
+// 3. Execute hook callback
+result, err := callback(input, toolUseID, hookCtx)
+if err != nil {
+return nil, fmt.Errorf("hook execution failed: %w", err)
+}
+if result == nil {
+continue
+}
+// 4. Handle blocking decisions
+// If hook returns decision="block", stop execution immediately
+if decision, ok := result["decision"].(string); ok && decision == "block" {
+return result, nil
+}
+// Aggregate results (later hooks can override earlier ones)
+for k, v := range result {
+aggregatedResult[k] = v
+}
+}
+}
+return aggregatedResult, nil
 }
 // Register adds a new hook
 func (s *Service) Register(event HookEvent, matcher HookMatcher) {
-    if s.hooks == nil {
-        s.hooks = make(map[HookEvent][]HookMatcher)
-    }
-    s.hooks[event] = append(s.hooks[event], matcher)
+if s.hooks == nil {
+s.hooks = make(map[HookEvent][]HookMatcher)
+}
+s.hooks[event] = append(s.hooks[event], matcher)
 }
 ```
 ### 2.4 Permissions Service (permissions/service.go)
@@ -1004,113 +962,113 @@ The permissions service handles tool permission checks and updates.
 ```go
 package permissions
 import (
-    "context"
-    "github.com/conneroisu/claude/pkg/claude/options"
+"context"
+"github.com/conneroisu/claude/pkg/claude/options"
 )
 // PermissionResult represents the outcome of a permission check
 type PermissionResult interface {
-    permissionResult()
+permissionResult()
 }
 // PermissionResultAllow indicates tool use is allowed
 type PermissionResultAllow struct {
-    UpdatedInput       map[string]any      // Intentionally flexible - tool inputs vary by tool
-    UpdatedPermissions []PermissionUpdate
+UpdatedInput       map[string]any      // Intentionally flexible - tool inputs vary by tool
+UpdatedPermissions []PermissionUpdate
 }
 func (PermissionResultAllow) permissionResult() {}
 // PermissionResultDeny indicates tool use is denied
 type PermissionResultDeny struct {
-    Message   string
-    Interrupt bool
+Message   string
+Interrupt bool
 }
 func (PermissionResultDeny) permissionResult() {}
 // PermissionUpdate represents a permission change
 type PermissionUpdate struct {
-    Type        string
-    Rules       []PermissionRuleValue
-    Behavior    *PermissionBehavior
-    Mode        *options.PermissionMode
-    Directories []string
-    Destination *PermissionUpdateDestination
+Type        string
+Rules       []PermissionRuleValue
+Behavior    *PermissionBehavior
+Mode        *options.PermissionMode
+Directories []string
+Destination *PermissionUpdateDestination
 }
 type PermissionRuleValue struct {
-    ToolName    string
-    RuleContent *string
+ToolName    string
+RuleContent *string
 }
 type PermissionBehavior string
 const (
-    PermissionBehaviorAllow PermissionBehavior = "allow"
-    PermissionBehaviorDeny  PermissionBehavior = "deny"
-    PermissionBehaviorAsk   PermissionBehavior = "ask"
+PermissionBehaviorAllow PermissionBehavior = "allow"
+PermissionBehaviorDeny  PermissionBehavior = "deny"
+PermissionBehaviorAsk   PermissionBehavior = "ask"
 )
 type PermissionUpdateDestination string
 const (
-    PermissionDestinationUserSettings    PermissionUpdateDestination = "userSettings"
-    PermissionDestinationProjectSettings PermissionUpdateDestination = "projectSettings"
-    PermissionDestinationLocalSettings   PermissionUpdateDestination = "localSettings"
-    PermissionDestinationSession         PermissionUpdateDestination = "session"
+PermissionDestinationUserSettings    PermissionUpdateDestination = "userSettings"
+PermissionDestinationProjectSettings PermissionUpdateDestination = "projectSettings"
+PermissionDestinationLocalSettings   PermissionUpdateDestination = "localSettings"
+PermissionDestinationSession         PermissionUpdateDestination = "session"
 )
 // ToolPermissionContext provides context for permission decisions
 type ToolPermissionContext struct {
-    Suggestions []PermissionUpdate
+Suggestions []PermissionUpdate
 }
 // CanUseToolFunc is a callback for permission checks
 // input is intentionally map[string]any as tool inputs vary by tool
 type CanUseToolFunc func(ctx context.Context, toolName string, input map[string]any, permCtx ToolPermissionContext) (PermissionResult, error)
 // PermissionsConfig holds permission service configuration
 type PermissionsConfig struct {
-    Mode       options.PermissionMode
-    CanUseTool CanUseToolFunc
+Mode       options.PermissionMode
+CanUseTool CanUseToolFunc
 }
 // Service manages tool permissions
 type Service struct {
-    mode        options.PermissionMode
-    canUseTool  CanUseToolFunc
+mode        options.PermissionMode
+canUseTool  CanUseToolFunc
 }
 func NewService(config *PermissionsConfig) *Service {
-    if config == nil {
-        return &Service{
-            mode: options.PermissionModeAsk,
-        }
-    }
-    return &Service{
-        mode:       config.Mode,
-        canUseTool: config.CanUseTool,
-    }
+if config == nil {
+return &Service{
+mode: options.PermissionModeAsk,
+}
+}
+return &Service{
+mode:       config.Mode,
+canUseTool: config.CanUseTool,
+}
 }
 // CheckToolUse verifies if a tool can be used
 func (s *Service) CheckToolUse(ctx context.Context, toolName string, input map[string]any) (PermissionResult, error) {
-    // 1. Check permission mode
-    switch s.mode {
-    case options.PermissionModeBypassPermissions:
-        // Always allow
-        return &PermissionResultAllow{}, nil
-    case options.PermissionModeDefault, options.PermissionModeAcceptEdits, options.PermissionModePlan:
-        // 2. Call canUseTool callback if set
-        if s.canUseTool != nil {
-            permCtx := ToolPermissionContext{
-                // TODO: Extract suggestions from control request if available
-                Suggestions: []PermissionUpdate{},
-            }
-            result, err := s.canUseTool(ctx, toolName, input, permCtx)
-            if err != nil {
-                return nil, fmt.Errorf("permission callback failed: %w", err)
-            }
-            return result, nil
-        }
-        // 3. Apply default behavior (ask user via CLI)
-        // In default mode without callback, we allow but this should be handled by CLI
-        return &PermissionResultAllow{}, nil
-    default:
-        // Unknown mode - deny for safety
-        return &PermissionResultDeny{
-            Message:   fmt.Sprintf("unknown permission mode: %s", s.mode),
-            Interrupt: false,
-        }, nil
-    }
+// 1. Check permission mode
+switch s.mode {
+case options.PermissionModeBypassPermissions:
+// Always allow
+return &PermissionResultAllow{}, nil
+case options.PermissionModeDefault, options.PermissionModeAcceptEdits, options.PermissionModePlan:
+// 2. Call canUseTool callback if set
+if s.canUseTool != nil {
+permCtx := ToolPermissionContext{
+// TODO: Extract suggestions from control request if available
+Suggestions: []PermissionUpdate{},
+}
+result, err := s.canUseTool(ctx, toolName, input, permCtx)
+if err != nil {
+return nil, fmt.Errorf("permission callback failed: %w", err)
+}
+return result, nil
+}
+// 3. Apply default behavior (ask user via CLI)
+// In default mode without callback, we allow but this should be handled by CLI
+return &PermissionResultAllow{}, nil
+default:
+// Unknown mode - deny for safety
+return &PermissionResultDeny{
+Message:   fmt.Sprintf("unknown permission mode: %s", s.mode),
+Interrupt: false,
+}, nil
+}
 }
 // UpdateMode changes the permission mode
 func (s *Service) UpdateMode(mode options.PermissionMode) {
-    s.mode = mode
+s.mode = mode
 }
 ```
 ## Phase 3: Adapters (Infrastructure)
@@ -1120,315 +1078,315 @@ This adapter implements the Transport port using subprocess CLI.
 ```go
 package cli
 import (
-    "bufio"
-    "context"
-    "encoding/json"
-    "fmt"
-    "io"
-    "os"
-    "os/exec"
-    "path/filepath"
-    "strings"
-    "sync"
-    "github.com/conneroisu/claude/pkg/claude/ports"
-    "github.com/conneroisu/claude/pkg/claude/options"
+"bufio"
+"context"
+"encoding/json"
+"fmt"
+"io"
+"os"
+"os/exec"
+"path/filepath"
+"strings"
+"sync"
+"github.com/conneroisu/claude/pkg/claude/ports"
+"github.com/conneroisu/claude/pkg/claude/options"
 )
 // Adapter implements ports.Transport using CLI subprocess
 type Adapter struct {
-    options            *options.AgentOptions
-    cliPath            string
-    cmd                *exec.Cmd
-    stdin              io.WriteCloser
-    stdout             io.ReadCloser
-    stderr             io.ReadCloser
-    ready              bool
-    exitErr            error
-    closeStdinAfterWrite bool  // For one-shot queries
-    mu                 sync.RWMutex
-    maxBufferSize      int
+options            *options.AgentOptions
+cliPath            string
+cmd                *exec.Cmd
+stdin              io.WriteCloser
+stdout             io.ReadCloser
+stderr             io.ReadCloser
+ready              bool
+exitErr            error
+closeStdinAfterWrite bool  // For one-shot queries
+mu                 sync.RWMutex
+maxBufferSize      int
 }
 // Verify interface compliance at compile time
 var _ ports.Transport = (*Adapter)(nil)
 const defaultMaxBufferSize = 1024 * 1024 // 1MB
 func NewAdapter(opts *options.AgentOptions) *Adapter {
-    maxBuf := defaultMaxBufferSize
-    if opts.MaxBufferSize != nil {
-        maxBuf = *opts.MaxBufferSize
-    }
-    return &Adapter{
-        options:       opts,
-        maxBufferSize: maxBuf,
-    }
+maxBuf := defaultMaxBufferSize
+if opts.MaxBufferSize != nil {
+maxBuf = *opts.MaxBufferSize
+}
+return &Adapter{
+options:       opts,
+maxBufferSize: maxBuf,
+}
 }
 // findCLI locates the Claude CLI binary
 func (a *Adapter) findCLI() (string, error) {
-    // Check PATH first
-    if path, err := exec.LookPath("claude"); err == nil {
-        return path, nil
-    }
-    // Check common installation locations
-    homeDir, _ := os.UserHomeDir()
-    locations := []string{
-        filepath.Join(homeDir, ".npm-global", "bin", "claude"),
-        "/usr/local/bin/claude",
-        filepath.Join(homeDir, ".local", "bin", "claude"),
-        filepath.Join(homeDir, "node_modules", ".bin", "claude"),
-        filepath.Join(homeDir, ".yarn", "bin", "claude"),
-    }
-    for _, loc := range locations {
-        if _, err := os.Stat(loc); err == nil {
-            return loc, nil
-        }
-    }
-    return "", fmt.Errorf("claude CLI not found in PATH or common locations")
+// Check PATH first
+if path, err := exec.LookPath("claude"); err == nil {
+return path, nil
+}
+// Check common installation locations
+homeDir, _ := os.UserHomeDir()
+locations := []string{
+filepath.Join(homeDir, ".npm-global", "bin", "claude"),
+"/usr/local/bin/claude",
+filepath.Join(homeDir, ".local", "bin", "claude"),
+filepath.Join(homeDir, "node_modules", ".bin", "claude"),
+filepath.Join(homeDir, ".yarn", "bin", "claude"),
+}
+for _, loc := range locations {
+if _, err := os.Stat(loc); err == nil {
+return loc, nil
+}
+}
+return "", fmt.Errorf("claude CLI not found in PATH or common locations")
 }
 // BuildCommand constructs the CLI command with all options
 // Exported for testing purposes
 func (a *Adapter) BuildCommand() ([]string, error) {
-    cmd := []string{a.cliPath, "--output-format", "stream-json", "--verbose"}
-    // System prompt
-    if a.options.SystemPrompt != nil {
-        switch sp := a.options.SystemPrompt.(type) {
-        case options.StringSystemPrompt:
-            cmd = append(cmd, "--system-prompt", string(sp))
-        case options.PresetSystemPrompt:
-            if sp.Append != nil {
-                cmd = append(cmd, "--append-system-prompt", *sp.Append)
-            }
-        }
-    }
-    // Tools
-    if len(a.options.AllowedTools) > 0 {
-        cmd = append(cmd, "--allowedTools", strings.Join(a.options.AllowedTools, ","))
-    }
-    if len(a.options.DisallowedTools) > 0 {
-        cmd = append(cmd, "--disallowedTools", strings.Join(a.options.DisallowedTools, ","))
-    }
-    // Model and turns
-    if a.options.Model != nil {
-        cmd = append(cmd, "--model", *a.options.Model)
-    }
-    if a.options.MaxTurns != nil {
-        cmd = append(cmd, "--max-turns", fmt.Sprintf("%d", *a.options.MaxTurns))
-    }
-    // Permissions
-    if a.options.PermissionMode != nil {
-        cmd = append(cmd, "--permission-mode", string(*a.options.PermissionMode))
-    }
-    if a.options.PermissionPromptToolName != nil {
-        cmd = append(cmd, "--permission-prompt-tool", *a.options.PermissionPromptToolName)
-    }
-    // Session
-    if a.options.ContinueConversation {
-        cmd = append(cmd, "--continue")
-    }
-    if a.options.Resume != nil {
-        cmd = append(cmd, "--resume", *a.options.Resume)
-    }
-    if a.options.ForkSession {
-        cmd = append(cmd, "--fork-session")
-    }
-    // Settings
-    if a.options.Settings != nil {
-        cmd = append(cmd, "--settings", *a.options.Settings)
-    }
-    if len(a.options.SettingSources) > 0 {
-        sources := make([]string, len(a.options.SettingSources))
-        for i, s := range a.options.SettingSources {
-            sources[i] = string(s)
-        }
-        cmd = append(cmd, "--setting-sources", strings.Join(sources, ","))
-    }
-    // Directories
-    for _, dir := range a.options.AddDirs {
-        cmd = append(cmd, "--add-dir", dir)
-    }
-    // MCP servers (configuration only, instances handled separately)
-    if len(a.options.MCPServers) > 0 {
-        // Convert to JSON config
-        mcpConfig := map[string]any{"mcpServers": a.options.MCPServers}
-        jsonBytes, err := json.Marshal(mcpConfig)
-        if err != nil {
-            return nil, fmt.Errorf("failed to marshal MCP config: %w", err)
-        }
-        cmd = append(cmd, "--mcp-config", string(jsonBytes))
-    }
-    // Extra arguments
-    for flag, value := range a.options.ExtraArgs {
-        if value == nil {
-            cmd = append(cmd, "--"+flag)
-        } else {
-            cmd = append(cmd, "--"+flag, *value)
-        }
-    }
-    return cmd, nil
+cmd := []string{a.cliPath, "--output-format", "stream-json", "--verbose"}
+// System prompt
+if a.options.SystemPrompt != nil {
+switch sp := a.options.SystemPrompt.(type) {
+case options.StringSystemPrompt:
+cmd = append(cmd, "--system-prompt", string(sp))
+case options.PresetSystemPrompt:
+if sp.Append != nil {
+cmd = append(cmd, "--append-system-prompt", *sp.Append)
+}
+}
+}
+// Tools
+if len(a.options.AllowedTools) > 0 {
+cmd = append(cmd, "--allowedTools", strings.Join(a.options.AllowedTools, ","))
+}
+if len(a.options.DisallowedTools) > 0 {
+cmd = append(cmd, "--disallowedTools", strings.Join(a.options.DisallowedTools, ","))
+}
+// Model and turns
+if a.options.Model != nil {
+cmd = append(cmd, "--model", *a.options.Model)
+}
+if a.options.MaxTurns != nil {
+cmd = append(cmd, "--max-turns", fmt.Sprintf("%d", *a.options.MaxTurns))
+}
+// Permissions
+if a.options.PermissionMode != nil {
+cmd = append(cmd, "--permission-mode", string(*a.options.PermissionMode))
+}
+if a.options.PermissionPromptToolName != nil {
+cmd = append(cmd, "--permission-prompt-tool", *a.options.PermissionPromptToolName)
+}
+// Session
+if a.options.ContinueConversation {
+cmd = append(cmd, "--continue")
+}
+if a.options.Resume != nil {
+cmd = append(cmd, "--resume", *a.options.Resume)
+}
+if a.options.ForkSession {
+cmd = append(cmd, "--fork-session")
+}
+// Settings
+if a.options.Settings != nil {
+cmd = append(cmd, "--settings", *a.options.Settings)
+}
+if len(a.options.SettingSources) > 0 {
+sources := make([]string, len(a.options.SettingSources))
+for i, s := range a.options.SettingSources {
+sources[i] = string(s)
+}
+cmd = append(cmd, "--setting-sources", strings.Join(sources, ","))
+}
+// Directories
+for _, dir := range a.options.AddDirs {
+cmd = append(cmd, "--add-dir", dir)
+}
+// MCP servers (configuration only, instances handled separately)
+if len(a.options.MCPServers) > 0 {
+// Convert to JSON config
+mcpConfig := map[string]any{"mcpServers": a.options.MCPServers}
+jsonBytes, err := json.Marshal(mcpConfig)
+if err != nil {
+return nil, fmt.Errorf("failed to marshal MCP config: %w", err)
+}
+cmd = append(cmd, "--mcp-config", string(jsonBytes))
+}
+// Extra arguments
+for flag, value := range a.options.ExtraArgs {
+if value == nil {
+cmd = append(cmd, "--"+flag)
+} else {
+cmd = append(cmd, "--"+flag, *value)
+}
+}
+return cmd, nil
 }
 func (a *Adapter) Connect(ctx context.Context) error {
-    a.mu.Lock()
-    defer a.mu.Unlock()
-    if a.ready {
-        return nil
-    }
-    // Find CLI
-    cliPath, err := a.findCLI()
-    if err != nil {
-        return fmt.Errorf("CLI discovery failed: %w", err)
-    }
-    a.cliPath = cliPath
-    // Build command
-    cmdArgs, err := a.BuildCommand()
-    if err != nil {
-        return fmt.Errorf("command construction failed: %w", err)
-    }
-    // Set up environment
-    env := os.Environ()
-    env = append(env, "CLAUDE_CODE_ENTRYPOINT=sdk-go")
-    for k, v := range a.options.Env {
-        env = append(env, k+"="+v)
-    }
-    // Create command
-    a.cmd = exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
-    a.cmd.Env = env
-    if a.options.Cwd != nil {
-        a.cmd.Dir = *a.options.Cwd
-    }
-    // Set up pipes
-    stdin, err := a.cmd.StdinPipe()
-    if err != nil {
-        return fmt.Errorf("stdin pipe failed: %w", err)
-    }
-    a.stdin = stdin
-    stdout, err := a.cmd.StdoutPipe()
-    if err != nil {
-        return fmt.Errorf("stdout pipe failed: %w", err)
-    }
-    a.stdout = stdout
-    stderr, err := a.cmd.StderrPipe()
-    if err != nil {
-        return fmt.Errorf("stderr pipe failed: %w", err)
-    }
-    a.stderr = stderr
-    // Start process
-    if err := a.cmd.Start(); err != nil {
-        return fmt.Errorf("process start failed: %w", err)
-    }
-    // Start stderr handler if callback is set
-    if a.options.StderrCallback != nil {
-        go a.handleStderr()
-    }
-    // Detect one-shot mode: _isStreaming flag set by domain services
-    // In one-shot mode, stdin should be closed after first write
-    if !a.options._isStreaming {
-        a.closeStdinAfterWrite = true
-    }
-    a.ready = true
-    return nil
+a.mu.Lock()
+defer a.mu.Unlock()
+if a.ready {
+return nil
+}
+// Find CLI
+cliPath, err := a.findCLI()
+if err != nil {
+return fmt.Errorf("CLI discovery failed: %w", err)
+}
+a.cliPath = cliPath
+// Build command
+cmdArgs, err := a.BuildCommand()
+if err != nil {
+return fmt.Errorf("command construction failed: %w", err)
+}
+// Set up environment
+env := os.Environ()
+env = append(env, "CLAUDE_CODE_ENTRYPOINT=sdk-go")
+for k, v := range a.options.Env {
+env = append(env, k+"="+v)
+}
+// Create command
+a.cmd = exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+a.cmd.Env = env
+if a.options.Cwd != nil {
+a.cmd.Dir = *a.options.Cwd
+}
+// Set up pipes
+stdin, err := a.cmd.StdinPipe()
+if err != nil {
+return fmt.Errorf("stdin pipe failed: %w", err)
+}
+a.stdin = stdin
+stdout, err := a.cmd.StdoutPipe()
+if err != nil {
+return fmt.Errorf("stdout pipe failed: %w", err)
+}
+a.stdout = stdout
+stderr, err := a.cmd.StderrPipe()
+if err != nil {
+return fmt.Errorf("stderr pipe failed: %w", err)
+}
+a.stderr = stderr
+// Start process
+if err := a.cmd.Start(); err != nil {
+return fmt.Errorf("process start failed: %w", err)
+}
+// Start stderr handler if callback is set
+if a.options.StderrCallback != nil {
+go a.handleStderr()
+}
+// Detect one-shot mode: _isStreaming flag set by domain services
+// In one-shot mode, stdin should be closed after first write
+if !a.options._isStreaming {
+a.closeStdinAfterWrite = true
+}
+a.ready = true
+return nil
 }
 func (a *Adapter) handleStderr() {
-    scanner := bufio.NewScanner(a.stderr)
-    for scanner.Scan() {
-        line := scanner.Text()
-        if a.options.StderrCallback != nil {
-            a.options.StderrCallback(line)
-        }
-    }
+scanner := bufio.NewScanner(a.stderr)
+for scanner.Scan() {
+line := scanner.Text()
+if a.options.StderrCallback != nil {
+a.options.StderrCallback(line)
+}
+}
 }
 func (a *Adapter) Write(ctx context.Context, data string) error {
-    a.mu.RLock()
-    shouldClose := a.closeStdinAfterWrite
-    a.mu.RUnlock()
-    a.mu.Lock()
-    defer a.mu.Unlock()
-    if !a.ready {
-        return fmt.Errorf("transport not ready")
-    }
-    if a.exitErr != nil {
-        return fmt.Errorf("transport has exited: %w", a.exitErr)
-    }
-    _, err := a.stdin.Write([]byte(data))
-    if err != nil {
-        return err
-    }
-    // Close stdin after write for one-shot queries
-    if shouldClose {
-        a.closeStdinAfterWrite = false
-        a.stdin.Close()
-    }
-    return nil
+a.mu.RLock()
+shouldClose := a.closeStdinAfterWrite
+a.mu.RUnlock()
+a.mu.Lock()
+defer a.mu.Unlock()
+if !a.ready {
+return fmt.Errorf("transport not ready")
+}
+if a.exitErr != nil {
+return fmt.Errorf("transport has exited: %w", a.exitErr)
+}
+_, err := a.stdin.Write([]byte(data))
+if err != nil {
+return err
+}
+// Close stdin after write for one-shot queries
+if shouldClose {
+a.closeStdinAfterWrite = false
+a.stdin.Close()
+}
+return nil
 }
 func (a *Adapter) ReadMessages(ctx context.Context) (<-chan map[string]any, <-chan error) {
-    msgCh := make(chan map[string]any, 10)
-    errCh := make(chan error, 1)
-    go func() {
-        defer close(msgCh)
-        defer close(errCh)
-        scanner := bufio.NewScanner(a.stdout)
-        // Configure scanner buffer to handle large Claude responses
-        // Default is 64KB which is insufficient for large responses
-        scanBuf := make([]byte, 64*1024)
-        scanner.Buffer(scanBuf, a.maxBufferSize)
-        buffer := ""
-        for scanner.Scan() {
-            select {
-            case <-ctx.Done():
-                errCh <- ctx.Err()
-                return
-            default:
-            }
-            line := scanner.Text()
-            buffer += line
-            // Check buffer size
-            if len(buffer) > a.maxBufferSize {
-                errCh <- fmt.Errorf("message buffer exceeded %d bytes", a.maxBufferSize)
-                return
-            }
-            // Try to parse JSON
-            var msg map[string]any
-            if err := json.Unmarshal([]byte(buffer), &msg); err == nil {
-                buffer = ""
-                msgCh <- msg
-            }
-            // Continue buffering if incomplete
-        }
-        if err := scanner.Err(); err != nil {
-            errCh <- err
-        }
-        // Check exit status
-        if a.cmd != nil {
-            if err := a.cmd.Wait(); err != nil {
-                errCh <- fmt.Errorf("process exited with error: %w", err)
-            }
-        }
-    }()
-    return msgCh, errCh
+msgCh := make(chan map[string]any, 10)
+errCh := make(chan error, 1)
+go func() {
+defer close(msgCh)
+defer close(errCh)
+scanner := bufio.NewScanner(a.stdout)
+// Configure scanner buffer to handle large Claude responses
+// Default is 64KB which is insufficient for large responses
+scanBuf := make([]byte, 64*1024)
+scanner.Buffer(scanBuf, a.maxBufferSize)
+buffer := ""
+for scanner.Scan() {
+select {
+case <-ctx.Done():
+errCh <- ctx.Err()
+return
+default:
+}
+line := scanner.Text()
+buffer += line
+// Check buffer size
+if len(buffer) > a.maxBufferSize {
+errCh <- fmt.Errorf("message buffer exceeded %d bytes", a.maxBufferSize)
+return
+}
+// Try to parse JSON
+var msg map[string]any
+if err := json.Unmarshal([]byte(buffer), &msg); err == nil {
+buffer = ""
+msgCh <- msg
+}
+// Continue buffering if incomplete
+}
+if err := scanner.Err(); err != nil {
+errCh <- err
+}
+// Check exit status
+if a.cmd != nil {
+if err := a.cmd.Wait(); err != nil {
+errCh <- fmt.Errorf("process exited with error: %w", err)
+}
+}
+}()
+return msgCh, errCh
 }
 func (a *Adapter) EndInput() error {
-    a.mu.Lock()
-    defer a.mu.Unlock()
-    if a.stdin != nil {
-        return a.stdin.Close()
-    }
-    return nil
+a.mu.Lock()
+defer a.mu.Unlock()
+if a.stdin != nil {
+return a.stdin.Close()
+}
+return nil
 }
 func (a *Adapter) Close() error {
-    a.mu.Lock()
-    defer a.mu.Unlock()
-    a.ready = false
-    // Close stdin
-    if a.stdin != nil {
-        a.stdin.Close()
-    }
-    // Terminate process
-    if a.cmd != nil && a.cmd.Process != nil {
-        a.cmd.Process.Kill()
-        a.cmd.Wait()
-    }
-    return nil
+a.mu.Lock()
+defer a.mu.Unlock()
+a.ready = false
+// Close stdin
+if a.stdin != nil {
+a.stdin.Close()
+}
+// Terminate process
+if a.cmd != nil && a.cmd.Process != nil {
+a.cmd.Process.Kill()
+a.cmd.Wait()
+}
+return nil
 }
 func (a *Adapter) IsReady() bool {
-    a.mu.RLock()
-    defer a.mu.RUnlock()
-    return a.ready
+a.mu.RLock()
+defer a.mu.RUnlock()
+return a.ready
 }
 ```
 ### 3.2 JSON-RPC Protocol Adapter (adapters/jsonrpc/protocol.go)
@@ -1437,318 +1395,314 @@ Key Design: This adapter implements `ports.ProtocolHandler` and manages all cont
 ```go
 package jsonrpc
 import (
-    "context"
-    "crypto/rand"
-    "encoding/hex"
-    "encoding/json"
-    "fmt"
-    "sync"
-    "time"
-    "github.com/conneroisu/claude/pkg/claude/ports"
-    "github.com/conneroisu/claude/pkg/claude/hooking"
-    "github.com/conneroisu/claude/pkg/claude/permissions"
+"context"
+"crypto/rand"
+"encoding/hex"
+"encoding/json"
+"fmt"
+"sync"
+"time"
+"github.com/conneroisu/claude/pkg/claude/ports"
+"github.com/conneroisu/claude/pkg/claude/hooking"
+"github.com/conneroisu/claude/pkg/claude/permissions"
 )
 // Adapter implements ports.ProtocolHandler for control protocol
 // This is an INFRASTRUCTURE adapter - it handles protocol state management
 type Adapter struct {
-    transport      ports.Transport
-    // Control protocol state (managed by adapter, not domain)
-    pendingReqs    map[string]chan result
-    requestCounter int
-    mu             sync.Mutex
+transport      ports.Transport
+// Control protocol state (managed by adapter, not domain)
+pendingReqs    map[string]chan result
+requestCounter int
+mu             sync.Mutex
 }
 // Verify interface compliance at compile time
 var _ ports.ProtocolHandler = (*Adapter)(nil)
 type result struct {
-    data map[string]any
-    err  error
+data map[string]any
+err  error
 }
 func NewAdapter(transport ports.Transport) *Adapter {
-    return &Adapter{
-        transport:   transport,
-        pendingReqs: make(map[string]chan result),
-    }
+return &Adapter{
+transport:   transport,
+pendingReqs: make(map[string]chan result),
+}
 }
 // Initialize is a no-op - initialization happens implicitly in StartMessageRouter
 func (a *Adapter) Initialize(ctx context.Context, config any) (map[string]any, error) {
-    return nil, nil
+return nil, nil
 }
 // SendControlRequest sends a control request and waits for response
 // This method handles all request ID generation and timeout logic
 func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
-    // Generate unique request ID: req_{counter}_{randomHex}
-    a.mu.Lock()
-    a.requestCounter++
-    requestID := fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(4))
-    a.mu.Unlock()
-    // Create result channel for this request
-    resCh := make(chan result, 1)
-    a.mu.Lock()
-    a.pendingReqs[requestID] = resCh
-    a.mu.Unlock()
-    // Build control request envelope
-    controlReq := map[string]any{
-        "type":       "control_request",
-        "request_id": requestID,
-        "request":    req,
-    }
-    // Send via transport
-    reqBytes, err := json.Marshal(controlReq)
-    if err != nil {
-        a.mu.Lock()
-        delete(a.pendingReqs, requestID)
-        a.mu.Unlock()
-        return nil, fmt.Errorf("marshal control request: %w", err)
-    }
-    if err := a.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
-        a.mu.Lock()
-        delete(a.pendingReqs, requestID)
-        a.mu.Unlock()
-        return nil, fmt.Errorf("write control request: %w", err)
-    }
-    // Wait for response with 60s timeout
-    timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-    defer cancel()
-    select {
-    case <-timeoutCtx.Done():
-        a.mu.Lock()
-        delete(a.pendingReqs, requestID)
-        a.mu.Unlock()
-        if timeoutCtx.Err() == context.DeadlineExceeded {
-            return nil, fmt.Errorf("control request timeout: %s", req["subtype"])
-        }
-        return nil, timeoutCtx.Err()
-    case res := <-resCh:
-        if res.err != nil {
-            return nil, res.err
-        }
-        return res.data, nil
-    }
+// Generate unique request ID: req_{counter}_{randomHex}
+a.mu.Lock()
+a.requestCounter++
+requestID := fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(4))
+a.mu.Unlock()
+// Create result channel for this request
+resCh := make(chan result, 1)
+a.mu.Lock()
+a.pendingReqs[requestID] = resCh
+a.mu.Unlock()
+// Build control request envelope
+controlReq := map[string]any{
+"type":       "control_request",
+"request_id": requestID,
+"request":    req,
+}
+// Send via transport
+reqBytes, err := json.Marshal(controlReq)
+if err != nil {
+a.mu.Lock()
+delete(a.pendingReqs, requestID)
+a.mu.Unlock()
+return nil, fmt.Errorf("marshal control request: %w", err)
+}
+if err := a.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
+a.mu.Lock()
+delete(a.pendingReqs, requestID)
+a.mu.Unlock()
+return nil, fmt.Errorf("write control request: %w", err)
+}
+// Wait for response with 60s timeout
+timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+defer cancel()
+select {
+case <-timeoutCtx.Done():
+a.mu.Lock()
+delete(a.pendingReqs, requestID)
+a.mu.Unlock()
+if timeoutCtx.Err() == context.DeadlineExceeded {
+return nil, fmt.Errorf("control request timeout: %s", req["subtype"])
+}
+return nil, timeoutCtx.Err()
+case res := <-resCh:
+if res.err != nil {
+return nil, res.err
+}
+return res.data, nil
+}
 }
 // HandleControlRequest routes inbound control requests by subtype
 func (a *Adapter) HandleControlRequest(
-    ctx context.Context,
-    req map[string]any,
-    perms *permissions.Service,
-    hooks map[string]hooking.HookCallback,
-    mcpServers map[string]ports.MCPServer,
+ctx context.Context,
+req map[string]any,
+perms *permissions.Service,
+hooks map[string]hooking.HookCallback,
+mcpServers map[string]ports.MCPServer,
 ) (map[string]any, error) {
-    request, _ := req["request"].(map[string]any)
-    subtype, _ := request["subtype"].(string)
-    switch subtype {
-    case "can_use_tool":
-        return a.handleCanUseTool(ctx, request, perms)
-    case "hook_callback":
-        return a.handleHookCallback(ctx, request, hooks)
-    case "mcp_message":
-        return a.handleMCPMessage(ctx, request, mcpServers)
-    default:
-        return nil, fmt.Errorf("unsupported control request subtype: %s", subtype)
-    }
+request, _ := req["request"].(map[string]any)
+subtype, _ := request["subtype"].(string)
+switch subtype {
+case "can_use_tool":
+return a.handleCanUseTool(ctx, request, perms)
+case "hook_callback":
+return a.handleHookCallback(ctx, request, hooks)
+case "mcp_message":
+return a.handleMCPMessage(ctx, request, mcpServers)
+default:
+return nil, fmt.Errorf("unsupported control request subtype: %s", subtype)
+}
 }
 // StartMessageRouter continuously reads transport and partitions messages
 func (a *Adapter) StartMessageRouter(
-    ctx context.Context,
-    msgCh chan<- map[string]any,
-    errCh chan<- error,
-    perms *permissions.Service,
-    hooks map[string]hooking.HookCallback,
-    mcpServers map[string]ports.MCPServer,
+ctx context.Context,
+msgCh chan<- map[string]any,
+errCh chan<- error,
+perms *permissions.Service,
+hooks map[string]hooking.HookCallback,
+mcpServers map[string]ports.MCPServer,
 ) error {
-    go func() {
-        transportMsgCh, transportErrCh := a.transport.ReadMessages(ctx)
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            case msg, ok := <-transportMsgCh:
-                if !ok {
-                    return
-                }
-                msgType, _ := msg["type"].(string)
-                switch msgType {
-                case "control_response":
-                    // Route to pending request
-                    a.routeControlResponse(msg)
-                case "control_request":
-                    // Handle inbound control request
-                    go a.handleControlRequestAsync(ctx, msg, perms, hooks, mcpServers)
-                case "control_cancel_request":
-                    // TODO: Implement cancellation support
-                    continue
-                default:
-                    // Forward SDK messages to public stream
-                    select {
-                    case msgCh <- msg:
-                    case <-ctx.Done():
-                        return
-                    }
-                }
-            case err := <-transportErrCh:
-                if err != nil {
-                    select {
-                    case errCh <- err:
-                    case <-ctx.Done():
-                    }
-                    return
-                }
-            }
-        }
-    }()
-    return nil
+go func() {
+transportMsgCh, transportErrCh := a.transport.ReadMessages(ctx)
+for {
+select {
+case <-ctx.Done():
+return
+case msg, ok := <-transportMsgCh:
+if !ok {
+return
+}
+msgType, _ := msg["type"].(string)
+switch msgType {
+case "control_response":
+// Route to pending request
+a.routeControlResponse(msg)
+case "control_request":
+// Handle inbound control request
+go a.handleControlRequestAsync(ctx, msg, perms, hooks, mcpServers)
+case "control_cancel_request":
+// TODO: Implement cancellation support
+continue
+default:
+// Forward SDK messages to public stream
+select {
+case msgCh <- msg:
+case <-ctx.Done():
+return
+}
+}
+case err := <-transportErrCh:
+if err != nil {
+select {
+case errCh <- err:
+case <-ctx.Done():
+}
+return
+}
+}
+}
+}()
+return nil
 }
 // routeControlResponse routes control_response messages to pending requests
 func (a *Adapter) routeControlResponse(msg map[string]any) {
-    response, _ := msg["response"].(map[string]any)
-    requestID, _ := response["request_id"].(string)
-    a.mu.Lock()
-    defer a.mu.Unlock()
-    if ch, exists := a.pendingReqs[requestID]; exists {
-        subtype, _ := response["subtype"].(string)
-        if subtype == "error" {
-            errorMsg, _ := response["error"].(string)
-            ch <- result{err: fmt.Errorf("control error: %s", errorMsg)}
-        } else {
-            responseData, _ := response["response"].(map[string]any)
-            ch <- result{data: responseData}
-        }
-        delete(a.pendingReqs, requestID)
-    }
+response, _ := msg["response"].(map[string]any)
+requestID, _ := response["request_id"].(string)
+a.mu.Lock()
+defer a.mu.Unlock()
+if ch, exists := a.pendingReqs[requestID]; exists {
+subtype, _ := response["subtype"].(string)
+if subtype == "error" {
+errorMsg, _ := response["error"].(string)
+ch <- result{err: fmt.Errorf("control error: %s", errorMsg)}
+} else {
+responseData, _ := response["response"].(map[string]any)
+ch <- result{data: responseData}
+}
+delete(a.pendingReqs, requestID)
+}
 }
 // handleControlRequestAsync handles inbound control requests asynchronously
 // Dependencies (perms, hooks, mcpServers) must be passed by the domain service that starts the router
 func (a *Adapter) handleControlRequestAsync(
-    ctx context.Context,
-    msg map[string]any,
-    perms *permissions.Service,
-    hooks map[string]hooking.HookCallback,
-    mcpServers map[string]ports.MCPServer,
+ctx context.Context,
+msg map[string]any,
+perms *permissions.Service,
+hooks map[string]hooking.HookCallback,
+mcpServers map[string]ports.MCPServer,
 ) {
-    requestID, _ := msg["request_id"].(string)
-    // Handle the request
-    responseData, err := a.HandleControlRequest(ctx, msg, perms, hooks, mcpServers)
-    // Build response
-    var response map[string]any
-    if err != nil {
-        response = map[string]any{
-            "type": "control_response",
-            "response": map[string]any{
-                "subtype":    "error",
-                "request_id": requestID,
-                "error":      err.Error(),
-            },
-        }
-    } else {
-        response = map[string]any{
-            "type": "control_response",
-            "response": map[string]any{
-                "subtype":    "success",
-                "request_id": requestID,
-                "response":   responseData,
-            },
-        }
-    }
-    // Send response
-    resBytes, _ := json.Marshal(response)
-    a.transport.Write(ctx, string(resBytes)+"\n")
+requestID, _ := msg["request_id"].(string)
+// Handle the request
+responseData, err := a.HandleControlRequest(ctx, msg, perms, hooks, mcpServers)
+// Build response
+var response map[string]any
+if err != nil {
+response = map[string]any{
+"type": "control_response",
+"response": map[string]any{
+"subtype":    "error",
+"request_id": requestID,
+"error":      err.Error(),
+},
+}
+} else {
+response = map[string]any{
+"type": "control_response",
+"response": map[string]any{
+"subtype":    "success",
+"request_id": requestID,
+"response":   responseData,
+},
+}
+}
+// Send response
+resBytes, _ := json.Marshal(response)
+a.transport.Write(ctx, string(resBytes)+"\n")
 }
 // handleCanUseTool handles can_use_tool control requests
 func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, perms *permissions.Service) (map[string]any, error) {
-    toolName, _ := request["tool_name"].(string)
-    input, _ := request["input"].(map[string]any)
-    // suggestions, _ := request["permission_suggestions"].([]any) // TODO: Use suggestions
-    if perms == nil {
-        return nil, fmt.Errorf("permissions callback not provided")
-    }
-    result, err := perms.CheckToolUse(ctx, toolName, input)
-    if err != nil {
-        return nil, err
-    }
-    // Convert PermissionResult to response format
-    switch r := result.(type) {
-    case *permissions.PermissionResultAllow:
-        response := map[string]any{"allow": true}
-        if r.UpdatedInput != nil {
-            response["input"] = r.UpdatedInput
-        }
-        // TODO: Handle updatedPermissions when control protocol supports it
-        return response, nil
-    case *permissions.PermissionResultDeny:
-        return map[string]any{
-            "allow":  false,
-            "reason": r.Message,
-        }, nil
-    default:
-        return nil, fmt.Errorf("unknown permission result type")
-    }
+toolName, _ := request["tool_name"].(string)
+input, _ := request["input"].(map[string]any)
+// suggestions, _ := request["permission_suggestions"].([]any) // TODO: Use suggestions
+if perms == nil {
+return nil, fmt.Errorf("permissions callback not provided")
+}
+result, err := perms.CheckToolUse(ctx, toolName, input)
+if err != nil {
+return nil, err
+}
+// Convert PermissionResult to response format
+switch r := result.(type) {
+case *permissions.PermissionResultAllow:
+response := map[string]any{"allow": true}
+if r.UpdatedInput != nil {
+response["input"] = r.UpdatedInput
+}
+// TODO: Handle updatedPermissions when control protocol supports it
+return response, nil
+case *permissions.PermissionResultDeny:
+return map[string]any{
+"allow":  false,
+"reason": r.Message,
+}, nil
+default:
+return nil, fmt.Errorf("unknown permission result type")
+}
 }
 // handleHookCallback handles hook_callback control requests
 func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any, hooks map[string]hooking.HookCallback) (map[string]any, error) {
-    callbackID, _ := request["callback_id"].(string)
-    input, _ := request["input"].(map[string]any)
-    toolUseID, _ := request["tool_use_id"].(*string)
-    callback, exists := hooks[callbackID]
-    if !exists {
-        return nil, fmt.Errorf("no hook callback found for ID: %s", callbackID)
-    }
-    // Execute callback
-    hookCtx := hooking.HookContext{} // TODO: Add signal support
-    result, err := callback(input, toolUseID, hookCtx)
-    if err != nil {
-        return nil, err
-    }
-    return result, nil
+callbackID, _ := request["callback_id"].(string)
+input, _ := request["input"].(map[string]any)
+toolUseID, _ := request["tool_use_id"].(*string)
+callback, exists := hooks[callbackID]
+if !exists {
+return nil, fmt.Errorf("no hook callback found for ID: %s", callbackID)
+}
+// Execute callback
+hookCtx := hooking.HookContext{} // TODO: Add signal support
+result, err := callback(input, toolUseID, hookCtx)
+if err != nil {
+return nil, err
+}
+return result, nil
 }
 // handleMCPMessage handles mcp_message control requests by proxying
 // the raw message to the appropriate in-process MCPServer.
 func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any, mcpServers map[string]ports.MCPServer) (map[string]any, error) {
-    serverName, _ := request["server_name"].(string)
-    mcpMessage, _ := request["message"].(map[string]any)
-    server, exists := mcpServers[serverName]
-    if !exists {
-        return a.mcpErrorResponse(mcpMessage, -32601, fmt.Sprintf("Server '%s' not found", serverName)), nil
-    }
-
-    // Marshal the message to be sent to the server wrapper.
-    mcpMessageBytes, err := json.Marshal(mcpMessage)
-    if err != nil {
-        return a.mcpErrorResponse(mcpMessage, -32603, "failed to marshal mcp message"), nil
-    }
-
-    // The MCPServer port handles the message and returns a raw response.
-    responseBytes, err := server.HandleMessage(ctx, mcpMessageBytes)
-    if err != nil {
-        return a.mcpErrorResponse(mcpMessage, -32603, err.Error()), nil
-    }
-
-    // Unmarshal the response to be embedded in the control protocol response.
-    var mcpResponse map[string]any
-    if err := json.Unmarshal(responseBytes, &mcpResponse); err != nil {
-        return a.mcpErrorResponse(mcpMessage, -32603, "failed to unmarshal mcp response"), nil
-    }
-
-    return map[string]any{
-        "mcp_response": mcpResponse,
-    }, nil
+serverName, _ := request["server_name"].(string)
+mcpMessage, _ := request["message"].(map[string]any)
+server, exists := mcpServers[serverName]
+if !exists {
+return a.mcpErrorResponse(mcpMessage, -32601, fmt.Sprintf("Server '%s' not found", serverName)), nil
+}
+// Marshal the message to be sent to the server wrapper.
+mcpMessageBytes, err := json.Marshal(mcpMessage)
+if err != nil {
+return a.mcpErrorResponse(mcpMessage, -32603, "failed to marshal mcp message"), nil
+}
+// The MCPServer port handles the message and returns a raw response.
+responseBytes, err := server.HandleMessage(ctx, mcpMessageBytes)
+if err != nil {
+return a.mcpErrorResponse(mcpMessage, -32603, err.Error()), nil
+}
+// Unmarshal the response to be embedded in the control protocol response.
+var mcpResponse map[string]any
+if err := json.Unmarshal(responseBytes, &mcpResponse); err != nil {
+return a.mcpErrorResponse(mcpMessage, -32603, "failed to unmarshal mcp response"), nil
+}
+return map[string]any{
+"mcp_response": mcpResponse,
+}, nil
 }
 // mcpErrorResponse creates an MCP JSON-RPC error response
 func (a *Adapter) mcpErrorResponse(message map[string]any, code int, msg string) map[string]any {
-    return map[string]any{
-        "mcp_response": map[string]any{
-            "jsonrpc": "2.0",
-            "id":      message["id"],
-            "error": map[string]any{
-                "code":    code,
-                "message": msg,
-            },
-        },
-    }
+return map[string]any{
+"mcp_response": map[string]any{
+"jsonrpc": "2.0",
+"id":      message["id"],
+"error": map[string]any{
+"code":    code,
+"message": msg,
+},
+},
+}
 }
 // randomHex generates a random hex string of n bytes
 func randomHex(n int) string {
-    b := make([]byte, n)
-    rand.Read(b)
-    return hex.EncodeToString(b)
+b := make([]byte, n)
+rand.Read(b)
+return hex.EncodeToString(b)
 }
 ```
 ### 3.3 Message Parser Adapter (adapters/parse/parser.go)
@@ -1757,9 +1711,9 @@ This adapter implements `ports.MessageParser`, converting raw JSON messages from
 ```go
 package parse
 import (
-    "fmt"
-    "github.com/conneroisu/claude/pkg/claude/ports"
-    "github.com/conneroisu/claude/pkg/claude/messages"
+"fmt"
+"github.com/conneroisu/claude/pkg/claude/ports"
+"github.com/conneroisu/claude/pkg/claude/messages"
 )
 // Adapter implements ports.MessageParser
 // This is an INFRASTRUCTURE adapter - handles low-level message parsing
@@ -1767,98 +1721,98 @@ type Adapter struct{}
 // Verify interface compliance at compile time
 var _ ports.MessageParser = (*Adapter)(nil)
 func NewAdapter() *Adapter {
-    return &Adapter{}
+return &Adapter{}
 }
 // Parse implements ports.MessageParser
 func (a *Adapter) Parse(data map[string]any) (messages.Message, error) {
-    msgType, ok := data["type"].(string)
-    if !ok {
-        return nil, fmt.Errorf("message missing type field")
-    }
-    switch msgType {
-    case "user":
-        return a.parseUserMessage(data)
-    case "assistant":
-        return a.parseAssistantMessage(data)
-    case "system":
-        return a.parseSystemMessage(data)
-    case "result":
-        return a.parseResultMessage(data)
-    case "stream_event":
-        return a.parseStreamEvent(data)
-    default:
-        return nil, fmt.Errorf("unknown message type: %s", msgType)
-    }
+msgType, ok := data["type"].(string)
+if !ok {
+return nil, fmt.Errorf("message missing type field")
+}
+switch msgType {
+case "user":
+return a.parseUserMessage(data)
+case "assistant":
+return a.parseAssistantMessage(data)
+case "system":
+return a.parseSystemMessage(data)
+case "result":
+return a.parseResultMessage(data)
+case "stream_event":
+return a.parseStreamEvent(data)
+default:
+return nil, fmt.Errorf("unknown message type: %s", msgType)
+}
 }
 func (a *Adapter) parseUserMessage(data map[string]any) (messages.Message, error) {
-    // TODO: Parse user message fields
-    return &messages.UserMessage{}, nil
+// TODO: Parse user message fields
+return &messages.UserMessage{}, nil
 }
 func (a *Adapter) parseSystemMessage(data map[string]any) (messages.Message, error) {
-    // TODO: Parse system message fields
-    return &messages.SystemMessage{}, nil
+// TODO: Parse system message fields
+return &messages.SystemMessage{}, nil
 }
 func (a *Adapter) parseResultMessage(data map[string]any) (messages.Message, error) {
-    // TODO: Parse result message fields
-    return &messages.ResultMessage{}, nil
+// TODO: Parse result message fields
+return &messages.ResultMessage{}, nil
 }
 func (a *Adapter) parseStreamEvent(data map[string]any) (messages.Message, error) {
-    // TODO: Parse stream event fields
-    return &messages.StreamEvent{}, nil
+// TODO: Parse stream event fields
+return &messages.StreamEvent{}, nil
 }
 func (a *Adapter) parseAssistantMessage(data map[string]any) (messages.Message, error) {
-    // Parse content blocks
-    msg, _ := data["message"].(map[string]any)
-    contentArray, _ := msg["content"].([]any)
-    var blocks []messages.ContentBlock
-    for _, item := range contentArray {
-        block, _ := item.(map[string]any)
-        blockType, _ := block["type"].(string)
-        switch blockType {
-        case "text":
-            text, _ := block["text"].(string)
-            blocks = append(blocks, messages.TextBlock{Text: text})
-        case "thinking":
-            thinking, _ := block["thinking"].(string)
-            signature, _ := block["signature"].(string)
-            blocks = append(blocks, messages.ThinkingBlock{
-                Thinking:  thinking,
-                Signature: signature,
-            })
-        case "tool_use":
-            id, _ := block["id"].(string)
-            name, _ := block["name"].(string)
-            input, _ := block["input"].(map[string]any)
-            blocks = append(blocks, messages.ToolUseBlock{
-                ID:    id,
-                Name:  name,
-                Input: input,
-            })
-        case "tool_result":
-            toolUseID, _ := block["tool_use_id"].(string)
-            content := block["content"]
-            isError, _ := block["is_error"].(*bool)
-            blocks = append(blocks, messages.ToolResultBlock{
-                ToolUseID: toolUseID,
-                Content:   content,
-                IsError:   isError,
-            })
-        }
-    }
-    model, _ := msg["model"].(string)
-    parentToolUseID := getStringPtr(data, "parent_tool_use_id")
-    return &messages.AssistantMessage{
-        Content:         blocks,
-        Model:           model,
-        ParentToolUseID: parentToolUseID,
-    }, nil
+// Parse content blocks
+msg, _ := data["message"].(map[string]any)
+contentArray, _ := msg["content"].([]any)
+var blocks []messages.ContentBlock
+for _, item := range contentArray {
+block, _ := item.(map[string]any)
+blockType, _ := block["type"].(string)
+switch blockType {
+case "text":
+text, _ := block["text"].(string)
+blocks = append(blocks, messages.TextBlock{Text: text})
+case "thinking":
+thinking, _ := block["thinking"].(string)
+signature, _ := block["signature"].(string)
+blocks = append(blocks, messages.ThinkingBlock{
+Thinking:  thinking,
+Signature: signature,
+})
+case "tool_use":
+id, _ := block["id"].(string)
+name, _ := block["name"].(string)
+input, _ := block["input"].(map[string]any)
+blocks = append(blocks, messages.ToolUseBlock{
+ID:    id,
+Name:  name,
+Input: input,
+})
+case "tool_result":
+toolUseID, _ := block["tool_use_id"].(string)
+content := block["content"]
+isError, _ := block["is_error"].(*bool)
+blocks = append(blocks, messages.ToolResultBlock{
+ToolUseID: toolUseID,
+Content:   content,
+IsError:   isError,
+})
+}
+}
+model, _ := msg["model"].(string)
+parentToolUseID := getStringPtr(data, "parent_tool_use_id")
+return &messages.AssistantMessage{
+Content:         blocks,
+Model:           model,
+ParentToolUseID: parentToolUseID,
+}, nil
 }
 // Helper function for extracting optional string pointers
 func getStringPtr(data map[string]any, key string) *string {
-    if val, ok := data[key].(string); ok {
-        return &val
-    }
-    return nil
+if val, ok := data[key].(string); ok {
+return &val
+}
+return nil
 }
 ```
 ## Phase 4: Public API (Facade)
@@ -1868,44 +1822,39 @@ Priority: Critical
 ```go
 package claude
 import (
-    "context"
-    "github.com/conneroisu/claude/pkg/claude/querying"
-    "github.com/conneroisu/claude/pkg/claude/hooking"
-    "github.com/conneroisu/claude/pkg/claude/permissions"
-    "github.com/conneroisu/claude/pkg/claude/ports"
-    "github.com/conneroisu/claude/pkg/claude/adapters/cli"
-    "github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
-    "github.com/conneroisu/claude/pkg/claude/adapters/parse"
-    "github.com/conneroisu/claude/pkg/claude/messages"
-    "github.com/conneroisu/claude/pkg/claude/options"
+"context"
+"github.com/conneroisu/claude/pkg/claude/querying"
+"github.com/conneroisu/claude/pkg/claude/hooking"
+"github.com/conneroisu/claude/pkg/claude/permissions"
+"github.com/conneroisu/claude/pkg/claude/ports"
+"github.com/conneroisu/claude/pkg/claude/adapters/cli"
+"github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
+"github.com/conneroisu/claude/pkg/claude/adapters/parse"
+"github.com/conneroisu/claude/pkg/claude/messages"
+"github.com/conneroisu/claude/pkg/claude/options"
 )
 // Query performs a one-shot query to Claude
 // This is the main entry point that wires up domain services with adapters
 func Query(ctx context.Context, prompt string, opts *options.AgentOptions, hooks map[HookEvent][]HookMatcher) (<-chan messages.Message, <-chan error) {
-    if opts == nil {
-        opts = &options.AgentOptions{}
-    }
-    // Wire up adapters (infrastructure layer)
-    transport := cli.NewAdapter(opts)
-    protocol := jsonrpc.NewAdapter(transport)
-    parser := parse.NewAdapter()
-
-    // Create domain services
-    var hookingService *hooking.Service
-    if hooks != nil {
-        hookingService = hooking.NewService(hooks)
-    }
-
-    // TODO: Create permissions config from options
-    var permissionsService *permissions.Service
-
-    // TODO: Create MCP servers from options
-    var mcpServers map[string]ports.MCPServer
-
-    queryService := querying.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
-
-    // Execute domain logic
-    return queryService.Execute(ctx, prompt, opts)
+if opts == nil {
+opts = &options.AgentOptions{}
+}
+// Wire up adapters (infrastructure layer)
+transport := cli.NewAdapter(opts)
+protocol := jsonrpc.NewAdapter(transport)
+parser := parse.NewAdapter()
+// Create domain services
+var hookingService *hooking.Service
+if hooks != nil {
+hookingService = hooking.NewService(hooks)
+}
+// TODO: Create permissions config from options
+var permissionsService *permissions.Service
+// TODO: Create MCP servers from options
+var mcpServers map[string]ports.MCPServer
+queryService := querying.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
+// Execute domain logic
+return queryService.Execute(ctx, prompt, opts)
 }
 ```
 ### 4.2 Client (client.go)
@@ -1913,98 +1862,91 @@ Priority: Critical
 ```go
 package claude
 import (
-    "context"
-    "github.com/conneroisu/claude/pkg/claude/streaming"
-    "github.com/conneroisu/claude/pkg/claude/hooking"
-    "github.com/conneroisu/claude/pkg/claude/permissions"
-    "github.com/conneroisu/claude/pkg/claude/ports"
-    "github.com/conneroisu/claude/pkg/claude/adapters/cli"
-    "github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
-    "github.com/conneroisu/claude/pkg/claude/adapters/parse"
-    "github.com/conneroisu/claude/pkg/claude/messages"
-    "github.com/conneroisu/claude/pkg/claude/options"
-    "sync"
+"context"
+"github.com/conneroisu/claude/pkg/claude/streaming"
+"github.com/conneroisu/claude/pkg/claude/hooking"
+"github.com/conneroisu/claude/pkg/claude/permissions"
+"github.com/conneroisu/claude/pkg/claude/ports"
+"github.com/conneroisu/claude/pkg/claude/adapters/cli"
+"github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
+"github.com/conneroisu/claude/pkg/claude/adapters/parse"
+"github.com/conneroisu/claude/pkg/claude/messages"
+"github.com/conneroisu/claude/pkg/claude/options"
+"sync"
 )
-
 // Client provides bidirectional, interactive conversations with Claude
 // It's a facade that wires domain services with adapters
 type Client struct {
-    opts             *options.AgentOptions
-    hooks            map[HookEvent][]HookMatcher
-    permissions      *PermissionsConfig
-    streamingService *streaming.Service
-    mu               sync.Mutex
+opts             *options.AgentOptions
+hooks            map[HookEvent][]HookMatcher
+permissions      *PermissionsConfig
+streamingService *streaming.Service
+mu               sync.Mutex
 }
-
 // NewClient creates a new Claude client
 func NewClient(opts *options.AgentOptions, hooks map[HookEvent][]HookMatcher, perms *PermissionsConfig) *Client {
-    if opts == nil {
-        opts = &options.AgentOptions{}
-    }
-    return &Client{
-        opts:        opts,
-        hooks:       hooks,
-        permissions: perms,
-    }
+if opts == nil {
+opts = &options.AgentOptions{}
 }
-
+return &Client{
+opts:        opts,
+hooks:       hooks,
+permissions: perms,
+}
+}
 // Connect establishes connection to Claude
 func (c *Client) Connect(ctx context.Context, prompt *string) error {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    // Wire up adapters (infrastructure)
-    transport := cli.NewAdapter(c.opts)
-    protocol := jsonrpc.NewAdapter(transport)
-    parser := parse.NewAdapter()
-    // Wire up domain services
-    var hookingService *hooking.Service
-    if c.hooks != nil {
-        hookingService = hooking.NewService(c.hooks)
-    }
-    var permissionsService *permissions.Service
-    if c.permissions != nil {
-        permissionsService = permissions.NewService(c.permissions)
-    }
-    // TODO: Create MCP servers from options
-    var mcpServers map[string]ports.MCPServer
-    // Create streaming service with dependencies
-    c.streamingService = streaming.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
-    // Execute domain logic
-    return c.streamingService.Connect(ctx, prompt)
+c.mu.Lock()
+defer c.mu.Unlock()
+// Wire up adapters (infrastructure)
+transport := cli.NewAdapter(c.opts)
+protocol := jsonrpc.NewAdapter(transport)
+parser := parse.NewAdapter()
+// Wire up domain services
+var hookingService *hooking.Service
+if c.hooks != nil {
+hookingService = hooking.NewService(c.hooks)
 }
-
+var permissionsService *permissions.Service
+if c.permissions != nil {
+permissionsService = permissions.NewService(c.permissions)
+}
+// TODO: Create MCP servers from options
+var mcpServers map[string]ports.MCPServer
+// Create streaming service with dependencies
+c.streamingService = streaming.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
+// Execute domain logic
+return c.streamingService.Connect(ctx, prompt)
+}
 // SendMessage sends a message to Claude
 func (c *Client) SendMessage(ctx context.Context, msg string) error {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    if c.streamingService == nil {
-        return ErrNotConnected
-    }
-    return c.streamingService.SendMessage(ctx, msg)
+c.mu.Lock()
+defer c.mu.Unlock()
+if c.streamingService == nil {
+return ErrNotConnected
 }
-
+return c.streamingService.SendMessage(ctx, msg)
+}
 // ReceiveMessages returns a channel of messages from Claude
 func (c *Client) ReceiveMessages(ctx context.Context) (<-chan messages.Message, <-chan error) {
-    if c.streamingService == nil {
-        errCh := make(chan error, 1)
-        errCh <- ErrNotConnected
-        close(errCh)
-        return nil, errCh
-    }
-    return c.streamingService.ReceiveMessages(ctx)
+if c.streamingService == nil {
+errCh := make(chan error, 1)
+errCh <- ErrNotConnected
+close(errCh)
+return nil, errCh
 }
-
+return c.streamingService.ReceiveMessages(ctx)
+}
 // Close disconnects from Claude
 func (c *Client) Close() error {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    if c.streamingService == nil {
-        return nil
-    }
-    // Domain service handles cleanup
-    return c.streamingService.Close()
+c.mu.Lock()
+defer c.mu.Unlock()
+if c.streamingService == nil {
+return nil
 }
-
+// Domain service handles cleanup
+return c.streamingService.Close()
+}
 ```
 ## Phase 5: Advanced Features
 ### 5.1 Hooks Support (hooks.go)
@@ -2013,8 +1955,8 @@ The facade re-exports domain hook types from the `hooking` package for public AP
 ```go
 package claude
 import (
-    "github.com/conneroisu/claude/pkg/claude/hooking"
-    "github.com/conneroisu/claude/pkg/claude/permissions"
+"github.com/conneroisu/claude/pkg/claude/hooking"
+"github.com/conneroisu/claude/pkg/claude/permissions"
 )
 // Re-export domain hook types for public API
 type HookEvent = hooking.HookEvent
@@ -2023,65 +1965,61 @@ type HookCallback = hooking.HookCallback
 type HookMatcher = hooking.HookMatcher
 // Re-export hook event constants
 const (
-    HookEventPreToolUse       = hooking.HookEventPreToolUse
-    HookEventPostToolUse      = hooking.HookEventPostToolUse
-    HookEventUserPromptSubmit = hooking.HookEventUserPromptSubmit
-    HookEventStop             = hooking.HookEventStop
-    HookEventSubagentStop     = hooking.HookEventSubagentStop
-    HookEventPreCompact       = hooking.HookEventPreCompact
+HookEventPreToolUse       = hooking.HookEventPreToolUse
+HookEventPostToolUse      = hooking.HookEventPostToolUse
+HookEventUserPromptSubmit = hooking.HookEventUserPromptSubmit
+HookEventStop             = hooking.HookEventStop
+HookEventSubagentStop     = hooking.HookEventSubagentStop
+HookEventPreCompact       = hooking.HookEventPreCompact
 )
 // Re-export permissions types for public API
 type PermissionsConfig = permissions.PermissionsConfig
 type PermissionResult = permissions.PermissionResult
 type CanUseToolFunc = permissions.CanUseToolFunc
 type HookJSONOutput struct {
-    Decision           *string        `json:"decision,omitempty"`           // "block"
-    SystemMessage      *string        `json:"systemMessage,omitempty"`
-    HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitempty"`
+Decision           *string        `json:"decision,omitempty"`           // "block"
+SystemMessage      *string        `json:"systemMessage,omitempty"`
+HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitempty"`
 }
 // Example hook implementation
 func BlockBashPatternHook(patterns []string) HookCallback {
-    return func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error) {
-        toolName, _ := input["tool_name"].(string)
-        if toolName != "Bash" {
-            return map[string]any{}, nil
-        }
-        toolInput, _ := input["tool_input"].(map[string]any)
-        command, _ := toolInput["command"].(string)
-        for _, pattern := range patterns {
-            if strings.Contains(command, pattern) {
-                return map[string]any{
-                    "hookSpecificOutput": map[string]any{
-                        "hookEventName":            "PreToolUse",
-                        "permissionDecision":       "deny",
-                        "permissionDecisionReason": fmt.Sprintf("Command contains forbidden pattern: %s", pattern),
-                    },
-                }, nil
-            }
-        }
-        return map[string]any{}, nil
-    }
+return func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error) {
+toolName, _ := input["tool_name"].(string)
+if toolName != "Bash" {
+return map[string]any{}, nil
+}
+toolInput, _ := input["tool_input"].(map[string]any)
+command, _ := toolInput["command"].(string)
+for _, pattern := range patterns {
+if strings.Contains(command, pattern) {
+return map[string]any{
+"hookSpecificOutput": map[string]any{
+"hookEventName":            "PreToolUse",
+"permissionDecision":       "deny",
+"permissionDecisionReason": fmt.Sprintf("Command contains forbidden pattern: %s", pattern),
+},
+}, nil
+}
+}
+return map[string]any{}, nil
+}
 }
 ```
 ### 5.2 MCP Server Support (mcp.go)
 Priority: Medium
-
 To support in-process user-defined tools, the SDK will provide a public API that wraps the official `github.com/modelcontextprotocol/go-sdk`. Instead of re-implementing the MCP server, the SDK will offer convenience functions to create and configure an `mcp.Server`.
-
 ```go
 package claude
 import (
-    "context"
-    "github.com/modelcontextprotocol/go-sdk/mcp"
+"context"
+"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
 // NewMCPServer creates a new in-process MCP server using the go-sdk.
 // This server can be configured with tools and then passed to the Claude client
 // via AgentOptions.
 func NewMCPServer(name, version string) *mcp.Server {
-    return mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
+return mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 }
-
 // AddTool is a convenience wrapper around the go-sdk's generic AddTool function.
 // It allows users to add a tool with a typed handler to an mcp.Server instance,
 // benefiting from automatic schema inference and validation provided by the go-sdk.
@@ -2095,77 +2033,58 @@ func NewMCPServer(name, version string) *mcp.Server {
 //   }
 //   AddTool(server, &mcp.Tool{Name: "my_tool", Description: "My test tool"}, myHandler)
 func AddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out]) {
-    mcp.AddTool(server, tool, handler)
+mcp.AddTool(server, tool, handler)
 }
 ```
-
 The `options.SDKServerConfig` will be updated to hold the `*mcp.Server` instance. The agent SDK will then be responsible for internally creating an adapter that implements the `ports.MCPServer` interface. This adapter will manage a pair of in-memory transports to communicate with the user's `mcp.Server` instance, proxying messages received from the Claude CLI.
-            case "float", "number":
-                properties[name] = map[string]any{"type": "number"}
-            case "bool", "boolean":
-                properties[name] = map[string]any{"type": "boolean"}
-            default:
-                properties[name] = map[string]any{"type": "string"}
-            }
-        }
-        return map[string]any{
-            "type":       "object",
-            "properties": properties,
-            "required":   required,
-        }
-    default:
-        return map[string]any{"type": "object", "properties": map[string]any{}}
-    }
-}
-```
 ### 5.3 Permission Callbacks (permissions.go)
 Priority: Medium
 ```go
 package claude
 import (
-    "context"
+"context"
 )
 type ToolPermissionContext struct {
-    Suggestions []PermissionUpdate
+Suggestions []PermissionUpdate
 }
 type PermissionResult interface {
-    permissionResult()
+permissionResult()
 }
 type PermissionResultAllow struct {
-    UpdatedInput       map[string]any
-    UpdatedPermissions []PermissionUpdate
+UpdatedInput       map[string]any
+UpdatedPermissions []PermissionUpdate
 }
 type PermissionResultDeny struct {
-    Message   string
-    Interrupt bool
+Message   string
+Interrupt bool
 }
 func (PermissionResultAllow) permissionResult() {}
 func (PermissionResultDeny) permissionResult()  {}
 type CanUseToolFunc func(ctx context.Context, toolName string, input map[string]any, permCtx ToolPermissionContext) (PermissionResult, error)
 type PermissionUpdate struct {
-    Type        string
-    Rules       []PermissionRuleValue
-    Behavior    *PermissionBehavior
-    Mode        *PermissionMode
-    Directories []string
-    Destination *PermissionUpdateDestination
+Type        string
+Rules       []PermissionRuleValue
+Behavior    *PermissionBehavior
+Mode        *PermissionMode
+Directories []string
+Destination *PermissionUpdateDestination
 }
 type PermissionRuleValue struct {
-    ToolName    string
-    RuleContent *string
+ToolName    string
+RuleContent *string
 }
 type PermissionBehavior string
 const (
-    PermissionBehaviorAllow PermissionBehavior = "allow"
-    PermissionBehaviorDeny  PermissionBehavior = "deny"
-    PermissionBehaviorAsk   PermissionBehavior = "ask"
+PermissionBehaviorAllow PermissionBehavior = "allow"
+PermissionBehaviorDeny  PermissionBehavior = "deny"
+PermissionBehaviorAsk   PermissionBehavior = "ask"
 )
 type PermissionUpdateDestination string
 const (
-    PermissionDestinationUserSettings    PermissionUpdateDestination = "userSettings"
-    PermissionDestinationProjectSettings PermissionUpdateDestination = "projectSettings"
-    PermissionDestinationLocalSettings   PermissionUpdateDestination = "localSettings"
-    PermissionDestinationSession         PermissionUpdateDestination = "session"
+PermissionDestinationUserSettings    PermissionUpdateDestination = "userSettings"
+PermissionDestinationProjectSettings PermissionUpdateDestination = "projectSettings"
+PermissionDestinationLocalSettings   PermissionUpdateDestination = "localSettings"
+PermissionDestinationSession         PermissionUpdateDestination = "session"
 )
 ```
 ## Phase 6: Testing & Documentation
@@ -2184,50 +2103,50 @@ Test Structure:
 // pkg/claude/querying/service_test.go
 package querying_test
 import (
-    "context"
-    "testing"
-    "github.com/conneroisu/claude/pkg/claude/querying"
-    "github.com/conneroisu/claude/pkg/claude/options"
+"context"
+"testing"
+"github.com/conneroisu/claude/pkg/claude/querying"
+"github.com/conneroisu/claude/pkg/claude/options"
 )
 // Mock transport implementing ports.Transport
 type mockTransport struct {
-    connectErr error
-    messages   []map[string]any
+connectErr error
+messages   []map[string]any
 }
 func (m *mockTransport) Connect(ctx context.Context) error { return m.connectErr }
 func (m *mockTransport) Write(ctx context.Context, data string) error { return nil }
 // ... implement other methods
 func TestService_Execute(t *testing.T) {
-    tests := []struct {
-        name       string
-        prompt     string
-        wantErr    bool
-        setupMock  func(*mockTransport)
-    }{
-        {
-            name:    "successful query",
-            prompt:  "test query",
-            wantErr: false,
-            setupMock: func(m *mockTransport) {
-                m.messages = []map[string]any{
-                    {"type": "assistant", "message": map[string]any{"content": "response"}},
-                }
-            },
-        },
-        // ... more test cases
-    }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            transport := &mockTransport{}
-            if tt.setupMock != nil {
-                tt.setupMock(transport)
-            }
-            protocol := &mockProtocol{}
-            svc := querying.NewService(transport, protocol)
-            msgCh, errCh := svc.Execute(context.Background(), tt.prompt, &options.AgentOptions{})
-            // Verify results
-        })
-    }
+tests := []struct {
+name       string
+prompt     string
+wantErr    bool
+setupMock  func(*mockTransport)
+}{
+{
+name:    "successful query",
+prompt:  "test query",
+wantErr: false,
+setupMock: func(m *mockTransport) {
+m.messages = []map[string]any{
+{"type": "assistant", "message": map[string]any{"content": "response"}},
+}
+},
+},
+// ... more test cases
+}
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+transport := &mockTransport{}
+if tt.setupMock != nil {
+tt.setupMock(transport)
+}
+protocol := &mockProtocol{}
+svc := querying.NewService(transport, protocol)
+msgCh, errCh := svc.Execute(context.Background(), tt.prompt, &options.AgentOptions{})
+// Verify results
+})
+}
 }
 ```
 Message Parsing Tests:
@@ -2235,47 +2154,47 @@ Message Parsing Tests:
 // internal/parse/parser_test.go
 package parse_test
 import (
-    "testing"
-    "github.com/conneroisu/claude/pkg/claude/internal/parse"
-    "github.com/conneroisu/claude/pkg/claude/messages"
+"testing"
+"github.com/conneroisu/claude/pkg/claude/internal/parse"
+"github.com/conneroisu/claude/pkg/claude/messages"
 )
 func TestParseMessage(t *testing.T) {
-    tests := []struct {
-        name    string
-        input   map[string]any
-        want    messages.Message
-        wantErr bool
-    }{
-        {
-            name: "parse assistant message",
-            input: map[string]any{
-                "type": "assistant",
-                "message": map[string]any{
-                    "model": "claude-sonnet-4",
-                    "content": []any{
-                        map[string]any{"type": "text", "text": "Hello"},
-                    },
-                },
-            },
-            want: &messages.AssistantMessage{
-                Model: "claude-sonnet-4",
-                Content: []messages.ContentBlock{
-                    messages.TextBlock{Text: "Hello"},
-                },
-            },
-        },
-        // ... more cases
-    }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            got, err := parse.ParseMessage(tt.input)
-            if (err != nil) != tt.wantErr {
-                t.Errorf("ParseMessage() error = %v, wantErr %v", err, tt.wantErr)
-                return
-            }
-            // Compare got with want
-        })
-    }
+tests := []struct {
+name    string
+input   map[string]any
+want    messages.Message
+wantErr bool
+}{
+{
+name: "parse assistant message",
+input: map[string]any{
+"type": "assistant",
+"message": map[string]any{
+"model": "claude-sonnet-4",
+"content": []any{
+map[string]any{"type": "text", "text": "Hello"},
+},
+},
+},
+want: &messages.AssistantMessage{
+Model: "claude-sonnet-4",
+Content: []messages.ContentBlock{
+messages.TextBlock{Text: "Hello"},
+},
+},
+},
+// ... more cases
+}
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+got, err := parse.ParseMessage(tt.input)
+if (err != nil) != tt.wantErr {
+t.Errorf("ParseMessage() error = %v, wantErr %v", err, tt.wantErr)
+return
+}
+// Compare got with want
+})
+}
 }
 ```
 Adapter Tests (with mocked subprocess):
@@ -2283,38 +2202,38 @@ Adapter Tests (with mocked subprocess):
 // adapters/cli/transport_test.go
 package cli_test
 import (
-    "context"
-    "testing"
-    "github.com/conneroisu/claude/pkg/claude/adapters/cli"
-    "github.com/conneroisu/claude/pkg/claude/options"
+"context"
+"testing"
+"github.com/conneroisu/claude/pkg/claude/adapters/cli"
+"github.com/conneroisu/claude/pkg/claude/options"
 )
 func TestAdapter_FindCLI(t *testing.T) {
-    // Test CLI discovery logic
-    // Set up test PATH environment
+// Test CLI discovery logic
+// Set up test PATH environment
 }
 func TestAdapter_BuildCommand(t *testing.T) {
-    tests := []struct {
-        name    string
-        opts    *options.AgentOptions
-        want    []string
-        wantErr bool
-    }{
-        {
-            name: "basic command",
-            opts: &options.AgentOptions{
-                Model: stringPtr("claude-sonnet-4"),
-            },
-            want: []string{"claude", "--output-format", "stream-json", "--model", "claude-sonnet-4"},
-        },
-        // ... more cases
-    }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            adapter := cli.NewAdapter(tt.opts)
-            got, err := adapter.BuildCommand()
-            // Compare got with want
-        })
-    }
+tests := []struct {
+name    string
+opts    *options.AgentOptions
+want    []string
+wantErr bool
+}{
+{
+name: "basic command",
+opts: &options.AgentOptions{
+Model: stringPtr("claude-sonnet-4"),
+},
+want: []string{"claude", "--output-format", "stream-json", "--model", "claude-sonnet-4"},
+},
+// ... more cases
+}
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+adapter := cli.NewAdapter(tt.opts)
+got, err := adapter.BuildCommand()
+// Compare got with want
+})
+}
 }
 ```
 Run Unit Tests:
@@ -2338,75 +2257,75 @@ Test Structure:
 // +build integration
 package integration_test
 import (
-    "context"
-    "os"
-    "testing"
-    "time"
-    "github.com/conneroisu/claude/pkg/claude"
-    "github.com/conneroisu/claude/pkg/claude/options"
-    "github.com/conneroisu/claude/pkg/claude/messages"
+"context"
+"os"
+"testing"
+"time"
+"github.com/conneroisu/claude/pkg/claude"
+"github.com/conneroisu/claude/pkg/claude/options"
+"github.com/conneroisu/claude/pkg/claude/messages"
 )
 func TestMain(m *testing.M) {
-    // Check if Claude CLI is available
-    if _, err := exec.LookPath("claude"); err != nil {
-        fmt.Println("Skipping integration tests: claude CLI not found")
-        os.Exit(0)
-    }
-    os.Exit(m.Run())
+// Check if Claude CLI is available
+if _, err := exec.LookPath("claude"); err != nil {
+fmt.Println("Skipping integration tests: claude CLI not found")
+os.Exit(0)
+}
+os.Exit(m.Run())
 }
 func TestQuery_BasicInteraction(t *testing.T) {
-    if testing.Short() {
-        t.Skip("skipping integration test")
-    }
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-    opts := &options.AgentOptions{
-        MaxTurns: intPtr(1),
-    }
-    msgCh, errCh := claude.Query(ctx, "What is 2+2?", opts)
-    var gotResponse bool
-    for {
-        select {
-        case msg, ok := <-msgCh:
-            if !ok {
-                if !gotResponse {
-                    t.Fatal("no response received")
-                }
-                return
-            }
-            if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
-                gotResponse = true
-                t.Logf("Received: %+v", assistantMsg)
-            }
-        case err := <-errCh:
-            t.Fatalf("error: %v", err)
-        case <-ctx.Done():
-            t.Fatal("timeout")
-        }
-    }
+if testing.Short() {
+t.Skip("skipping integration test")
+}
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+opts := &options.AgentOptions{
+MaxTurns: intPtr(1),
+}
+msgCh, errCh := claude.Query(ctx, "What is 2+2?", opts)
+var gotResponse bool
+for {
+select {
+case msg, ok := <-msgCh:
+if !ok {
+if !gotResponse {
+t.Fatal("no response received")
+}
+return
+}
+if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
+gotResponse = true
+t.Logf("Received: %+v", assistantMsg)
+}
+case err := <-errCh:
+t.Fatalf("error: %v", err)
+case <-ctx.Done():
+t.Fatal("timeout")
+}
+}
 }
 func TestStreamingClient(t *testing.T) {
-    if testing.Short() {
-        t.Skip("skipping integration test")
-    }
-    ctx := context.Background()
-    client := claude.NewClient(&options.AgentOptions{})
-    if err := client.Connect(ctx, nil); err != nil {
-        t.Fatalf("connect failed: %v", err)
-    }
-    defer client.Close()
-    if err := client.SendMessage(ctx, "Hello"); err != nil {
-        t.Fatalf("send failed: %v", err)
-    }
-    msgCh, errCh := client.ReceiveMessages(ctx)
-    select {
-    case msg := <-msgCh:
-        t.Logf("Received: %+v", msg)
-    case err := <-errCh:
-        t.Fatalf("error: %v", err)
-    case <-time.After(30 * time.Second):
-        t.Fatal("timeout")
-    }
+if testing.Short() {
+t.Skip("skipping integration test")
+}
+ctx := context.Background()
+client := claude.NewClient(&options.AgentOptions{})
+if err := client.Connect(ctx, nil); err != nil {
+t.Fatalf("connect failed: %v", err)
+}
+defer client.Close()
+if err := client.SendMessage(ctx, "Hello"); err != nil {
+t.Fatalf("send failed: %v", err)
+}
+msgCh, errCh := client.ReceiveMessages(ctx)
+select {
+case msg := <-msgCh:
+t.Logf("Received: %+v", msg)
+case err := <-errCh:
+t.Fatalf("error: %v", err)
+case <-time.After(30 * time.Second):
+t.Fatal("timeout")
+}
 }
 ```
 Run Integration Tests:
@@ -2423,22 +2342,22 @@ Create reusable mocks in a dedicated package:
 // pkg/claude/internal/testutil/mocks.go
 package testutil
 import (
-    "context"
-    "github.com/conneroisu/claude/pkg/claude/ports"
+"context"
+"github.com/conneroisu/claude/pkg/claude/ports"
 )
 type MockTransport struct {
-    ConnectFunc      func(context.Context) error
-    WriteFunc        func(context.Context, string) error
-    ReadMessagesFunc func(context.Context) (<-chan map[string]any, <-chan error)
-    EndInputFunc     func() error
-    CloseFunc        func() error
-    IsReadyFunc      func() bool
+ConnectFunc      func(context.Context) error
+WriteFunc        func(context.Context, string) error
+ReadMessagesFunc func(context.Context) (<-chan map[string]any, <-chan error)
+EndInputFunc     func() error
+CloseFunc        func() error
+IsReadyFunc      func() bool
 }
 func (m *MockTransport) Connect(ctx context.Context) error {
-    if m.ConnectFunc != nil {
-        return m.ConnectFunc(ctx)
-    }
-    return nil
+if m.ConnectFunc != nil {
+return m.ConnectFunc(ctx)
+}
+return nil
 }
 // ... implement other methods
 var _ ports.Transport = (*MockTransport)(nil)
@@ -2448,77 +2367,23 @@ Test Data:
 // pkg/claude/internal/testutil/fixtures.go
 package testutil
 var (
-    AssistantMessageJSON = map[string]any{
-        "type": "assistant",
-        "message": map[string]any{
-            "model": "claude-sonnet-4",
-            "content": []any{
-                map[string]any{"type": "text", "text": "Hello"},
-            },
-        },
-    }
-    ResultMessageJSON = map[string]any{
-        "type": "result",
-        "subtype": "success",
-        "duration_ms": 1234,
-        "num_turns": 1,
-        "session_id": "test-session",
-    }
+AssistantMessageJSON = map[string]any{
+"type": "assistant",
+"message": map[string]any{
+"model": "claude-sonnet-4",
+"content": []any{
+map[string]any{"type": "text", "text": "Hello"},
+},
+},
+}
+ResultMessageJSON = map[string]any{
+"type": "result",
+"subtype": "success",
+"duration_ms": 1234,
+"num_turns": 1,
+"session_id": "test-session",
+}
 )
-```
-### 6.4 CI/CD Test Automation
-GitHub Actions Workflow:
-```yaml
-# .github/workflows/test.yml
-name: Tests
-on: [push, pull_request]
-jobs:
-  unit-tests:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: ['1.21', '1.22', '1.23']
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ matrix.go-version }}
-    - name: Run unit tests
-      run: |
-        go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
-    - name: Upload coverage
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.txt
-  integration-tests:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.23'
-    - name: Install Claude CLI
-      run: npm install -g @anthropic-ai/claude-code
-    - name: Run integration tests
-      env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      run: |
-        go test -tags=integration -v ./tests/integration/...
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.23'
-    - name: golangci-lint
-      uses: golangci/golangci-lint-action@v4
-      with:
-        version: latest
-        args: --timeout=5m
 ```
 ### 6.5 Examples
 Priority: High
@@ -2528,36 +2393,36 @@ Quick Start Example:
 // cmd/examples/quickstart/main.go
 package main
 import (
-    "context"
-    "fmt"
-    "log"
-    "github.com/conneroisu/claude/pkg/claude"
-    "github.com/conneroisu/claude/pkg/claude/messages"
-    "github.com/conneroisu/claude/pkg/claude/options"
+"context"
+"fmt"
+"log"
+"github.com/conneroisu/claude/pkg/claude"
+"github.com/conneroisu/claude/pkg/claude/messages"
+"github.com/conneroisu/claude/pkg/claude/options"
 )
 func main() {
-    ctx := context.Background()
-    msgCh, errCh := claude.Query(ctx, "What is 2 + 2?", nil)
-    for {
-        select {
-        case msg, ok := <-msgCh:
-            if !ok {
-                return
-            }
-            if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
-                for _, block := range assistantMsg.Content {
-                    if textBlock, ok := block.(messages.TextBlock); ok {
-                        fmt.Printf("Claude: %s\n", textBlock.Text)
-                    }
-                }
-            }
-        case err := <-errCh:
-            if err != nil {
-                log.Fatal(err)
-            }
-            return
-        }
-    }
+ctx := context.Background()
+msgCh, errCh := claude.Query(ctx, "What is 2 + 2?", nil)
+for {
+select {
+case msg, ok := <-msgCh:
+if !ok {
+return
+}
+if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
+for _, block := range assistantMsg.Content {
+if textBlock, ok := block.(messages.TextBlock); ok {
+fmt.Printf("Claude: %s\n", textBlock.Text)
+}
+}
+}
+case err := <-errCh:
+if err != nil {
+log.Fatal(err)
+}
+return
+}
+}
 }
 ```
 Examples to Create:
@@ -2629,32 +2494,24 @@ Priority: Medium
 ### Dependency Flow
 The SDK strictly follows the dependency rule of hexagonal architecture:
 ```
-┌─────────────────────────────────────────────────┐
-│  LAYER 4: Public API (client.go, query.go)     │
-│  - Entry point for SDK users                    │
-│  - Wires domain services with adapters          │
-└──────────────────┬──────────────────────────────┘
-                   │ depends on ↓
-┌──────────────────▼──────────────────────────────┐
-│  LAYER 3: ADAPTERS (adapters/*)                 │
-│  - cli/      → implements ports.Transport       │
-│  - jsonrpc/  → implements ports.ProtocolHandler │
-│  - parse/    → implements ports.MessageParser   │
-│  - mcp/      → implements ports.MCPServer       │
-└──────────────────┬──────────────────────────────┘
-                   │ depends on ↓
-┌──────────────────▼──────────────────────────────┐
-│  LAYER 2: PORTS (ports/*)                       │
-│  - Interfaces defined BY domain needs           │
-│  - Contract layer between domain and infra      │
-└──────────────────┬──────────────────────────────┘
-                   │ depends on ↓
-┌──────────────────▼──────────────────────────────┐
-│  LAYER 1: CORE DOMAIN (querying/, streaming/)  │
-│  - Pure business logic                          │
-│  - No infrastructure dependencies               │
-│  - Uses port interfaces, never adapters         │
-└─────────────────────────────────────────────────┘
+LAYER 4: Public API (client.go, query.go)     
+- Entry point for SDK users                    
+- Wires domain services with adapters          
+depends on ↓
+LAYER 3: ADAPTERS (adapters/*)                 
+- cli/      → implements ports.Transport       
+- jsonrpc/  → implements ports.ProtocolHandler 
+- parse/    → implements ports.MessageParser   
+- mcp/      → implements ports.MCPServer       
+depends on ↓
+LAYER 2: PORTS (ports/*)                       
+- Interfaces defined BY domain needs           
+- Contract layer between domain and infra      
+depends on ↓
+LAYER 1: CORE DOMAIN (querying/, streaming/)  
+- Pure business logic                          
+- No infrastructure dependencies               
+- Uses port interfaces, never adapters         
 ```
 ### Key Architectural Decisions
 #### 1. Ports Define Contracts
@@ -2689,21 +2546,21 @@ Options are split by concern:
 - `options/mcp.go` - MCP server configurations
 ### Benefits of This Architecture
 1. Testability
-   - Domain services testable without infrastructure
-   - Mock adapters via interfaces
-   - No subprocess spawning in unit tests
+- Domain services testable without infrastructure
+- Mock adapters via interfaces
+- No subprocess spawning in unit tests
 2. Flexibility
-   - Swap CLI transport for HTTP transport
-   - Change JSON-RPC to gRPC
-   - Add new message parsers
+- Swap CLI transport for HTTP transport
+- Change JSON-RPC to gRPC
+- Add new message parsers
 3. Clarity
-   - Clear boundaries between layers
-   - Easy to understand where code belongs
-   - Package names describe purpose
+- Clear boundaries between layers
+- Easy to understand where code belongs
+- Package names describe purpose
 4. Maintainability
-   - Infrastructure changes don't affect domain
-   - Domain changes don't ripple to all adapters
-   - Each layer has single responsibility
+- Infrastructure changes don't affect domain
+- Domain changes don't ripple to all adapters
+- Each layer has single responsibility
 ### Compile-Time Guarantees
 All adapters verify interface compliance at compile time:
 ```go
