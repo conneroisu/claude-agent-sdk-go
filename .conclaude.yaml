@@ -7,7 +7,9 @@
 stop:
   # Commands to run during Stop hook
   # Each line is executed as a separate bash command
-  run: ""
+  run: |
+    lint
+    tests
 
   # Alternative structured command format with optional custom error messages
   # Each command can have its own error message
@@ -170,4 +172,3 @@ gitWorktree:
   #   ## Notes
   #   - Created automatically by Conclaude
   #   - Branch: `{branch}` → `{base}`
-
