@@ -113,6 +113,7 @@
             graphviz
             goreleaser
             cobra-cli
+            mdformat
           ]
           ++ builtins.attrValues scriptPackages;
       };
