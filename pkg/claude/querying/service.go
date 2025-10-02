@@ -12,7 +12,7 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/ports"
 )
 
-// Dependencies groups all external dependencies for the querying service
+// Dependencies groups all external dependencies for the querying service.
 type Dependencies struct {
 	Transport   ports.Transport
 	Protocol    ports.ProtocolHandler
@@ -24,7 +24,7 @@ type Dependencies struct {
 
 // Service handles query execution
 // This is a DOMAIN service - it contains only business logic,
-// no infrastructure concerns like protocol state management
+// no infrastructure concerns like protocol state management.
 type Service struct {
 	transport   ports.Transport
 	protocol    ports.ProtocolHandler
@@ -34,7 +34,7 @@ type Service struct {
 	mcpServers  map[string]ports.MCPServer
 }
 
-// NewService creates a new querying service
+// NewService creates a new querying service.
 func NewService(deps Dependencies) *Service {
 	return &Service{
 		transport:   deps.Transport,
@@ -46,7 +46,7 @@ func NewService(deps Dependencies) *Service {
 	}
 }
 
-// Execute executes a one-shot query
+// Execute executes a one-shot query.
 func (s *Service) Execute(
 	ctx context.Context,
 	prompt string,
@@ -86,7 +86,7 @@ func (s *Service) Execute(
 	return msgCh, errCh
 }
 
-// startRouter initializes the protocol message router
+// startRouter initializes the protocol message router.
 func (s *Service) startRouter(
 	ctx context.Context,
 	hookCallbacks map[string]ports.HookCallback,
@@ -114,7 +114,7 @@ func (s *Service) startRouter(
 	return routerMsgCh, routerErrCh, nil
 }
 
-// sendPrompt sends the prompt message to the transport
+// sendPrompt sends the prompt message to the transport.
 func (s *Service) sendPrompt(ctx context.Context, prompt string) error {
 	promptMsg := map[string]any{"type": "user", "prompt": prompt}
 	promptBytes, err := json.Marshal(promptMsg)

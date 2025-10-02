@@ -16,7 +16,7 @@ import (
 )
 
 // Client provides bidirectional, interactive conversations with Claude
-// It's a facade that wires domain services with adapters
+// It's a facade that wires domain services with adapters.
 type Client struct {
 	opts             *options.AgentOptions
 	hooks            map[HookEvent][]HookMatcher
@@ -26,7 +26,7 @@ type Client struct {
 }
 
 // NewClient creates a new Claude client for bidirectional
-// streaming conversations
+// streaming conversations.
 func NewClient(
 	opts *options.AgentOptions,
 	hooks map[HookEvent][]HookMatcher,
@@ -47,7 +47,7 @@ func NewClient(
 	}
 }
 
-// Connect establishes connection to Claude
+// Connect establishes connection to Claude.
 func (c *Client) Connect(ctx context.Context, prompt *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -86,7 +86,7 @@ func (c *Client) Connect(ctx context.Context, prompt *string) error {
 	return c.streamingService.Connect(ctx, prompt)
 }
 
-// SendMessage sends a message to Claude
+// SendMessage sends a message to Claude.
 func (c *Client) SendMessage(ctx context.Context, msg string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -98,7 +98,7 @@ func (c *Client) SendMessage(ctx context.Context, msg string) error {
 	return c.streamingService.SendMessage(ctx, msg)
 }
 
-// ReceiveMessages returns a channel of messages from Claude
+// ReceiveMessages returns a channel of messages from Claude.
 func (c *Client) ReceiveMessages(
 	ctx context.Context,
 ) (<-chan messages.Message, <-chan error) {
@@ -113,7 +113,7 @@ func (c *Client) ReceiveMessages(
 	return c.streamingService.ReceiveMessages(ctx)
 }
 
-// Close disconnects from Claude
+// Close disconnects from Claude.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

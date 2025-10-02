@@ -1,11 +1,11 @@
 package messages
 
-// ResultMessage is a discriminated union based on Subtype
+// ResultMessage is a discriminated union based on Subtype.
 type ResultMessage interface {
 	resultMessage()
 }
 
-// ResultMessageSuccess indicates a successful query completion
+// ResultMessageSuccess indicates a successful query completion.
 type ResultMessageSuccess struct {
 	Subtype           string                `json:"subtype"` // "success"
 	DurationMs        int                   `json:"duration_ms"`
@@ -23,7 +23,7 @@ type ResultMessageSuccess struct {
 func (ResultMessageSuccess) resultMessage() {}
 func (ResultMessageSuccess) message()       {}
 
-// ResultMessageError indicates an error during execution
+// ResultMessageError indicates an error during execution.
 type ResultMessageError struct {
 	// "error_max_turns" | "error_during_execution"
 	Subtype           string                `json:"subtype"`

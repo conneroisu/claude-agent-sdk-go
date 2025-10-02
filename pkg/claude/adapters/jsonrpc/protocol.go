@@ -11,7 +11,7 @@ import (
 )
 
 // Adapter implements ports.ProtocolHandler for control protocol
-// This is an INFRASTRUCTURE adapter - it handles protocol state management
+// This is an INFRASTRUCTURE adapter - it handles protocol state management.
 type Adapter struct {
 	transport ports.Transport
 	// Control protocol state (managed by adapter, not domain)
@@ -20,7 +20,7 @@ type Adapter struct {
 	mu             sync.Mutex
 }
 
-// Verify interface compliance at compile time
+// Verify interface compliance at compile time.
 var _ ports.ProtocolHandler = (*Adapter)(nil)
 
 type result struct {
@@ -28,7 +28,7 @@ type result struct {
 	err  error
 }
 
-// routerChannels holds the channels used by the message router
+// routerChannels holds the channels used by the message router.
 type routerChannels struct {
 	transportMsg <-chan map[string]any
 	transportErr <-chan error
@@ -36,7 +36,7 @@ type routerChannels struct {
 	err          chan<- error
 }
 
-// NewAdapter creates a new JSON-RPC protocol adapter
+// NewAdapter creates a new JSON-RPC protocol adapter.
 func NewAdapter(transport ports.Transport) *Adapter {
 	return &Adapter{
 		transport:   transport,
@@ -45,7 +45,7 @@ func NewAdapter(transport ports.Transport) *Adapter {
 }
 
 // Initialize is a no-op - initialization happens implicitly in
-// StartMessageRouter
+// StartMessageRouter.
 func (*Adapter) Initialize(
 	_ context.Context,
 	_ map[string]any,

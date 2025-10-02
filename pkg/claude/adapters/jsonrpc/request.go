@@ -10,12 +10,12 @@ import (
 )
 
 const (
-	// randomHexBytes is the number of bytes to generate for random hex strings
+	// randomHexBytes is the number of bytes to generate for random hex strings.
 	randomHexBytes = 4
-	// controlRequestTimeout is the default timeout for control requests
+	// controlRequestTimeout is the default timeout for control requests.
 	controlRequestTimeout = 60 * time.Second
 
-	// Message type constants
+	// Message type constants.
 	msgTypeControlResponse     = "control_response"
 	msgTypeControlRequest      = "control_request"
 	msgTypeCancelRequest       = "control_cancel_request"
@@ -39,7 +39,7 @@ const (
 	msgFieldReason             = "reason"
 	msgFieldUpdatedPerms       = "updated_permissions"
 
-	// Error messages
+	// Error messages.
 	errRequestCancelled = "request cancelled"
 )
 
@@ -61,7 +61,7 @@ func (a *Adapter) SendControlRequest(
 	return a.waitForResponse(ctx, requestID, req, resCh)
 }
 
-// HandleControlRequest routes inbound control requests by subtype
+// HandleControlRequest routes inbound control requests by subtype.
 func (a *Adapter) HandleControlRequest(
 	ctx context.Context,
 	req map[string]any,
@@ -85,7 +85,7 @@ func (a *Adapter) HandleControlRequest(
 	}
 }
 
-// generateRequestID creates a unique request ID
+// generateRequestID creates a unique request ID.
 func (a *Adapter) generateRequestID() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -94,7 +94,7 @@ func (a *Adapter) generateRequestID() string {
 	return fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(randomHexBytes))
 }
 
-// registerPendingRequest creates and registers a result channel for a request
+// registerPendingRequest creates and registers a result channel for a request.
 func (a *Adapter) registerPendingRequest(requestID string) chan result {
 	resCh := make(chan result, 1)
 	a.mu.Lock()
@@ -104,14 +104,14 @@ func (a *Adapter) registerPendingRequest(requestID string) chan result {
 	return resCh
 }
 
-// cleanupPendingRequest removes a pending request from the map
+// cleanupPendingRequest removes a pending request from the map.
 func (a *Adapter) cleanupPendingRequest(requestID string) {
 	a.mu.Lock()
 	delete(a.pendingReqs, requestID)
 	a.mu.Unlock()
 }
 
-// sendControlRequestEnvelope marshals and sends the control request
+// sendControlRequestEnvelope marshals and sends the control request.
 func (a *Adapter) sendControlRequestEnvelope(
 	ctx context.Context,
 	requestID string,
@@ -135,7 +135,7 @@ func (a *Adapter) sendControlRequestEnvelope(
 	return nil
 }
 
-// waitForResponse waits for a response with timeout
+// waitForResponse waits for a response with timeout.
 func (a *Adapter) waitForResponse(
 	ctx context.Context,
 	requestID string,

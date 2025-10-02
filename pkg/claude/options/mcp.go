@@ -1,12 +1,12 @@
 package options
 
 // MCPServerConfig is configuration for MCP servers (not runtime instances)
-// These are infrastructure configurations for connecting to MCP servers
+// These are infrastructure configurations for connecting to MCP servers.
 type MCPServerConfig interface {
 	mcpServerConfig()
 }
 
-// StdioServerConfig configures an MCP server using stdio transport
+// StdioServerConfig configures an MCP server using stdio transport.
 type StdioServerConfig struct {
 	Type    string // "stdio"
 	Command string
@@ -16,7 +16,7 @@ type StdioServerConfig struct {
 
 func (StdioServerConfig) mcpServerConfig() {}
 
-// SSEServerConfig configures an MCP server using Server-Sent Events
+// SSEServerConfig configures an MCP server using Server-Sent Events.
 type SSEServerConfig struct {
 	Type    string // "sse"
 	URL     string
@@ -25,7 +25,7 @@ type SSEServerConfig struct {
 
 func (SSEServerConfig) mcpServerConfig() {}
 
-// HTTPServerConfig configures an MCP server using HTTP transport
+// HTTPServerConfig configures an MCP server using HTTP transport.
 type HTTPServerConfig struct {
 	Type    string // "http"
 	URL     string
@@ -36,7 +36,7 @@ func (HTTPServerConfig) mcpServerConfig() {}
 
 // SDKServerConfig is a marker for SDK-managed MCP servers
 // The actual server instance is managed separately by the MCP adapter
-// This ONLY contains configuration, NOT the server instance itself
+// This ONLY contains configuration, NOT the server instance itself.
 type SDKServerConfig struct {
 	Type string // "sdk"
 	Name string

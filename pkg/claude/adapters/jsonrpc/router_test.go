@@ -8,7 +8,7 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/ports"
 )
 
-// mockTransport is a mock implementation of ports.Transport for testing
+// mockTransport is a mock implementation of ports.Transport for testing.
 type mockTransport struct {
 	messages []map[string]any
 	msgCh    chan map[string]any
@@ -102,6 +102,7 @@ func TestRouterClosesChannelsOnCompletion(t *testing.T) {
 			if !ok {
 				// Channel closed properly - test passes
 				t.Logf("Message channel closed after %d messages", messageCount)
+
 				return
 			}
 			messageCount++

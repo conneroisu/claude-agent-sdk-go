@@ -12,7 +12,7 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/ports"
 )
 
-// handleCanUseTool handles can_use_tool control requests
+// handleCanUseTool handles can_use_tool control requests.
 func handleCanUseTool(
 	ctx context.Context,
 	request map[string]any,
@@ -33,7 +33,7 @@ func handleCanUseTool(
 	return buildPermissionResponse(result)
 }
 
-// extractToolUseParams extracts tool name and input from the request
+// extractToolUseParams extracts tool name and input from the request.
 func extractToolUseParams(request map[string]any) (string, map[string]any) {
 	toolName, _ := request[msgFieldToolName].(string)
 	input, _ := request[msgFieldInput].(map[string]any)
@@ -41,7 +41,7 @@ func extractToolUseParams(request map[string]any) (string, map[string]any) {
 	return toolName, input
 }
 
-// extractPermissionSuggestions parses permission suggestions from the request
+// extractPermissionSuggestions parses permission suggestions from the request.
 func extractPermissionSuggestions(request map[string]any) []any {
 	suggestions, ok := request[msgFieldPermissionSuggests].([]any)
 	if !ok {
@@ -51,7 +51,7 @@ func extractPermissionSuggestions(request map[string]any) []any {
 	return suggestions
 }
 
-// buildPermissionResponse converts PermissionResult to response format
+// buildPermissionResponse converts PermissionResult to response format.
 func buildPermissionResponse(
 	result any,
 ) (map[string]any, error) {
@@ -65,7 +65,7 @@ func buildPermissionResponse(
 	}
 }
 
-// buildAllowResponse creates a response for allowed permissions
+// buildAllowResponse creates a response for allowed permissions.
 func buildAllowResponse(r *permissions.PermissionResultAllow) map[string]any {
 	response := map[string]any{msgFieldAllow: true}
 
@@ -80,7 +80,7 @@ func buildAllowResponse(r *permissions.PermissionResultAllow) map[string]any {
 	return response
 }
 
-// buildDenyResponse creates a response for denied permissions
+// buildDenyResponse creates a response for denied permissions.
 func buildDenyResponse(r *permissions.PermissionResultDeny) map[string]any {
 	return map[string]any{
 		msgFieldAllow:  false,
@@ -88,7 +88,7 @@ func buildDenyResponse(r *permissions.PermissionResultDeny) map[string]any {
 	}
 }
 
-// handleHookCallback handles hook_callback control requests
+// handleHookCallback handles hook_callback control requests.
 func handleHookCallback(
 	ctx context.Context,
 	request map[string]any,

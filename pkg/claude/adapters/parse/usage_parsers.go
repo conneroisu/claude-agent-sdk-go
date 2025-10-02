@@ -66,7 +66,7 @@ func parseModelUsage(
 	return result, nil
 }
 
-// parseModelUsageEntry parses a single model usage entry
+// parseModelUsageEntry parses a single model usage entry.
 func parseModelUsageEntry(
 	usageMap map[string]any,
 ) messages.ModelUsage {
@@ -93,7 +93,7 @@ func parseModelUsageEntry(
 	}
 }
 
-// parsePermissionDenials parses array of permission denials
+// parsePermissionDenials parses array of permission denials.
 func parsePermissionDenials(
 	data any,
 ) ([]messages.PermissionDenial, error) {

@@ -4,19 +4,19 @@ package hooking
 
 import "context"
 
-// Service manages hook execution
+// Service manages hook execution.
 type Service struct {
 	hooks map[HookEvent][]HookMatcher
 }
 
-// NewService creates a new hooking service
+// NewService creates a new hooking service.
 func NewService(hooks map[HookEvent][]HookMatcher) *Service {
 	return &Service{
 		hooks: hooks,
 	}
 }
 
-// GetHooks returns the hook configuration
+// GetHooks returns the hook configuration.
 func (s *Service) GetHooks() map[HookEvent][]HookMatcher {
 	if s == nil {
 		return nil
@@ -25,7 +25,7 @@ func (s *Service) GetHooks() map[HookEvent][]HookMatcher {
 	return s.hooks
 }
 
-// Execute runs hooks for a given event
+// Execute runs hooks for a given event.
 func (s *Service) Execute(
 	ctx context.Context,
 	event HookEvent,
@@ -44,7 +44,7 @@ func (s *Service) Execute(
 	return s.executeMatcherHooks(ctx, matchers, input, toolUseID)
 }
 
-// Register adds a new hook
+// Register adds a new hook.
 func (s *Service) Register(event HookEvent, matcher HookMatcher) {
 	if s.hooks == nil {
 		s.hooks = make(map[HookEvent][]HookMatcher)

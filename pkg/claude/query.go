@@ -14,14 +14,14 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/querying"
 )
 
-// QueryConfig holds configuration for one-shot queries
+// QueryConfig holds configuration for one-shot queries.
 type QueryConfig struct {
 	Hooks       map[HookEvent][]HookMatcher
 	Permissions *PermissionsConfig
 }
 
 // Query performs a one-shot query to Claude
-// This is the main entry point that wires up domain services with adapters
+// This is the main entry point that wires up domain services with adapters.
 func Query(
 	ctx context.Context,
 	prompt string,
@@ -56,7 +56,7 @@ func Query(
 	return queryService.Execute(ctx, prompt, localOpts)
 }
 
-// createDependencies initializes domain services from configuration
+// createDependencies initializes domain services from configuration.
 func createDependencies(
 	config *QueryConfig,
 	transport ports.Transport,
@@ -73,7 +73,7 @@ func createDependencies(
 	}
 }
 
-// createHookingService creates hooking service if configured
+// createHookingService creates hooking service if configured.
 func createHookingService(config *QueryConfig) *hooking.Service {
 	if config != nil && config.Hooks != nil {
 		return hooking.NewService(config.Hooks)
@@ -82,7 +82,7 @@ func createHookingService(config *QueryConfig) *hooking.Service {
 	return nil
 }
 
-// createPermissionsService creates permissions service if configured
+// createPermissionsService creates permissions service if configured.
 func createPermissionsService(config *QueryConfig) *permissions.Service {
 	if config != nil && config.Permissions != nil {
 		return permissions.NewService(config.Permissions)

@@ -16,7 +16,7 @@ var (
 	ErrInvalidInput   = errors.New("claude: invalid input")
 )
 
-// CLINotFoundError indicates the Claude CLI binary was not found
+// CLINotFoundError indicates the Claude CLI binary was not found.
 type CLINotFoundError struct {
 	Path string
 }
@@ -25,7 +25,7 @@ func (e *CLINotFoundError) Error() string {
 	return fmt.Sprintf("Claude Code not found: %s", e.Path)
 }
 
-// ProcessError indicates the CLI process failed
+// ProcessError indicates the CLI process failed.
 type ProcessError struct {
 	ExitCode int
 	Stderr   string
@@ -39,7 +39,7 @@ func (e *ProcessError) Error() string {
 	)
 }
 
-// JSONDecodeError indicates JSON decoding failed
+// JSONDecodeError indicates JSON decoding failed.
 type JSONDecodeError struct {
 	Line string
 	Err  error

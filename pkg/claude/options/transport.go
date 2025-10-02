@@ -1,7 +1,7 @@
 package options
 
 // AgentOptions configures the Claude agent
-// This combines domain and infrastructure configuration
+// This combines domain and infrastructure configuration.
 type AgentOptions struct {
 	// Domain settings (affect business logic)
 	AllowedTools             []string

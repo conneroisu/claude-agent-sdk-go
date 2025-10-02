@@ -1,18 +1,18 @@
 package messages
 
-// ContentBlock is a discriminated union for content blocks
+// ContentBlock is a discriminated union for content blocks.
 type ContentBlock interface {
 	contentBlock()
 }
 
-// TextBlock represents a text content block
+// TextBlock represents a text content block.
 type TextBlock struct {
 	Text string
 }
 
 func (TextBlock) contentBlock() {}
 
-// ThinkingBlock represents extended thinking content
+// ThinkingBlock represents extended thinking content.
 type ThinkingBlock struct {
 	Thinking  string
 	Signature string
@@ -20,7 +20,7 @@ type ThinkingBlock struct {
 
 func (ThinkingBlock) contentBlock() {}
 
-// ToolUseBlock represents a tool use request
+// ToolUseBlock represents a tool use request.
 type ToolUseBlock struct {
 	ID    string
 	Name  string
@@ -29,22 +29,22 @@ type ToolUseBlock struct {
 
 func (ToolUseBlock) contentBlock() {}
 
-// ToolResultContent can be string or a list of content blocks
+// ToolResultContent can be string or a list of content blocks.
 type ToolResultContent interface {
 	toolResultContent()
 }
 
-// ToolResultStringContent is a string tool result
+// ToolResultStringContent is a string tool result.
 type ToolResultStringContent string
 
 func (ToolResultStringContent) toolResultContent() {}
 
-// ToolResultBlockListContent is a list of content blocks as maps
+// ToolResultBlockListContent is a list of content blocks as maps.
 type ToolResultBlockListContent []map[string]any
 
 func (ToolResultBlockListContent) toolResultContent() {}
 
-// ToolResultBlock represents the result of a tool execution
+// ToolResultBlock represents the result of a tool execution.
 type ToolResultBlock struct {
 	ToolUseID string
 	Content   ToolResultContent

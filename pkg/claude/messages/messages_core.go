@@ -1,12 +1,12 @@
 // Package messages defines message types for Claude agent communication.
 package messages
 
-// Message types - discriminated union
+// Message types - discriminated union.
 type Message interface {
 	message()
 }
 
-// UserMessage represents a user message in the conversation
+// UserMessage represents a user message in the conversation.
 type UserMessage struct {
 	Content         MessageContent
 	ParentToolUseID *string
@@ -15,7 +15,7 @@ type UserMessage struct {
 
 func (UserMessage) message() {}
 
-// AssistantMessage represents an assistant message in the conversation
+// AssistantMessage represents an assistant message in the conversation.
 type AssistantMessage struct {
 	Content         []ContentBlock
 	Model           string
@@ -24,7 +24,7 @@ type AssistantMessage struct {
 
 func (AssistantMessage) message() {}
 
-// StreamEvent represents a streaming event
+// StreamEvent represents a streaming event.
 type StreamEvent struct {
 	UUID      string
 	SessionID string
@@ -35,17 +35,17 @@ type StreamEvent struct {
 
 func (StreamEvent) message() {}
 
-// MessageContent can be string or []ContentBlock
+// MessageContent can be string or []ContentBlock.
 type MessageContent interface {
 	messageContent()
 }
 
-// StringContent is a string message content
+// StringContent is a string message content.
 type StringContent string
 
 func (StringContent) messageContent() {}
 
-// BlockListContent is a list of content blocks
+// BlockListContent is a list of content blocks.
 type BlockListContent []ContentBlock
 
 func (BlockListContent) messageContent() {}

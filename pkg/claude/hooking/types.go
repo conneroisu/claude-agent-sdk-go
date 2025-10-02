@@ -4,7 +4,7 @@ package hooking
 
 import "context"
 
-// HookEvent represents different hook trigger points
+// HookEvent represents different hook trigger points.
 type HookEvent string
 
 const (
@@ -16,7 +16,7 @@ const (
 	HookEventPreCompact       HookEvent = "PreCompact"
 )
 
-// BaseHookInput contains fields common to all hook inputs
+// BaseHookInput contains fields common to all hook inputs.
 type BaseHookInput struct {
 	SessionID      string  `json:"session_id"`
 	TranscriptPath string  `json:"transcript_path"`
@@ -24,12 +24,12 @@ type BaseHookInput struct {
 	PermissionMode *string `json:"permission_mode,omitempty"`
 }
 
-// HookInput is a discriminated union of all hook input types
+// HookInput is a discriminated union of all hook input types.
 type HookInput interface {
 	hookInput()
 }
 
-// PreToolUseHookInput is the input for PreToolUse hooks
+// PreToolUseHookInput is the input for PreToolUse hooks.
 type PreToolUseHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "PreToolUse"
@@ -40,7 +40,7 @@ type PreToolUseHookInput struct {
 
 func (PreToolUseHookInput) hookInput() {}
 
-// PostToolUseHookInput is the input for PostToolUse hooks
+// PostToolUseHookInput is the input for PostToolUse hooks.
 type PostToolUseHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "PostToolUse"
@@ -53,7 +53,7 @@ type PostToolUseHookInput struct {
 
 func (PostToolUseHookInput) hookInput() {}
 
-// NotificationHookInput is the input for Notification hooks
+// NotificationHookInput is the input for Notification hooks.
 type NotificationHookInput struct {
 	BaseHookInput
 	HookEventName string  `json:"hook_event_name"` // "Notification"
@@ -63,7 +63,7 @@ type NotificationHookInput struct {
 
 func (NotificationHookInput) hookInput() {}
 
-// UserPromptSubmitHookInput is the input for UserPromptSubmit hooks
+// UserPromptSubmitHookInput is the input for UserPromptSubmit hooks.
 type UserPromptSubmitHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "UserPromptSubmit"
@@ -72,7 +72,7 @@ type UserPromptSubmitHookInput struct {
 
 func (UserPromptSubmitHookInput) hookInput() {}
 
-// SessionStartHookInput is the input for SessionStart hooks
+// SessionStartHookInput is the input for SessionStart hooks.
 type SessionStartHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "SessionStart"
@@ -82,7 +82,7 @@ type SessionStartHookInput struct {
 
 func (SessionStartHookInput) hookInput() {}
 
-// SessionEndHookInput is the input for SessionEnd hooks
+// SessionEndHookInput is the input for SessionEnd hooks.
 type SessionEndHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "SessionEnd"
@@ -91,7 +91,7 @@ type SessionEndHookInput struct {
 
 func (SessionEndHookInput) hookInput() {}
 
-// StopHookInput is the input for Stop hooks
+// StopHookInput is the input for Stop hooks.
 type StopHookInput struct {
 	BaseHookInput
 	HookEventName  string `json:"hook_event_name"` // "Stop"
@@ -100,7 +100,7 @@ type StopHookInput struct {
 
 func (StopHookInput) hookInput() {}
 
-// SubagentStopHookInput is the input for SubagentStop hooks
+// SubagentStopHookInput is the input for SubagentStop hooks.
 type SubagentStopHookInput struct {
 	BaseHookInput
 	HookEventName  string `json:"hook_event_name"` // "SubagentStop"
@@ -109,7 +109,7 @@ type SubagentStopHookInput struct {
 
 func (SubagentStopHookInput) hookInput() {}
 
-// PreCompactHookInput is the input for PreCompact hooks
+// PreCompactHookInput is the input for PreCompact hooks.
 type PreCompactHookInput struct {
 	BaseHookInput
 	HookEventName      string  `json:"hook_event_name"` // "PreCompact"
@@ -119,7 +119,7 @@ type PreCompactHookInput struct {
 
 func (PreCompactHookInput) hookInput() {}
 
-// HookContext provides context for hook execution
+// HookContext provides context for hook execution.
 type HookContext struct {
 	// Signal provides cancellation and timeout support via context
 	// Hook implementations should check Signal.Done() for cancellation
@@ -137,7 +137,7 @@ type HookCallback func(
 	ctx HookContext,
 ) (map[string]any, error)
 
-// HookMatcher defines when a hook should execute
+// HookMatcher defines when a hook should execute.
 type HookMatcher struct {
 	Matcher string         // Pattern to match (e.g., tool name, event type)
 	Hooks   []HookCallback // Callbacks to execute

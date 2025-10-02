@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// executionContext holds parameters for hook execution
+// executionContext holds parameters for hook execution.
 type executionContext struct {
 	ctx              context.Context
 	input            map[string]any
@@ -16,7 +16,7 @@ type executionContext struct {
 	aggregatedResult map[string]any
 }
 
-// executeMatcherHooks executes all matching hooks and aggregates results
+// executeMatcherHooks executes all matching hooks and aggregates results.
 func (*Service) executeMatcherHooks(
 	ctx context.Context,
 	matchers []HookMatcher,
@@ -48,7 +48,7 @@ func (*Service) executeMatcherHooks(
 	return execCtx.aggregatedResult, nil
 }
 
-// executeCallbacks runs hook callbacks and handles blocking decisions
+// executeCallbacks runs hook callbacks and handles blocking decisions.
 func executeCallbacks(
 	callbacks []HookCallback,
 	execCtx *executionContext,
@@ -70,7 +70,7 @@ func executeCallbacks(
 	return nil, nil
 }
 
-// checkContextCancellation checks if context is cancelled
+// checkContextCancellation checks if context is cancelled.
 func checkContextCancellation(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
@@ -80,7 +80,7 @@ func checkContextCancellation(ctx context.Context) error {
 	}
 }
 
-// executeCallback runs a single hook callback
+// executeCallback runs a single hook callback.
 func executeCallback(
 	callback HookCallback,
 	execCtx *executionContext,
@@ -100,7 +100,7 @@ func executeCallback(
 	return handleHookResult(result, execCtx.aggregatedResult), nil
 }
 
-// handleHookResult processes hook result and checks for blocking decisions
+// handleHookResult processes hook result and checks for blocking decisions.
 func handleHookResult(
 	result, aggregatedResult map[string]any,
 ) map[string]any {
@@ -117,7 +117,7 @@ func handleHookResult(
 	return nil
 }
 
-// matchesPattern checks if a hook matcher pattern applies to the given input
+// matchesPattern checks if a hook matcher pattern applies to the given input.
 func matchesPattern(pattern string, input map[string]any) bool {
 	// Empty matcher matches all events
 	if pattern == "" {

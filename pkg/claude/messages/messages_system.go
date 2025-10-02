@@ -1,6 +1,6 @@
 package messages
 
-// SystemMessage represents a system message with flexible data
+// SystemMessage represents a system message with flexible data.
 type SystemMessage struct {
 	Subtype string
 	Data    map[string]any // Intentionally flexible - varies by subtype
@@ -8,12 +8,12 @@ type SystemMessage struct {
 
 func (SystemMessage) message() {}
 
-// SystemMessageData is a discriminated union for SystemMessage.Data
+// SystemMessageData is a discriminated union for SystemMessage.Data.
 type SystemMessageData interface {
 	systemMessageData()
 }
 
-// SystemMessageInit is sent at the start of a session
+// SystemMessageInit is sent at the start of a session.
 type SystemMessageInit struct {
 	Agents         []string          `json:"agents,omitempty"`
 	APIKeySource   string            `json:"apiKeySource"`
@@ -28,26 +28,26 @@ type SystemMessageInit struct {
 
 func (SystemMessageInit) systemMessageData() {}
 
-// CompactMetadata contains metadata about a compaction event
+// CompactMetadata contains metadata about a compaction event.
 type CompactMetadata struct {
 	Trigger   string `json:"trigger"` // "manual" | "auto"
 	PreTokens int    `json:"pre_tokens"`
 }
 
-// SystemMessageCompactBoundary marks a conversation compaction point
+// SystemMessageCompactBoundary marks a conversation compaction point.
 type SystemMessageCompactBoundary struct {
 	CompactMetadata CompactMetadata `json:"compact_metadata"`
 }
 
 func (SystemMessageCompactBoundary) systemMessageData() {}
 
-// ServerInfo contains information about an MCP server
+// ServerInfo contains information about an MCP server.
 type ServerInfo struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 }
 
-// MCPServerStatus represents the status of an MCP server
+// MCPServerStatus represents the status of an MCP server.
 type MCPServerStatus struct {
 	Name       string      `json:"name"`
 	Status     string      `json:"status"` // "connected" | "failed"...

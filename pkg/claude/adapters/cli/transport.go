@@ -15,7 +15,7 @@ import (
 // - Process initialization and command building
 // - Bidirectional communication via stdin/stdout
 // - Thread-safe state management
-// - Buffer management for large responses
+// - Buffer management for large responses.
 type Adapter struct {
 	options              *options.AgentOptions
 	cliPath              string
@@ -30,20 +30,20 @@ type Adapter struct {
 	maxBufferSize        int
 }
 
-// Verify interface compliance at compile time
+// Verify interface compliance at compile time.
 var _ ports.Transport = (*Adapter)(nil)
 
 const (
 	// defaultMaxBufferSize limits memory usage for streaming responses
-	// Set to 1MB to handle typical Claude responses while preventing OOM
+	// Set to 1MB to handle typical Claude responses while preventing OOM.
 	defaultMaxBufferSize = 1024 * 1024
-	// claudeBinaryName is the expected name of the CLI executable
+	// claudeBinaryName is the expected name of the CLI executable.
 	claudeBinaryName = "claude"
-	// defaultMessageChannelBuffer is the buffer size for message channel
+	// defaultMessageChannelBuffer is the buffer size for message channel.
 	defaultMessageChannelBuffer = 10
 )
 
-// NewAdapter creates a new CLI transport adapter
+// NewAdapter creates a new CLI transport adapter.
 func NewAdapter(opts *options.AgentOptions) *Adapter {
 	maxBuf := defaultMaxBufferSize
 	if opts.MaxBufferSize != nil {
@@ -56,7 +56,7 @@ func NewAdapter(opts *options.AgentOptions) *Adapter {
 	}
 }
 
-// Close implements ports.Transport
+// Close implements ports.Transport.
 func (a *Adapter) Close() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -77,7 +77,7 @@ func (a *Adapter) Close() error {
 	return nil
 }
 
-// IsReady implements ports.Transport
+// IsReady implements ports.Transport.
 func (a *Adapter) IsReady() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

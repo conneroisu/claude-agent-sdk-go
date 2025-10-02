@@ -14,12 +14,20 @@ import (
 )
 
 // Re-export domain hook types for public API
+
+// HookEvent represents a hook event type.
 type HookEvent = hooking.HookEvent
+
+// HookContext represents a hook context type.
 type HookContext = hooking.HookContext
+
+// HookCallback represents a hook callback type.
 type HookCallback = hooking.HookCallback
+
+// HookMatcher represents a hook matcher type.
 type HookMatcher = hooking.HookMatcher
 
-// Re-export hook event constants
+// Re-export hook event constants.
 const (
 	HookEventPreToolUse       = hooking.HookEventPreToolUse
 	HookEventPostToolUse      = hooking.HookEventPostToolUse
@@ -30,11 +38,17 @@ const (
 )
 
 // Re-export permissions types for public API
+
+// PermissionsConfig represents the configuration for permissions.
 type PermissionsConfig = permissions.PermissionsConfig
+
+// PermissionResult represents the result of a permission check.
 type PermissionResult = permissions.PermissionResult
+
+// CanUseToolFunc represents a function that checks if a tool can be used.
 type CanUseToolFunc = permissions.CanUseToolFunc
 
-// HookJSONOutput represents the output structure for hooks
+// HookJSONOutput represents the output structure for hooks.
 type HookJSONOutput struct {
 	Decision           *string        `json:"decision,omitempty"` // "block"
 	SystemMessage      *string        `json:"systemMessage,omitempty"`

@@ -8,7 +8,7 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/messages"
 )
 
-// resultMessageFields holds common fields for result messages
+// resultMessageFields holds common fields for result messages.
 type resultMessageFields struct {
 	subtype           string
 	durationMs        int
@@ -23,7 +23,7 @@ type resultMessageFields struct {
 }
 
 // parseResultMessageFields extracts common fields from result
-// message data
+// message data.
 func parseResultMessageFields(
 	data map[string]any,
 ) (*resultMessageFields, error) {
@@ -72,7 +72,7 @@ func parseResultMessageFields(
 }
 
 // buildResultMessage constructs the appropriate result message type
-// based on subtype
+// based on subtype.
 func buildResultMessage(
 	fields *resultMessageFields,
 	data map[string]any,
@@ -90,7 +90,7 @@ func buildResultMessage(
 	}
 }
 
-// buildSuccessMessage builds a success result message
+// buildSuccessMessage builds a success result message.
 func buildSuccessMessage(
 	fields *resultMessageFields,
 	data map[string]any,
@@ -112,7 +112,7 @@ func buildSuccessMessage(
 	}, nil
 }
 
-// buildErrorMessage builds an error result message
+// buildErrorMessage builds an error result message.
 func buildErrorMessage(
 	fields *resultMessageFields,
 ) (messages.Message, error) {

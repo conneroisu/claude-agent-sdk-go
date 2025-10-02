@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 )
 
-// findCLI locates the Claude CLI binary
+// findCLI locates the Claude CLI binary.
 func findCLI() (string, error) {
 	// Check PATH first
 	if path, err := exec.LookPath(claudeBinaryName); err == nil {
@@ -39,7 +39,7 @@ func findCLI() (string, error) {
 	)
 }
 
-// Connect implements ports.Transport
+// Connect implements ports.Transport.
 func (a *Adapter) Connect(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

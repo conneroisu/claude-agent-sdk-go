@@ -8,12 +8,12 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/messages"
 )
 
-// contentBlockParser is a function that parses a specific block type
+// contentBlockParser is a function that parses a specific block type.
 type contentBlockParser func(
 	map[string]any,
 ) (messages.ContentBlock, error)
 
-// contentBlockParsers maps block types to their parsers
+// contentBlockParsers maps block types to their parsers.
 var contentBlockParsers = map[string]contentBlockParser{
 	blockTypeText:     parseTextBlockWithError,
 	blockTypeThinking: parseThinkingBlockWithError,
@@ -21,7 +21,7 @@ var contentBlockParsers = map[string]contentBlockParser{
 	"tool_result":     parseToolResultBlockWithError,
 }
 
-// parseContentBlocks parses an array of content blocks
+// parseContentBlocks parses an array of content blocks.
 func parseContentBlocks(
 	contentArr []any,
 ) ([]messages.ContentBlock, error) {
@@ -38,7 +38,7 @@ func parseContentBlocks(
 	return blocks, nil
 }
 
-// parseContentBlock parses a single content block
+// parseContentBlock parses a single content block.
 func parseContentBlock(item any) (messages.ContentBlock, error) {
 	block, ok := item.(map[string]any)
 	if !ok {
@@ -61,7 +61,7 @@ func parseContentBlock(item any) (messages.ContentBlock, error) {
 	return parser(block)
 }
 
-// parseTextBlockWithError parses text block with wrapped error
+// parseTextBlockWithError parses text block with wrapped error.
 func parseTextBlockWithError(
 	block map[string]any,
 ) (messages.ContentBlock, error) {
@@ -73,7 +73,7 @@ func parseTextBlockWithError(
 	return textBlock, nil
 }
 
-// parseThinkingBlockWithError parses thinking block with wrapped error
+// parseThinkingBlockWithError parses thinking block with wrapped error.
 func parseThinkingBlockWithError(
 	block map[string]any,
 ) (messages.ContentBlock, error) {
@@ -85,7 +85,7 @@ func parseThinkingBlockWithError(
 	return thinkingBlock, nil
 }
 
-// parseToolUseBlockWithError parses tool use block with wrapped error
+// parseToolUseBlockWithError parses tool use block with wrapped error.
 func parseToolUseBlockWithError(
 	block map[string]any,
 ) (messages.ContentBlock, error) {
@@ -98,7 +98,7 @@ func parseToolUseBlockWithError(
 }
 
 // parseToolResultBlockWithError parses tool result block with wrapped
-// error
+// error.
 func parseToolResultBlockWithError(
 	block map[string]any,
 ) (messages.ContentBlock, error) {
@@ -110,7 +110,7 @@ func parseToolResultBlockWithError(
 	return toolResultBlock, nil
 }
 
-// parseTextBlock parses a text content block
+// parseTextBlock parses a text content block.
 func parseTextBlock(
 	block map[string]any,
 ) (messages.TextBlock, error) {
@@ -125,7 +125,7 @@ func parseTextBlock(
 	}, nil
 }
 
-// parseThinkingBlock parses a thinking content block
+// parseThinkingBlock parses a thinking content block.
 func parseThinkingBlock(
 	block map[string]any,
 ) (messages.ThinkingBlock, error) {
@@ -143,7 +143,7 @@ func parseThinkingBlock(
 	}, nil
 }
 
-// parseToolUseBlock parses a tool_use content block
+// parseToolUseBlock parses a tool_use content block.
 func parseToolUseBlock(
 	block map[string]any,
 ) (messages.ToolUseBlock, error) {
@@ -199,7 +199,7 @@ func parseToolResultBlock(
 	}, nil
 }
 
-// parseToolResultContent parses the content field of a tool result
+// parseToolResultContent parses the content field of a tool result.
 func parseToolResultContent(
 	block map[string]any,
 ) (messages.ToolResultContent, error) {
@@ -220,7 +220,7 @@ func parseToolResultContent(
 }
 
 // parseToolResultBlockList parses an array of content blocks for
-// tool results
+// tool results.
 func parseToolResultBlockList(
 	contentArr []any,
 ) messages.ToolResultContent {

@@ -13,7 +13,7 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/ports"
 )
 
-// Dependencies groups all external dependencies for the streaming service
+// Dependencies groups all external dependencies for the streaming service.
 type Dependencies struct {
 	Transport   ports.Transport
 	Protocol    ports.ProtocolHandler
@@ -24,7 +24,7 @@ type Dependencies struct {
 }
 
 // Service handles streaming conversations
-// This is a DOMAIN service - pure business logic for managing conversations
+// This is a DOMAIN service - pure business logic for managing conversations.
 type Service struct {
 	transport   ports.Transport
 	protocol    ports.ProtocolHandler
@@ -38,7 +38,7 @@ type Service struct {
 	errCh chan error
 }
 
-// NewService creates a new streaming service
+// NewService creates a new streaming service.
 func NewService(deps Dependencies) *Service {
 	return &Service{
 		transport:   deps.Transport,
@@ -52,7 +52,7 @@ func NewService(deps Dependencies) *Service {
 	}
 }
 
-// Connect initializes the streaming connection
+// Connect initializes the streaming connection.
 func (s *Service) Connect(ctx context.Context, prompt *string) error {
 	if err := s.transport.Connect(ctx); err != nil {
 		return fmt.Errorf("transport connect: %w", err)
@@ -78,7 +78,7 @@ func (s *Service) Connect(ctx context.Context, prompt *string) error {
 	return nil
 }
 
-// buildHookCallbacks creates hook callbacks map from hooking service
+// buildHookCallbacks creates hook callbacks map from hooking service.
 func (s *Service) buildHookCallbacks() map[string]ports.HookCallback {
 	if s.hooks == nil {
 		return nil
@@ -103,7 +103,7 @@ func (s *Service) buildHookCallbacks() map[string]ports.HookCallback {
 	return hookCallbacks
 }
 
-// convertToHookContext converts context to hooking.HookContext
+// convertToHookContext converts context to hooking.HookContext.
 func convertToHookContext(ctx any) hooking.HookContext {
 	if hookCtx, ok := ctx.(hooking.HookContext); ok {
 		return hookCtx
@@ -115,7 +115,7 @@ func convertToHookContext(ctx any) hooking.HookContext {
 	return hooking.HookContext{Signal: context.Background()}
 }
 
-// SendMessage sends a message to the agent
+// SendMessage sends a message to the agent.
 func (s *Service) SendMessage(ctx context.Context, msg string) error {
 	msgBytes, err := json.Marshal(map[string]any{
 		"type":   "user",
@@ -128,7 +128,7 @@ func (s *Service) SendMessage(ctx context.Context, msg string) error {
 	return s.transport.Write(ctx, string(msgBytes)+"\n")
 }
 
-// ReceiveMessages returns channels for receiving messages and errors
+// ReceiveMessages returns channels for receiving messages and errors.
 func (s *Service) ReceiveMessages(
 	ctx context.Context,
 ) (<-chan messages.Message, <-chan error) {
@@ -140,7 +140,7 @@ func (s *Service) ReceiveMessages(
 	return msgOutCh, errOutCh
 }
 
-// messageLoop processes messages in a separate goroutine
+// messageLoop processes messages in a separate goroutine.
 func (s *Service) messageLoop(
 	ctx context.Context,
 	msgOutCh chan messages.Message,
@@ -156,7 +156,7 @@ func (s *Service) messageLoop(
 	}
 }
 
-// processNextMessage handles one message cycle, returns false to exit loop
+// processNextMessage handles one message cycle, returns false to exit loop.
 func (s *Service) processNextMessage(
 	ctx context.Context,
 	msgOutCh chan messages.Message,
@@ -176,7 +176,7 @@ func (s *Service) processNextMessage(
 	}
 }
 
-// handleReceivedMessage processes message, returns false to exit loop
+// handleReceivedMessage processes message, returns false to exit loop.
 func (s *Service) handleReceivedMessage(
 	msg map[string]any,
 	msgOutCh chan messages.Message,
@@ -194,7 +194,7 @@ func (s *Service) handleReceivedMessage(
 	return true
 }
 
-// handleStreamError processes stream error, returns false to exit loop
+// handleStreamError processes stream error, returns false to exit loop.
 func (*Service) handleStreamError(err error, errOutCh chan error) bool {
 	if err != nil {
 		errOutCh <- err
@@ -205,7 +205,7 @@ func (*Service) handleStreamError(err error, errOutCh chan error) bool {
 	return true
 }
 
-// Close closes the streaming connection
+// Close closes the streaming connection.
 func (s *Service) Close() error {
 	if s.transport != nil {
 		return s.transport.Close()

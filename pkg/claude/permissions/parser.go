@@ -5,7 +5,7 @@ package permissions
 
 import "github.com/conneroisu/claude/pkg/claude/options"
 
-// parseSuggestions converts raw suggestions into PermissionUpdate slice
+// parseSuggestions converts raw suggestions into PermissionUpdate slice.
 func parseSuggestions(
 	suggestions []any,
 ) []PermissionUpdate {
@@ -22,7 +22,7 @@ func parseSuggestions(
 	return parsedSuggestions
 }
 
-// parsePermissionUpdate parses a single permission update from raw data
+// parsePermissionUpdate parses a single permission update from raw data.
 func parsePermissionUpdate(data map[string]any) PermissionUpdate {
 	update := PermissionUpdate{}
 
@@ -36,14 +36,14 @@ func parsePermissionUpdate(data map[string]any) PermissionUpdate {
 	return update
 }
 
-// parseUpdateType extracts the type field from raw data
+// parseUpdateType extracts the type field from raw data.
 func parseUpdateType(update *PermissionUpdate, data map[string]any) {
 	if updateType, ok := data["type"].(string); ok {
 		update.Type = updateType
 	}
 }
 
-// parseRules extracts and parses permission rules from raw data
+// parseRules extracts and parses permission rules from raw data.
 func parseRules(update *PermissionUpdate, data map[string]any) {
 	rulesData, ok := data["rules"].([]any)
 	if !ok {
@@ -61,7 +61,7 @@ func parseRules(update *PermissionUpdate, data map[string]any) {
 	}
 }
 
-// parsePermissionRule parses a single permission rule
+// parsePermissionRule parses a single permission rule.
 func parsePermissionRule(ruleMap map[string]any) PermissionRuleValue {
 	toolName, _ := ruleMap["toolName"].(string)
 	var ruleContent *string
@@ -75,7 +75,7 @@ func parsePermissionRule(ruleMap map[string]any) PermissionRuleValue {
 	}
 }
 
-// parseBehavior extracts the behavior field from raw data
+// parseBehavior extracts the behavior field from raw data.
 func parseBehavior(update *PermissionUpdate, data map[string]any) {
 	if behaviorStr, ok := data["behavior"].(string); ok {
 		behavior := PermissionBehavior(behaviorStr)
@@ -83,7 +83,7 @@ func parseBehavior(update *PermissionUpdate, data map[string]any) {
 	}
 }
 
-// parseMode extracts the mode field from raw data
+// parseMode extracts the mode field from raw data.
 func parseMode(update *PermissionUpdate, data map[string]any) {
 	if modeStr, ok := data["mode"].(string); ok {
 		mode := options.PermissionMode(modeStr)
@@ -91,7 +91,7 @@ func parseMode(update *PermissionUpdate, data map[string]any) {
 	}
 }
 
-// parseDirectories extracts the directories field from raw data
+// parseDirectories extracts the directories field from raw data.
 func parseDirectories(update *PermissionUpdate, data map[string]any) {
 	dirsData, ok := data["directories"].([]any)
 	if !ok {
@@ -107,7 +107,7 @@ func parseDirectories(update *PermissionUpdate, data map[string]any) {
 	}
 }
 
-// parseDestination extracts the destination field from raw data
+// parseDestination extracts the destination field from raw data.
 func parseDestination(update *PermissionUpdate, data map[string]any) {
 	if destStr, ok := data["destination"].(string); ok {
 		dest := PermissionUpdateDestination(destStr)

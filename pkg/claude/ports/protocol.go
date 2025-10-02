@@ -2,7 +2,7 @@ package ports
 
 import "context"
 
-// ProtocolHandler defines what the domain needs for control protocol
+// ProtocolHandler defines what the domain needs for control protocol.
 type ProtocolHandler interface {
 	// Initialize sends the initialize control request with hooks
 	// config
@@ -43,7 +43,7 @@ type ProtocolHandler interface {
 
 // ControlDependencies bundles dependencies needed for control
 // protocol handling
-// This avoids circular dependencies and makes the interface cleaner
+// This avoids circular dependencies and makes the interface cleaner.
 type ControlDependencies struct {
 	Permissions PermissionChecker
 	Hooks       map[string]HookCallback
@@ -52,7 +52,7 @@ type ControlDependencies struct {
 
 // PermissionChecker is a minimal interface for permission checking
 // This allows the protocol adapter to check permissions without
-// importing the full permissions package
+// importing the full permissions package.
 type PermissionChecker interface {
 	// CheckToolUse checks if a tool can be used with given parameters
 	CheckToolUse(
@@ -63,7 +63,7 @@ type PermissionChecker interface {
 	) (any, error)
 }
 
-// HookCallback is a function that handles hook events
+// HookCallback is a function that handles hook events.
 type HookCallback func(
 	input map[string]any,
 	toolUseID *string,

@@ -19,18 +19,18 @@ const (
 
 // Adapter implements ports.MessageParser
 // This is an INFRASTRUCTURE adapter - handles low-level message
-// parsing
+// parsing.
 type Adapter struct {
 	parsers map[string]parserFunc
 }
 
-// parserFunc is a function that parses message data
+// parserFunc is a function that parses message data.
 type parserFunc func(map[string]any) (messages.Message, error)
 
-// Verify interface compliance at compile time
+// Verify interface compliance at compile time.
 var _ ports.MessageParser = (*Adapter)(nil)
 
-// NewAdapter creates a new message parser adapter
+// NewAdapter creates a new message parser adapter.
 func NewAdapter() *Adapter {
 	a := &Adapter{}
 	a.parsers = map[string]parserFunc{

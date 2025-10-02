@@ -75,7 +75,7 @@ func (a *Adapter) handleControlRequestAsync(
 	_ = a.transport.Write(ctx, string(resBytes)+"\n")
 }
 
-// buildControlResponse creates a control protocol response message
+// buildControlResponse creates a control protocol response message.
 func (*Adapter) buildControlResponse(
 	requestID string,
 	responseData map[string]any,

@@ -2,7 +2,7 @@ package ports
 
 import "context"
 
-// Transport defines what the domain needs from a transport layer
+// Transport defines what the domain needs from a transport layer.
 type Transport interface {
 	// Connect establishes a connection to the transport layer
 	Connect(ctx context.Context) error

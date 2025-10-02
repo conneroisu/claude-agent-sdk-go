@@ -7,12 +7,12 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/options"
 )
 
-// PermissionResult represents the outcome of a permission check
+// PermissionResult represents the outcome of a permission check.
 type PermissionResult interface {
 	permissionResult()
 }
 
-// PermissionResultAllow indicates tool use is allowed
+// PermissionResultAllow indicates tool use is allowed.
 type PermissionResultAllow struct {
 	// Intentionally flexible - tool inputs vary by tool
 	UpdatedInput       map[string]any
@@ -21,7 +21,7 @@ type PermissionResultAllow struct {
 
 func (PermissionResultAllow) permissionResult() {}
 
-// PermissionResultDeny indicates tool use is denied
+// PermissionResultDeny indicates tool use is denied.
 type PermissionResultDeny struct {
 	Message   string
 	Interrupt bool
@@ -29,7 +29,7 @@ type PermissionResultDeny struct {
 
 func (PermissionResultDeny) permissionResult() {}
 
-// PermissionUpdate represents a permission change
+// PermissionUpdate represents a permission change.
 type PermissionUpdate struct {
 	Type        string
 	Rules       []PermissionRuleValue
@@ -39,13 +39,13 @@ type PermissionUpdate struct {
 	Destination *PermissionUpdateDestination
 }
 
-// PermissionRuleValue represents a single permission rule
+// PermissionRuleValue represents a single permission rule.
 type PermissionRuleValue struct {
 	ToolName    string
 	RuleContent *string
 }
 
-// PermissionBehavior defines how permissions behave
+// PermissionBehavior defines how permissions behave.
 type PermissionBehavior string
 
 const (
@@ -54,27 +54,23 @@ const (
 	PermissionBehaviorAsk   PermissionBehavior = "ask"
 )
 
-// PermissionUpdateDestination specifies where permission updates are saved
+// PermissionUpdateDestination specifies where permission updates are saved.
 type PermissionUpdateDestination string
 
 const (
-	PermissionDestinationUserSettings PermissionUpdateDestination = (
-		"userSettings")
-	PermissionDestinationProjectSettings PermissionUpdateDestination = (
-		"projectSettings")
-	PermissionDestinationLocalSettings PermissionUpdateDestination = (
-		"localSettings")
-	PermissionDestinationSession PermissionUpdateDestination = (
-		"session")
+	PermissionDestinationUserSettings    PermissionUpdateDestination = ("userSettings")
+	PermissionDestinationProjectSettings PermissionUpdateDestination = ("projectSettings")
+	PermissionDestinationLocalSettings   PermissionUpdateDestination = ("localSettings")
+	PermissionDestinationSession         PermissionUpdateDestination = ("session")
 )
 
-// ToolPermissionContext provides context for permission decisions
+// ToolPermissionContext provides context for permission decisions.
 type ToolPermissionContext struct {
 	Suggestions []PermissionUpdate
 }
 
 // CanUseToolFunc is a callback for permission checks
-// input is intentionally map[string]any as tool inputs vary by tool
+// input is intentionally map[string]any as tool inputs vary by tool.
 type CanUseToolFunc func(
 	ctx context.Context,
 	toolName string,
@@ -82,19 +78,19 @@ type CanUseToolFunc func(
 	permCtx ToolPermissionContext,
 ) (PermissionResult, error)
 
-// PermissionsConfig holds permission service configuration
+// PermissionsConfig holds permission service configuration.
 type PermissionsConfig struct {
 	Mode       options.PermissionMode
 	CanUseTool CanUseToolFunc
 }
 
-// Service manages tool permissions
+// Service manages tool permissions.
 type Service struct {
 	mode       options.PermissionMode
 	canUseTool CanUseToolFunc
 }
 
-// NewService creates a new permissions service
+// NewService creates a new permissions service.
 func NewService(config *PermissionsConfig) *Service {
 	if config == nil {
 		return &Service{
@@ -110,7 +106,7 @@ func NewService(config *PermissionsConfig) *Service {
 
 // CheckToolUse verifies if a tool can be used
 // suggestions parameter comes from the control protocol's
-// permission_suggestions field
+// permission_suggestions field.
 func (s *Service) CheckToolUse(
 	ctx context.Context,
 	toolName string,
@@ -135,12 +131,12 @@ func (s *Service) CheckToolUse(
 	}
 }
 
-// handleBypassMode returns allow result for bypass permission mode
+// handleBypassMode returns allow result for bypass permission mode.
 func handleBypassMode() (any, error) {
 	return &PermissionResultAllow{}, nil
 }
 
-// handleStandardMode handles standard permission modes with optional callback
+// handleStandardMode handles standard permission modes with optional callback.
 func (s *Service) handleStandardMode(
 	ctx context.Context,
 	toolName string,
@@ -169,7 +165,7 @@ func (s *Service) handleStandardMode(
 	return &PermissionResultAllow{}, nil
 }
 
-// handleUnknownMode returns deny result for unknown permission modes
+// handleUnknownMode returns deny result for unknown permission modes.
 func (s *Service) handleUnknownMode() (any, error) {
 	return &PermissionResultDeny{
 		Message: fmt.Sprintf(
@@ -180,7 +176,7 @@ func (s *Service) handleUnknownMode() (any, error) {
 	}, nil
 }
 
-// UpdateMode changes the permission mode
+// UpdateMode changes the permission mode.
 func (s *Service) UpdateMode(mode options.PermissionMode) {
 	s.mode = mode
 }

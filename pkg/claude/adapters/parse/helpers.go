@@ -5,7 +5,7 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/messages"
 )
 
-// getStringPtr extracts optional string pointers from data
+// getStringPtr extracts optional string pointers from data.
 func getStringPtr(data map[string]any, key string) *string {
 	if val, ok := data[key].(string); ok {
 		return &val
@@ -14,7 +14,7 @@ func getStringPtr(data map[string]any, key string) *string {
 	return nil
 }
 
-// parseIsErrorField parses the optional is_error field
+// parseIsErrorField parses the optional is_error field.
 func parseIsErrorField(block map[string]any) *bool {
 	// is_error is optional - use pointer to distinguish between
 	// false and absent
@@ -25,11 +25,11 @@ func parseIsErrorField(block map[string]any) *bool {
 	return nil
 }
 
-// assistantBlockParser is a function that parses assistant blocks
+// assistantBlockParser is a function that parses assistant blocks.
 type assistantBlockParser func(map[string]any) messages.ContentBlock
 
 // assistantBlockParsers maps block types to parsers for assistant
-// messages
+// messages.
 var assistantBlockParsers = map[string]assistantBlockParser{
 	blockTypeText:     parseTextContentBlock,
 	blockTypeThinking: parseThinkingContentBlock,
@@ -38,7 +38,7 @@ var assistantBlockParsers = map[string]assistantBlockParser{
 }
 
 // parseAssistantContentBlocks parses content blocks from assistant
-// messages
+// messages.
 func parseAssistantContentBlocks(
 	contentArray []any,
 ) []messages.ContentBlock {
@@ -56,7 +56,7 @@ func parseAssistantContentBlocks(
 	return blocks
 }
 
-// parseAssistantContentBlock parses a single assistant content block
+// parseAssistantContentBlock parses a single assistant content block.
 func parseAssistantContentBlock(item any) messages.ContentBlock {
 	block, _ := item.(map[string]any)
 	blockType, _ := block["type"].(string)
@@ -69,7 +69,7 @@ func parseAssistantContentBlock(item any) messages.ContentBlock {
 	return parser(block)
 }
 
-// parseTextContentBlock parses a text block for assistant messages
+// parseTextContentBlock parses a text block for assistant messages.
 func parseTextContentBlock(
 	block map[string]any,
 ) messages.ContentBlock {
@@ -79,7 +79,7 @@ func parseTextContentBlock(
 }
 
 // parseThinkingContentBlock parses a thinking block for assistant
-// messages
+// messages.
 func parseThinkingContentBlock(
 	block map[string]any,
 ) messages.ContentBlock {
@@ -93,7 +93,7 @@ func parseThinkingContentBlock(
 }
 
 // parseToolUseContentBlock parses a tool use block for assistant
-// messages
+// messages.
 func parseToolUseContentBlock(
 	block map[string]any,
 ) messages.ContentBlock {
@@ -109,7 +109,7 @@ func parseToolUseContentBlock(
 }
 
 // parseToolResultContentBlock parses a tool result block for
-// assistant messages
+// assistant messages.
 func parseToolResultContentBlock(
 	block map[string]any,
 ) messages.ContentBlock {

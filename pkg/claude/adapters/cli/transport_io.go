@@ -9,7 +9,7 @@ import (
 	"fmt"
 )
 
-// Write implements ports.Transport
+// Write implements ports.Transport.
 func (a *Adapter) Write(_ctx context.Context, data string) error {
 	a.mu.RLock()
 	shouldClose := a.closeStdinAfterWrite
@@ -40,7 +40,7 @@ func (a *Adapter) Write(_ctx context.Context, data string) error {
 	return nil
 }
 
-// ReadMessages implements ports.Transport
+// ReadMessages implements ports.Transport.
 func (a *Adapter) ReadMessages(
 	ctx context.Context,
 ) (<-chan map[string]any, <-chan error) {
@@ -135,7 +135,7 @@ func (a *Adapter) handleScanCompletion(
 	}
 }
 
-// EndInput implements ports.Transport
+// EndInput implements ports.Transport.
 func (a *Adapter) EndInput() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

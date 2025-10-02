@@ -4,7 +4,7 @@
 package options
 
 // PermissionMode defines how permissions are handled
-// This is a DOMAIN concept - it affects business logic
+// This is a DOMAIN concept - it affects business logic.
 type PermissionMode string
 
 const (
@@ -15,7 +15,7 @@ const (
 	PermissionModeAsk               PermissionMode = "ask"
 )
 
-// SettingSource specifies where settings come from
+// SettingSource specifies where settings come from.
 type SettingSource string
 
 const (
@@ -25,7 +25,7 @@ const (
 )
 
 // AgentDefinition defines a subagent configuration
-// This is domain configuration - defines behavior of agents
+// This is domain configuration - defines behavior of agents.
 type AgentDefinition struct {
 	Name         string
 	Description  string
@@ -34,17 +34,17 @@ type AgentDefinition struct {
 	Model        *string
 }
 
-// SystemPromptConfig is configuration for system prompts
+// SystemPromptConfig is configuration for system prompts.
 type SystemPromptConfig interface {
 	systemPromptConfig()
 }
 
-// StringSystemPrompt is a simple string system prompt
+// StringSystemPrompt is a simple string system prompt.
 type StringSystemPrompt string
 
 func (StringSystemPrompt) systemPromptConfig() {}
 
-// PresetSystemPrompt references a preset with optional append
+// PresetSystemPrompt references a preset with optional append.
 type PresetSystemPrompt struct {
 	Type   string
 	Preset string

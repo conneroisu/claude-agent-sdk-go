@@ -8,7 +8,7 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/messages"
 )
 
-// streamChannels groups all channels used for streaming
+// streamChannels groups all channels used for streaming.
 type streamChannels struct {
 	routerMsg chan map[string]any
 	routerErr chan error
@@ -16,7 +16,7 @@ type streamChannels struct {
 	err       chan error
 }
 
-// streamMessages handles the message streaming loop
+// streamMessages handles the message streaming loop.
 func (s *Service) streamMessages(
 	ctx context.Context,
 	ch streamChannels,
@@ -28,7 +28,7 @@ func (s *Service) streamMessages(
 	}
 }
 
-// processNextMessage processes the next message from available channels
+// processNextMessage processes the next message from available channels.
 func (s *Service) processNextMessage(
 	ctx context.Context,
 	ch streamChannels,
@@ -47,7 +47,7 @@ func (s *Service) processNextMessage(
 	}
 }
 
-// handleRouterMessage handles a message from the router channel
+// handleRouterMessage handles a message from the router channel.
 func (s *Service) handleRouterMessage(
 	msg map[string]any,
 	ch streamChannels,
@@ -63,7 +63,7 @@ func (s *Service) handleRouterMessage(
 	return true
 }
 
-// handleRouterError handles an error from the router channel
+// handleRouterError handles an error from the router channel.
 func (*Service) handleRouterError(err error, ch streamChannels) bool {
 	if err != nil {
 		ch.err <- err

@@ -10,7 +10,7 @@ import (
 )
 
 // BuildCommand constructs the CLI command with all options
-// Exported for testing purposes
+// Exported for testing purposes.
 func (a *Adapter) BuildCommand() ([]string, error) {
 	cmd := []string{
 		a.cliPath,
