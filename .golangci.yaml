@@ -107,7 +107,7 @@ linters:
           severity: warning
           disabled: false
           exclude: [""]
-          arguments: [8]
+          arguments: [20]
         # https://github.com/mgechev/revive/blob/HEAD/RULES_DESCRIPTIONS.md#comment-spacings
         - name: comment-spacings
           severity: warning
@@ -154,7 +154,7 @@ linters:
           severity: warning
           disabled: false
           exclude: [""]
-          arguments: [5]
+          arguments: [15]
         # https://github.com/mgechev/revive/blob/HEAD/RULES_DESCRIPTIONS.md#datarace
         - name: datarace
           severity: warning
@@ -291,7 +291,7 @@ linters:
           severity: warning
           disabled: false
           exclude: [""]
-          arguments: [17, 0]
+          arguments: [25, 0]
         # https://github.com/mgechev/revive/blob/HEAD/RULES_DESCRIPTIONS.md#function-result-limit
         - name: function-result-limit
           severity: warning
@@ -365,7 +365,7 @@ linters:
           severity: warning
           disabled: false
           exclude: [""]
-          arguments: [9]
+          arguments: [19]
         # https://github.com/mgechev/revive/blob/HEAD/RULES_DESCRIPTIONS.md#modifies-parameter
         - name: modifies-parameter
           severity: warning
