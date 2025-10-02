@@ -10,6 +10,10 @@
 - Zero Dependencies: Minimize external dependencies where possible
 - Hexagonal Architecture: Strict separation between domain logic and infrastructure
 
+Dependencies:
+
+- github.com/modelcontextprotocol/go-sdk - For MCP server support
+
 ### Hexagonal Architecture (Ports and Adapters)
 
 This SDK follows hexagonal architecture principles, also known as ports and adapters pattern.
