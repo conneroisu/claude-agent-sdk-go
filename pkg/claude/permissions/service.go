@@ -58,10 +58,17 @@ const (
 type PermissionUpdateDestination string
 
 const (
-	PermissionDestinationUserSettings    PermissionUpdateDestination = ("userSettings")
-	PermissionDestinationProjectSettings PermissionUpdateDestination = ("projectSettings")
-	PermissionDestinationLocalSettings   PermissionUpdateDestination = ("localSettings")
-	PermissionDestinationSession         PermissionUpdateDestination = ("session")
+	// PermissionDestinationUserSettings saves to user settings.
+	PermissionDestinationUserSettings PermissionUpdateDestination = (
+		"userSettings")
+	// PermissionDestinationProjectSettings saves to project settings.
+	PermissionDestinationProjectSettings PermissionUpdateDestination = (
+		"projectSettings")
+	// PermissionDestinationLocalSettings saves to local settings.
+	PermissionDestinationLocalSettings PermissionUpdateDestination = (
+		"localSettings")
+	// PermissionDestinationSession saves to session.
+	PermissionDestinationSession PermissionUpdateDestination = "session"
 )
 
 // ToolPermissionContext provides context for permission decisions.

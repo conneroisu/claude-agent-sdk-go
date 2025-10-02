@@ -990,6 +990,7 @@ if pattern == toolName {
 return true
 }
 }
+
 // Pattern doesn't match
 return false
 }

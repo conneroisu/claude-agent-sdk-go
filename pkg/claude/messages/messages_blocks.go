@@ -7,24 +7,24 @@ type ContentBlock interface {
 
 // TextBlock represents a text content block.
 type TextBlock struct {
-	Text string
+	Text string `json:"text"`
 }
 
 func (TextBlock) contentBlock() {}
 
 // ThinkingBlock represents extended thinking content.
 type ThinkingBlock struct {
-	Thinking  string
-	Signature string
+	Thinking  string `json:"thinking"`
+	Signature string `json:"signature"`
 }
 
 func (ThinkingBlock) contentBlock() {}
 
 // ToolUseBlock represents a tool use request.
 type ToolUseBlock struct {
-	ID    string
-	Name  string
-	Input map[string]any // Intentionally flexible - tool inputs vary by tool
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Input map[string]any `json:"input"` // Keep flexible - varies by tool
 }
 
 func (ToolUseBlock) contentBlock() {}
@@ -46,9 +46,9 @@ func (ToolResultBlockListContent) toolResultContent() {}
 
 // ToolResultBlock represents the result of a tool execution.
 type ToolResultBlock struct {
-	ToolUseID string
-	Content   ToolResultContent
-	IsError   *bool
+	ToolUseID string            `json:"tool_use_id"`
+	Content   ToolResultContent `json:"content"`
+	IsError   *bool             `json:"is_error,omitempty"`
 }
 
 func (ToolResultBlock) contentBlock() {}

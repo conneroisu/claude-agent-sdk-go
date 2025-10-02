@@ -2,8 +2,8 @@ package messages
 
 // SystemMessage represents a system message with flexible data.
 type SystemMessage struct {
-	Subtype string
-	Data    map[string]any // Intentionally flexible - varies by subtype
+	Subtype string         `json:"subtype"`
+	Data    map[string]any `json:"data"` // Flexible - varies by subtype
 }
 
 func (SystemMessage) message() {}

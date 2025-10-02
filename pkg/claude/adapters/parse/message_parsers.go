@@ -81,12 +81,8 @@ func parseSystemMessage(
 func parseResultMessage(
 	data map[string]any,
 ) (messages.Message, error) {
-	fields, err := parseResultMessageFields(data)
-	if err != nil {
-		return nil, err
-	}
-
-	return buildResultMessage(fields, data)
+	// Use V2 parser which leverages JSON unmarshaling for type safety
+	return parseResultMessageV2(data)
 }
 
 // parseStreamEvent handles streaming events from the Anthropic API.

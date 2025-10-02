@@ -54,7 +54,7 @@ func (*mockTransport) Close() error {
 	return nil
 }
 
-func (m *mockTransport) IsReady() bool {
+func (*mockTransport) IsReady() bool {
 	return true
 }
 
@@ -118,7 +118,10 @@ func TestRouterClosesChannelsOnCompletion(t *testing.T) {
 			}
 
 		case <-timeout:
-			t.Fatal("DEADLOCK: Router did not close channels after transport completed")
+			t.Fatal(
+				"DEADLOCK: Router did not close channels after " +
+					"transport completed",
+			)
 		}
 	}
 }

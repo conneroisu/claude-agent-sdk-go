@@ -8,29 +8,29 @@ type Message interface {
 
 // UserMessage represents a user message in the conversation.
 type UserMessage struct {
-	Content         MessageContent
-	ParentToolUseID *string
-	IsSynthetic     bool
+	Content         MessageContent `json:"content"`
+	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
+	IsSynthetic     bool           `json:"isSynthetic,omitempty"`
 }
 
 func (UserMessage) message() {}
 
 // AssistantMessage represents an assistant message in the conversation.
 type AssistantMessage struct {
-	Content         []ContentBlock
-	Model           string
-	ParentToolUseID *string
+	Content         []ContentBlock `json:"content"`
+	Model           string         `json:"model"`
+	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
 }
 
 func (AssistantMessage) message() {}
 
 // StreamEvent represents a streaming event.
 type StreamEvent struct {
-	UUID      string
-	SessionID string
+	UUID      string `json:"uuid"`
+	SessionID string `json:"session_id"`
 	// Intentionally flexible - raw Anthropic API stream event
-	Event           map[string]any
-	ParentToolUseID *string
+	Event           map[string]any `json:"event"`
+	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
 }
 
 func (StreamEvent) message() {}
