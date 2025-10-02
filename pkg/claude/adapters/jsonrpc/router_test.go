@@ -23,15 +23,17 @@ func newMockTransport(messages []map[string]any) *mockTransport {
 	}
 }
 
-func (m *mockTransport) Connect(_ context.Context) error {
+func (*mockTransport) Connect(_ context.Context) error {
 	return nil
 }
 
-func (m *mockTransport) Write(_ context.Context, _ string) error {
+func (*mockTransport) Write(_ context.Context, _ string) error {
 	return nil
 }
 
-func (m *mockTransport) ReadMessages(_ context.Context) (<-chan map[string]any, <-chan error) {
+func (m *mockTransport) ReadMessages(
+	_ context.Context,
+) (<-chan map[string]any, <-chan error) {
 	go func() {
 		defer close(m.msgCh)
 		defer close(m.errCh)
@@ -44,11 +46,11 @@ func (m *mockTransport) ReadMessages(_ context.Context) (<-chan map[string]any, 
 	return m.msgCh, m.errCh
 }
 
-func (m *mockTransport) EndInput() error {
+func (*mockTransport) EndInput() error {
 	return nil
 }
 
-func (m *mockTransport) Close() error {
+func (*mockTransport) Close() error {
 	return nil
 }
 
