@@ -208,9 +208,14 @@ PermissionDenials []PermissionDenial `json:"permission_denials"`
 func (ResultMessageSuccess) resultMessage() {}
 func (ResultMessageSuccess) message() {}
 
+type MessageErrorSubtype string
+const (
+MessageErrorSubtypeErrorMaxTurns      MessageErrorSubtype = "error_max_turns"
+MessageErrorSubtypeErrorDuringExecution MessageErrorSubtype = "error_during_execution"
+)
 // ResultMessageError indicates an error during execution
 type ResultMessageError struct {
-Subtype           string  `json:"subtype"` // "error_max_turns" | "error_during_execution"
+Subtype           MessageErrorSubtype  `json:"subtype"` // "error_max_turns" | "error_during_execution"
 DurationMs        int     `json:"duration_ms"`
 DurationAPIMs     int     `json:"duration_api_ms"`
 IsError           bool    `json:"is_error"`
@@ -866,6 +871,15 @@ Prompt        string `json:"prompt"`
 }
 func (UserPromptSubmitHookInput) hookInput() {}
 // SessionStartHookInput is the input for SessionStart hooks
+type SessionStartSource string
+
+const (
+	SessionStartSourceStartup    SessionStartSource = "startup"
+	SessionStartSourceResume     SessionStartSource = "resume"
+	SessionStartSourceClear      SessionStartSource = "clear"
+	SessionStartSourceCompact    SessionStartSource = "compact"
+)
+
 type SessionStartHookInput struct {
 BaseHookInput
 HookEventName string `json:"hook_event_name"` // "SessionStart"
