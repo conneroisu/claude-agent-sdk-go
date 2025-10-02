@@ -1,26 +1,32 @@
 ## Phase 1: Core Domain & Ports
+
 ### 1.1 Domain Models (messages/, options/)
+
 Priority: Critical
 Define core domain models that are free from infrastructure concerns:
 **Design Decision: When to Use `map[string]any` vs Typed Structs**
 This SDK strikes a balance between type safety and flexibility:
 **Use Typed Structs When:**
+
 - The structure is well-defined and stable (e.g., UsageStats, HookInput types)
 - The SDK needs to access specific fields (e.g., ResultMessage fields)
 - Type safety provides clear benefits (e.g., discriminated unions)
-**Use `map[string]any` When:**
+  **Use `map[string]any` When:**
 - Data varies by context and cannot be predetermined (e.g., tool inputs)
 - The SDK only passes data through without inspecting it (e.g., raw stream events)
 - Flexibility is more important than compile-time validation (e.g., SystemMessage.Data at message level)
-**Examples in this SDK:**
+  **Examples in this SDK:**
 - ✅ Typed: `HookInput` (9 different types), `ResultMessage` (2 variants), `UsageStats`
 - ❌ Flexible: `ToolUseBlock.Input` (varies by tool), `StreamEvent.Event` (raw API events)
 - 🔄 Hybrid: `SystemMessage.Data` is `map[string]any` but can be parsed into typed `SystemMessageData` variants
-messages/messages.go - Message Types:
+  messages/messages.go - Message Types:
+
 ```go
+package messages
+
 // Message types
 type Message interface {
-message()
+  message()
 }
 type UserMessage struct {
 Content          MessageContent `json:"content"`
@@ -197,8 +203,10 @@ ToolUseID  string         `json:"tool_use_id"`
 ToolInput  map[string]any `json:"tool_input"` // Intentionally flexible - varies by tool
 }
 ```
+
 options/domain.go - Pure Domain Configuration:
-```go
+
+```go name="options/domain.go"
 package options
 // PermissionMode defines how permissions are handled
 // This is a DOMAIN concept - it affects business logic
@@ -238,7 +246,9 @@ Append *string
 func (StringSystemPrompt) systemPromptConfig()  {}
 func (PresetSystemPrompt) systemPromptConfig() {}
 ```
+
 options/transport.go - Transport/Infrastructure Configuration:
+
 ```go
 package options
 // AgentOptions configures the Claude agent
@@ -274,7 +284,9 @@ MCPServers               map[string]MCPServerConfig
 _isStreaming             bool  // Internal: true for Client, false for Query
 }
 ```
+
 options/mcp.go - MCP Server Configuration:
+
 ```go
 package options
 // MCPServerConfig is configuration for MCP servers (not runtime instances)
@@ -315,10 +327,13 @@ Name string
 }
 func (SDKServerConfig) mcpServerConfig() {}
 ```
+
 ### 1.2 Ports (Interfaces)
+
 Priority: Critical
 Define port interfaces that the domain needs. These are defined BY the domain, not by external systems.
 ports/transport.go - Transport Port:
+
 ```go
 package ports
 import "context"
@@ -332,7 +347,9 @@ Close() error
 IsReady() bool
 }
 ```
+
 ports/protocol.go - Protocol Port:
+
 ```go
 package ports
 import "context"
@@ -353,7 +370,9 @@ StartMessageRouter(ctx context.Context, msgCh chan<- map[string]any, errCh chan<
 perms *permissions.Service, hooks map[string]hooking.HookCallback, mcpServers map[string]MCPServer) error
 }
 ```
+
 ports/parser.go - Message Parser Port:
+
 ```go
 package ports
 import (
@@ -366,7 +385,9 @@ type MessageParser interface {
 Parse(raw map[string]any) (messages.Message, error)
 }
 ```
+
 ports/mcp.go - MCP Server Port:
+
 ```go
 package ports
 import "context"
@@ -382,8 +403,11 @@ Name() string
 HandleMessage(ctx context.Context, message []byte) ([]byte, error)
 }
 ```
+
 ### 1.3 Error Types (errors.go)
+
 Priority: Critical
+
 ```go
 package claude
 var (
