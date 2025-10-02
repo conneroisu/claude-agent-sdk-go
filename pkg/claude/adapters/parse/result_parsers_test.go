@@ -1,5 +1,14 @@
 // Package parse provides message parsing adapters for the Claude SDK.
-// This test file validates the type-safe JSON-based result message parsing.
+//
+// This test file validates the type-safe JSON-based result message parsing
+// that uses json.Marshal + json.Unmarshal instead of manual type assertions.
+//
+// The parseResultMessageV2 function demonstrates the new approach where we:
+// 1. Check the subtype field to determine success vs error
+// 2. Marshal the map[string]any to JSON bytes
+// 3. Unmarshal into the appropriate typed struct
+//
+// This eliminates ~60 type assertions and provides compile-time type safety.
 package parse
 
 import (
@@ -8,42 +17,81 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/messages"
 )
 
+// Test constants to avoid magic numbers.
+const (
+	// Field names
+	fieldType = "type"
+	fieldSubtype = "subtype"
+
+	// Field values
+	testType                   = "result"
+	testSuccessSubtype         = "success"
+	testErrorSubtype           = "error_max_turns"
+	testSessionIDSuccess       = "test-session-123"
+	testSessionIDError         = "test-session-456"
+	testResultText             = "Task completed successfully"
+	testDurationMs             = 1234
+	testDurationAPIMs          = 567
+	testDurationMsError        = 5000
+	testDurationAPIMsError     = 4500
+	testNumTurns               = 2
+	testNumTurnsError          = 10
+	testCostUSD                = 0.001
+	testCostUSDError           = 0.05
+	testInputTokens            = 1000.0
+	testOutputTokens           = 500.0
+	testCacheReadTokens        = 100.0
+	testCacheCreationTokens    = 50.0
+	testInputTokensError       = 10000.0
+	testOutputTokensError      = 5000.0
+	testWebSearchRequests      = 0.0
+	testContextWindow          = 200000.0
+	testModelName              = "claude-sonnet-4"
+)
+
+// TestParseResultMessageV2_Success validates that a success result message
+// is correctly parsed from a map into a typed ResultMessageSuccess struct.
+// This test ensures all fields are properly unmarshaled including nested
+// usage statistics and per-model usage data.
 func TestParseResultMessageV2_Success(t *testing.T) {
+	// Create test data matching the Claude CLI output format.
 	data := map[string]any{
-		"type":            "result",
-		"subtype":         "success",
-		"duration_ms":     1234.0,
-		"duration_api_ms": 567.0,
+		"type":            testType,
+		"subtype":         testSuccessSubtype,
+		"duration_ms":     float64(testDurationMs),
+		"duration_api_ms": float64(testDurationAPIMs),
 		"is_error":        false,
-		"num_turns":       2.0,
-		"session_id":      "test-session-123",
-		"result":          "Task completed successfully",
-		"total_cost_usd":  0.001,
+		"num_turns":       float64(testNumTurns),
+		"session_id":      testSessionIDSuccess,
+		"result":          testResultText,
+		"total_cost_usd":  testCostUSD,
 		"usage": map[string]any{
-			"input_tokens":                1000.0,
-			"output_tokens":               500.0,
-			"cache_read_input_tokens":     100.0,
-			"cache_creation_input_tokens": 50.0,
+			"input_tokens":                testInputTokens,
+			"output_tokens":               testOutputTokens,
+			"cache_read_input_tokens":     testCacheReadTokens,
+			"cache_creation_input_tokens": testCacheCreationTokens,
 		},
 		"modelUsage": map[string]any{
-			"claude-sonnet-4": map[string]any{
-				"inputTokens":              1000.0,
-				"outputTokens":             500.0,
-				"cacheReadInputTokens":     100.0,
-				"cacheCreationInputTokens": 50.0,
-				"webSearchRequests":        0.0,
-				"costUSD":                  0.001,
-				"contextWindow":            200000.0,
+			testModelName: map[string]any{
+				"inputTokens":              testInputTokens,
+				"outputTokens":             testOutputTokens,
+				"cacheReadInputTokens":     testCacheReadTokens,
+				"cacheCreationInputTokens": testCacheCreationTokens,
+				"webSearchRequests":        testWebSearchRequests,
+				"costUSD":                  testCostUSD,
+				"contextWindow":            testContextWindow,
 			},
 		},
-		"permission_denials": []any{},
+		"permission_denials": make([]any, 0),
 	}
 
+	// Parse the message using the type-safe approach.
 	msg, err := parseResultMessageV2(data)
 	if err != nil {
 		t.Fatalf("Failed to parse success result: %v", err)
 	}
 
+	// Verify we got the correct message type.
 	successMsg, ok := msg.(*messages.ResultMessageSuccess)
 	if !ok {
 		t.Fatalf(
@@ -52,79 +100,95 @@ func TestParseResultMessageV2_Success(t *testing.T) {
 		)
 	}
 
-	// Verify fields were correctly parsed
-	if successMsg.DurationMs != 1234 {
+	// Verify all fields were correctly parsed from JSON.
+	if successMsg.DurationMs != testDurationMs {
 		t.Errorf(
-			"Expected DurationMs=1234, got %d",
+			"Expected DurationMs=%d, got %d",
+			testDurationMs,
 			successMsg.DurationMs,
 		)
 	}
-	if successMsg.DurationAPIMs != 567 {
+	if successMsg.DurationAPIMs != testDurationAPIMs {
 		t.Errorf(
-			"Expected DurationAPIMs=567, got %d",
+			"Expected DurationAPIMs=%d, got %d",
+			testDurationAPIMs,
 			successMsg.DurationAPIMs,
 		)
 	}
 	if successMsg.IsError {
 		t.Error("Expected IsError=false")
 	}
-	if successMsg.NumTurns != 2 {
-		t.Errorf("Expected NumTurns=2, got %d", successMsg.NumTurns)
-	}
-	if successMsg.SessionID != "test-session-123" {
+	if successMsg.NumTurns != testNumTurns {
 		t.Errorf(
-			"Expected SessionID='test-session-123', got %s",
+			"Expected NumTurns=%d, got %d",
+			testNumTurns,
+			successMsg.NumTurns,
+		)
+	}
+	if successMsg.SessionID != testSessionIDSuccess {
+		t.Errorf(
+			"Expected SessionID='%s', got %s",
+			testSessionIDSuccess,
 			successMsg.SessionID,
 		)
 	}
-	if successMsg.Result != "Task completed successfully" {
+	if successMsg.Result != testResultText {
 		t.Errorf(
-			"Expected Result='Task completed successfully', got %s",
+			"Expected Result='%s', got %s",
+			testResultText,
 			successMsg.Result,
 		)
 	}
 }
 
+// TestParseResultMessageV2_Error validates that an error result message
+// is correctly parsed from a map into a typed ResultMessageError struct.
+// Error results occur when max turns are exceeded or execution fails.
 func TestParseResultMessageV2_Error(t *testing.T) {
+	// Create test data for an error result.
 	data := map[string]any{
-		"type":            "result",
-		"subtype":         "error_max_turns",
-		"duration_ms":     5000.0,
-		"duration_api_ms": 4500.0,
+		"type":            testType,
+		"subtype":         testErrorSubtype,
+		"duration_ms":     float64(testDurationMsError),
+		"duration_api_ms": float64(testDurationAPIMsError),
 		"is_error":        true,
-		"num_turns":       10.0,
-		"session_id":      "test-session-456",
-		"total_cost_usd":  0.05,
+		"num_turns":       float64(testNumTurnsError),
+		"session_id":      testSessionIDError,
+		"total_cost_usd":  testCostUSDError,
 		"usage": map[string]any{
-			"input_tokens":                10000.0,
-			"output_tokens":               5000.0,
+			"input_tokens":                testInputTokensError,
+			"output_tokens":               testOutputTokensError,
 			"cache_read_input_tokens":     0.0,
 			"cache_creation_input_tokens": 0.0,
 		},
-		"modelUsage":         map[string]any{},
-		"permission_denials": []any{},
+		"modelUsage":         make(map[string]any),
+		"permission_denials": make([]any, 0),
 	}
 
+	// Parse the error message.
 	msg, err := parseResultMessageV2(data)
 	if err != nil {
 		t.Fatalf("Failed to parse error result: %v", err)
 	}
 
+	// Verify we got the error message type.
 	errorMsg, ok := msg.(*messages.ResultMessageError)
 	if !ok {
 		t.Fatalf("Expected *ResultMessageError, got %T", msg)
 	}
 
-	// Verify fields were correctly parsed
-	if errorMsg.DurationMs != 5000 {
+	// Verify error-specific fields.
+	if errorMsg.DurationMs != testDurationMsError {
 		t.Errorf(
-			"Expected DurationMs=5000, got %d",
+			"Expected DurationMs=%d, got %d",
+			testDurationMsError,
 			errorMsg.DurationMs,
 		)
 	}
-	if errorMsg.Subtype != "error_max_turns" {
+	if errorMsg.Subtype != testErrorSubtype {
 		t.Errorf(
-			"Expected Subtype='error_max_turns', got %s",
+			"Expected Subtype='%s', got %s",
+			testErrorSubtype,
 			errorMsg.Subtype,
 		)
 	}
@@ -133,9 +197,11 @@ func TestParseResultMessageV2_Error(t *testing.T) {
 	}
 }
 
+// TestParseResultMessageV2_InvalidSubtype ensures that an unknown subtype
+// returns an error rather than silently failing.
 func TestParseResultMessageV2_InvalidSubtype(t *testing.T) {
 	data := map[string]any{
-		"type":    "result",
+		"type":    testType,
 		"subtype": "invalid_subtype",
 	}
 
@@ -145,9 +211,11 @@ func TestParseResultMessageV2_InvalidSubtype(t *testing.T) {
 	}
 }
 
+// TestParseResultMessageV2_MissingSubtype ensures that a missing subtype
+// field returns an error.
 func TestParseResultMessageV2_MissingSubtype(t *testing.T) {
 	data := map[string]any{
-		"type": "result",
+		"type": testType,
 	}
 
 	_, err := parseResultMessageV2(data)

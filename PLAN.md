@@ -134,18 +134,23 @@ type Message interface {
 message()
 }
 type UserMessage struct {
-Content          MessageContent
-ParentToolUseID  *string
+Content          MessageContent `json:"content"`
+ParentToolUseID  *string        `json:"parent_tool_use_id,omitempty"`
 }
+func (UserMessage) message() {}
+
 type AssistantMessage struct {
-Content         []ContentBlock
-Model           string
-ParentToolUseID *string
+Content         []ContentBlock `json:"content"`
+Model           string         `json:"model"`
+ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
 }
+func (AssistantMessage) message() {}
+
 type SystemMessage struct {
-Subtype string
-Data    map[string]any // Intentionally flexible - varies by subtype (see SystemMessageData below)
+Subtype string         `json:"subtype"`
+Data    map[string]any `json:"data"` // Flexible - parse into SystemMessageData based on Subtype
 }
+func (SystemMessage) message() {}
 // SystemMessageData is a discriminated union for SystemMessage.Data
 // Parse this from map[string]any based on Subtype field
 type SystemMessageData interface {
@@ -201,6 +206,8 @@ ModelUsage        map[string]ModelUsage `json:"modelUsage"` // Model name -> usa
 PermissionDenials []PermissionDenial `json:"permission_denials"`
 }
 func (ResultMessageSuccess) resultMessage() {}
+func (ResultMessageSuccess) message() {}
+
 // ResultMessageError indicates an error during execution
 type ResultMessageError struct {
 Subtype           string  `json:"subtype"` // "error_max_turns" | "error_during_execution"
@@ -215,28 +222,39 @@ ModelUsage        map[string]ModelUsage `json:"modelUsage"`
 PermissionDenials []PermissionDenial `json:"permission_denials"`
 }
 func (ResultMessageError) resultMessage() {}
+func (ResultMessageError) message() {}
+
 type StreamEvent struct {
-UUID            string
-SessionID       string
-Event           map[string]any // Intentionally flexible - raw Anthropic API stream event
-ParentToolUseID *string
+UUID            string         `json:"uuid"`
+SessionID       string         `json:"session_id"`
+Event           map[string]any `json:"event"` // Flexible - raw Anthropic API stream event
+ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
 }
+func (StreamEvent) message() {}
 // Content blocks
 type ContentBlock interface {
 contentBlock()
 }
 type TextBlock struct {
-Text string
+Type string `json:"type"` // Always "text"
+Text string `json:"text"`
 }
+func (TextBlock) contentBlock() {}
+
 type ThinkingBlock struct {
-Thinking  string
-Signature string
+Type      string `json:"type"` // Always "thinking"
+Thinking  string `json:"thinking"`
+Signature string `json:"signature,omitempty"`
 }
+func (ThinkingBlock) contentBlock() {}
+
 type ToolUseBlock struct {
-ID    string
-Name  string
-Input map[string]any // Intentionally flexible - tool inputs vary by tool
+Type  string         `json:"type"` // Always "tool_use"
+ID    string         `json:"id"`
+Name  string         `json:"name"`
+Input map[string]any `json:"input"` // Flexible - tool inputs vary by tool
 }
+func (ToolUseBlock) contentBlock() {}
 // ToolResultContent can be string or a list of content blocks as maps
 type ToolResultContent interface {
 toolResultContent()
@@ -245,11 +263,14 @@ type ToolResultStringContent string
 type ToolResultBlockListContent []map[string]any
 func (ToolResultStringContent) toolResultContent() {}
 func (ToolResultBlockListContent) toolResultContent() {}
+
 type ToolResultBlock struct {
-ToolUseID string
-Content   ToolResultContent
-IsError   *bool
+Type      string            `json:"type"` // Always "tool_result"
+ToolUseID string            `json:"tool_use_id"`
+Content   ToolResultContent `json:"content"` // Can be string or []ContentBlock
+IsError   *bool             `json:"is_error,omitempty"`
 }
+func (ToolResultBlock) contentBlock() {}
 // Message content can be string or []ContentBlock
 type MessageContent interface {
 messageContent()
@@ -1916,59 +1937,27 @@ if !ok {
 return nil, fmt.Errorf("result message missing subtype field")
 }
 
-// Parse common fields
-durationMs, _ := data["duration_ms"].(float64)
-durationAPIMs, _ := data["duration_api_ms"].(float64)
-isError, _ := data["is_error"].(bool)
-numTurns, _ := data["num_turns"].(float64)
-sessionID, _ := data["session_id"].(string)
-totalCostUSD, _ := data["total_cost_usd"].(float64)
-
-// Parse usage statistics
-usage, err := parseUsageStats(data["usage"])
+// Type-safe approach: marshal map to JSON, then unmarshal into typed struct
+jsonBytes, err := json.Marshal(data)
 if err != nil {
-return nil, fmt.Errorf("parse usage stats: %w", err)
-}
-
-modelUsage, err := parseModelUsage(data["modelUsage"])
-if err != nil {
-return nil, fmt.Errorf("parse model usage: %w", err)
-}
-
-permissionDenials, err := parsePermissionDenials(data["permission_denials"])
-if err != nil {
-return nil, fmt.Errorf("parse permission denials: %w", err)
+return nil, fmt.Errorf("marshal result message: %w", err)
 }
 
 switch subtype {
 case "success":
-result, _ := data["result"].(string)
-return &messages.ResultMessageSuccess{
-Subtype:           subtype,
-DurationMs:        int(durationMs),
-DurationAPIMs:     int(durationAPIMs),
-IsError:           isError,
-NumTurns:          int(numTurns),
-SessionID:         sessionID,
-Result:            result,
-TotalCostUSD:      totalCostUSD,
-Usage:             usage,
-ModelUsage:        modelUsage,
-PermissionDenials: permissionDenials,
-}, nil
+var result messages.ResultMessageSuccess
+if err := json.Unmarshal(jsonBytes, &result); err != nil {
+return nil, fmt.Errorf("unmarshal success result: %w", err)
+}
+return &result, nil
+
 case "error_max_turns", "error_during_execution":
-return &messages.ResultMessageError{
-Subtype:           subtype,
-DurationMs:        int(durationMs),
-DurationAPIMs:     int(durationAPIMs),
-IsError:           isError,
-NumTurns:          int(numTurns),
-SessionID:         sessionID,
-TotalCostUSD:      totalCostUSD,
-Usage:             usage,
-ModelUsage:        modelUsage,
-PermissionDenials: permissionDenials,
-}, nil
+var result messages.ResultMessageError
+if err := json.Unmarshal(jsonBytes, &result); err != nil {
+return nil, fmt.Errorf("unmarshal error result: %w", err)
+}
+return &result, nil
+
 default:
 return nil, fmt.Errorf("unknown result subtype: %s", subtype)
 }
