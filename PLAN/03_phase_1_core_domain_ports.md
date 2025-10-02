@@ -511,3 +511,42 @@ func (e *JSONDecodeError) Unwrap() error {
 	return e.Err
 }
 ```
+
+---
+
+## Linting Compliance Notes
+
+### File Size Requirements (175 line limit)
+
+**messages/ package requires decomposition:**
+- ❌ Single `messages.go` (500+ lines planned)
+- ✅ Split into 8 files:
+  - `messages.go` - Core interfaces (50 lines)
+  - `user.go` - UserMessage (40 lines)
+  - `assistant.go` - AssistantMessage (60 lines)
+  - `system.go` - SystemMessage types (80 lines)
+  - `result.go` - ResultMessage types (90 lines)
+  - `stream.go` - StreamEvent (30 lines)
+  - `content.go` - ContentBlock types (70 lines)
+  - `usage.go` - Usage statistics (40 lines)
+
+**Other files are compliant:**
+- ✅ `options/domain.go` (80 lines)
+- ✅ `options/transport.go` (90 lines)
+- ✅ `options/mcp.go` (70 lines)
+- ✅ `ports/*.go` (25-60 lines each)
+
+### Complexity Hotspots
+
+- Message type parsing → Extract per-type parsers
+- Content block switching → Use type-specific functions
+- Validation logic → Extract to dedicated functions
+
+### Checklist
+
+- [ ] All files under 175 lines (excl. comments/blanks)
+- [ ] All functions under 25 lines
+- [ ] Max 4 parameters per function
+- [ ] Max 3 return values per function
+- [ ] 15% minimum comment density per file
+- [ ] All exported items have godoc comments

@@ -1181,3 +1181,104 @@ func parseToolResultBlock(block map[string]any) (messages.ToolResultBlock, error
 	}, nil
 }
 ```
+
+---
+
+## Linting Compliance Notes
+
+### File Size Requirements (175 line limit)
+
+**All adapters require significant decomposition:**
+
+**adapters/cli/ package:**
+- ❌ Single `transport.go` (400+ lines planned)
+- ✅ Split into 7 files:
+  - `transport.go` - Adapter struct + interface (60 lines)
+  - `connect.go` - Connection logic (70 lines)
+  - `command.go` - Command building (80 lines)
+  - `io.go` - I/O handling (90 lines)
+  - `discovery.go` - CLI discovery (50 lines)
+  - `process.go` - Process management (60 lines)
+  - `errors.go` - Error types (40 lines)
+
+**adapters/jsonrpc/ package:**
+- ❌ Single `protocol.go` (350+ lines planned)
+- ✅ Split into 5 files:
+  - `protocol.go` - Handler struct + interface (50 lines)
+  - `control.go` - Control request handling (80 lines)
+  - `routing.go` - Message routing (90 lines)
+  - `handlers.go` - Per-type request handlers (80 lines)
+  - `state.go` - State tracking (50 lines)
+
+**adapters/parse/ package:**
+- ❌ Single `parser.go` shown above (1100+ lines!)
+- ✅ Split into 9 files:
+  - `parser.go` - Main parser interface (40 lines)
+  - `user.go` - UserMessage parsing (60 lines)
+  - `assistant.go` - AssistantMessage parsing (80 lines)
+  - `system.go` - SystemMessage parsing (70 lines)
+  - `result.go` - ResultMessage parsing (90 lines)
+  - `stream.go` - StreamEvent parsing (50 lines)
+  - `content.go` - ContentBlock parsing (80 lines)
+  - `usage.go` - Usage stats parsing (60 lines)
+  - `helpers.go` - Shared helper functions (40 lines)
+
+**adapters/mcp/ package:**
+- ✅ Likely 1-2 files (under 175 lines total)
+
+### Complexity Hotspots
+
+**CLI adapter:**
+- Command building → Use builder pattern with method chaining
+- Process I/O → Extract reader/writer functions
+- CLI discovery → Extract path search functions
+
+**JSON-RPC adapter:**
+- Request routing → Use handler registry map instead of switch
+- State tracking → Extract state manager struct
+- Timeout handling → Extract timeout wrapper function
+
+**Parser adapter:**
+- Type switching → Extract per-type parser functions
+- Field extraction → Extract helper validators
+- Content parsing → Extract block-specific parsers
+
+### Parameter Reduction Patterns
+
+Many adapter functions exceed 4-parameter limit:
+
+```go
+// BAD: 6 parameters
+func (a *Adapter) HandleControlRequest(
+    ctx context.Context,
+    req map[string]any,
+    perms *permissions.Service,
+    hooks map[string]hooking.HookCallback,
+    mcpServers map[string]ports.MCPServer,
+    logger Logger,
+) (map[string]any, error)
+
+// GOOD: Use dependencies struct (3 parameters)
+type ControlDependencies struct {
+    Perms      *permissions.Service
+    Hooks      map[string]hooking.HookCallback
+    MCPServers map[string]ports.MCPServer
+}
+
+func (a *Adapter) HandleControlRequest(
+    ctx context.Context,
+    req map[string]any,
+    deps ControlDependencies,
+) (map[string]any, error)
+```
+
+### Checklist
+
+- [ ] All files under 175 lines
+- [ ] Parser split into per-message-type files
+- [ ] CLI command builder uses fluent/builder pattern
+- [ ] I/O operations in separate helper files
+- [ ] Process management uses extracted functions
+- [ ] Handler functions use dependency structs (≤4 params)
+- [ ] All functions under 25 lines
+- [ ] Max nesting depth ≤ 3 levels

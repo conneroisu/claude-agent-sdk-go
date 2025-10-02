@@ -129,3 +129,10 @@ Each phase builds on the previous one, starting from core domain models and endi
   - Layer-by-layer breakdown
   - Compile-time guarantees
   - Benefits and maintainability
+
+- **[14. Code Quality & Linting Constraints](14_code_quality_and_linting_constraints.md)**
+  - Critical linting rules (175 line files, 25 line functions, etc.)
+  - Architectural implications and file decomposition strategy
+  - Implementation patterns for compliance
+  - Phase-by-phase compliance checklists
+  - Enforcement and CI integration

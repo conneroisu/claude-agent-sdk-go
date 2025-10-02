@@ -166,3 +166,43 @@ const (
 	PermissionDestinationSession         PermissionUpdateDestination = "session"
 )
 ```
+
+---
+
+## Linting Compliance Notes
+
+### File Size Requirements (175 line limit)
+
+**hooking/ package:**
+- ❌ Single `service.go` (250+ lines planned)
+- ✅ Split into 4 files:
+  - `service.go` - Service struct + constructor (50 lines)
+  - `execute.go` - Execution logic (80 lines)
+  - `registry.go` - Hook registry management (60 lines)
+  - `types.go` - Hook input/output types (60 lines)
+
+**MCP integration in adapters/mcp/:**
+- ✅ Likely 1-2 files (under 175 lines total)
+
+**Permission callbacks in permissions/:**
+- ✅ Already appropriately sized (under 175 lines)
+
+### Complexity Hotspots
+
+**Hook execution:**
+- Type switching for hook inputs → Extract per-type handlers
+- Callback invocation → Extract wrapper function
+- Error handling → Extract error wrapper
+
+**MCP message routing:**
+- JSON-RPC handling → Reuse existing adapter patterns
+- Message proxying → Extract proxy helper function
+
+### Checklist
+
+- [ ] Hook execution functions under 25 lines each
+- [ ] Type switching extracted to handler map/registry
+- [ ] Callback handling simplified with wrappers
+- [ ] MCP routing uses extracted helpers
+- [ ] All files under 175 lines
+- [ ] Max 4 parameters (use context structs for hook data)

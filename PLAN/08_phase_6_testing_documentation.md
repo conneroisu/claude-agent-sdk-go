@@ -368,3 +368,83 @@ Priority: High
 - Architecture documentation (hexagonal structure)
 - Hook development guide
 - MCP server development guide
+
+---
+
+## Linting Compliance Notes
+
+### Test File Size Strategy (175 line limit)
+
+**Critical pattern: Use table-driven tests extensively**
+
+Test files can easily exceed 175 lines. Strategy:
+
+**Pattern 1: Separate Fixtures**
+```
+tests/
+├── fixtures.go         # Shared test data (100 lines)
+├── service_test.go     # Table-driven tests (120 lines)
+└── helpers.go          # Test utilities (80 lines)
+```
+
+**Pattern 2: One Test File Per Feature**
+```
+querying/
+├── service.go
+├── execute_test.go     # Test Execute method (100 lines)
+├── routing_test.go     # Test routing logic (90 lines)
+└── fixtures_test.go    # Test fixtures (60 lines)
+```
+
+**Pattern 3: Table-Driven Tests**
+```go
+// Keeps test files under 175 lines
+func TestParseMessage(t *testing.T) {
+    tests := []struct {
+        name     string
+        input    map[string]any
+        want     messages.Message
+        wantErr  bool
+    }{
+        {"case1", fixture1, expected1, false},
+        {"case2", fixture2, expected2, true},
+        // ... 50 test cases in compact form
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got, err := parse.ParseMessage(tt.input)
+            // Assertions
+        })
+    }
+}
+```
+
+### Complexity in Tests
+
+**Test functions must also follow 25-line limit:**
+- Extract setup functions
+- Extract assertion helpers
+- Use testify/assert for concise assertions
+
+**Example compliant test:**
+```go
+func TestServiceExecute(t *testing.T) {
+    svc, mocks := setupService(t) // Extracted
+
+    result, err := svc.Execute(context.Background(), "test")
+
+    assertNoError(t, err)          // Extracted
+    assertValidResult(t, result)   // Extracted
+}
+```
+
+### Checklist
+
+- [ ] All test files under 175 lines
+- [ ] Use table-driven tests where applicable
+- [ ] Shared fixtures in separate file
+- [ ] Test helpers in separate file
+- [ ] Test functions under 25 lines
+- [ ] Mock setup functions extracted
+- [ ] Assertion helpers extracted

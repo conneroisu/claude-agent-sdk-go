@@ -680,3 +680,58 @@ func (s *Service) UpdateMode(mode options.PermissionMode) {
 	s.mode = mode
 }
 ```
+
+---
+
+## Linting Compliance Notes
+
+### File Size Requirements (175 line limit)
+
+**All services require decomposition:**
+
+**querying/ package:**
+- ❌ Single `service.go` (300+ lines planned)
+- ✅ Split into 5 files:
+  - `service.go` - Service struct + constructor (60 lines)
+  - `execute.go` - Execute implementation (80 lines)
+  - `routing.go` - Message routing logic (70 lines)
+  - `errors.go` - Error handling helpers (50 lines)
+  - `state.go` - Execution state management (40 lines)
+
+**streaming/ package:**
+- ❌ Single `service.go` (350+ lines planned)
+- ✅ Split into 6 files:
+  - `service.go` - Service struct + constructor (50 lines)
+  - `connect.go` - Connection logic (70 lines)
+  - `send.go` - SendMessage implementation (60 lines)
+  - `receive.go` - ReceiveMessages implementation (80 lines)
+  - `lifecycle.go` - Lifecycle methods (50 lines)
+  - `state.go` - State management (40 lines)
+
+**hooking/ and permissions/ packages:**
+- ✅ Can likely fit in 1-2 files each (under 175 lines)
+
+### Complexity Hotspots (25 line limit, complexity limits)
+
+**Function extraction required for:**
+- Message routing switch statements → Extract handler map pattern
+- Control protocol handling → Extract per-subtype handlers
+- Hook execution logic → Extract hook executor helper
+- Validation logic → Extract dedicated validators
+- Error handling → Extract error wrapper functions
+
+**Patterns to use:**
+- Early returns to reduce nesting
+- Handler maps instead of large switch statements
+- Extracted validation functions
+- Result structs to limit return values
+
+### Checklist
+
+- [ ] Cyclomatic complexity ≤ 15 per function
+- [ ] Cognitive complexity ≤ 20 per function
+- [ ] Max nesting depth ≤ 3 levels
+- [ ] All functions ≤ 25 lines
+- [ ] Use early return pattern
+- [ ] Extract validation to separate functions
+- [ ] Extract complex logic to helpers

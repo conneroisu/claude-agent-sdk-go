@@ -140,3 +140,47 @@ func (c *Client) Close() error {
 	return c.streamingService.Close()
 }
 ```
+
+---
+
+## Linting Compliance Notes
+
+### File Size Requirements (175 line limit)
+
+**Public API files are likely compliant:**
+- ✅ `client.go` - Estimated 120 lines (may need split if >175)
+- ✅ `query.go` - Estimated 80 lines (compliant)
+- ✅ `errors.go` - Estimated 60 lines (compliant)
+
+**If client.go exceeds limit, split into:**
+- `client.go` - Client struct + constructor (60 lines)
+- `client_methods.go` - Public methods (60 lines)
+
+### Complexity Considerations
+
+**Parameter limits (4 max):**
+- Use config structs for complex initialization
+- Option functions for flexible configuration
+
+**Example compliant API:**
+```go
+// GOOD: 2-3 parameters
+func NewClient(
+    opts *options.AgentOptions,
+    cfg *ClientConfig,
+) *Client
+
+// GOOD: Variadic options (counts as 2 effective params)
+func NewClient(
+    opts *options.AgentOptions,
+    clientOpts ...ClientOption,
+) *Client
+```
+
+### Checklist
+
+- [ ] All files under 175 lines
+- [ ] Constructor uses option pattern or config struct (≤4 params)
+- [ ] Public API fully documented with godoc examples
+- [ ] Error types have clear documentation
+- [ ] Builder pattern for complex init if needed
