@@ -34,14 +34,13 @@ type HTTPServerConfig struct {
 
 func (HTTPServerConfig) mcpServerConfig() {}
 
-// SDKServerConfig is a marker for SDK-managed MCP servers
-// The actual server instance is managed separately by the MCP adapter
-// This ONLY contains configuration, NOT the server instance itself.
+// SDKServerConfig configures an SDK-managed MCP server
+// The Instance field holds the actual MCP server implementation.
 type SDKServerConfig struct {
 	Type string // "sdk"
 	Name string
-	// Note: Instance is NOT stored here to avoid circular dependencies
-	// The MCP adapter will manage server instances separately
+	// Instance holds the MCP server (e.g., *mcp.Server from go-sdk)
+	Instance any
 }
 
 func (SDKServerConfig) mcpServerConfig() {}

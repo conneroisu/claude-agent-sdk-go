@@ -2,10 +2,12 @@ package claude
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/conneroisu/claude/pkg/claude/adapters/cli"
 	"github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
+	"github.com/conneroisu/claude/pkg/claude/adapters/mcp"
 	"github.com/conneroisu/claude/pkg/claude/adapters/parse"
 	"github.com/conneroisu/claude/pkg/claude/hooking"
 	"github.com/conneroisu/claude/pkg/claude/messages"
@@ -69,8 +71,10 @@ func (c *Client) Connect(ctx context.Context, prompt *string) error {
 	}
 
 	// Create MCP servers from options
-	var mcpServers map[string]ports.MCPServer
-	// TODO: Initialize MCP servers from c.opts.MCPServers
+	mcpServers, err := initializeMCPServers(c.opts.MCPServers)
+	if err != nil {
+		return fmt.Errorf("initialize MCP servers: %w", err)
+	}
 
 	// Create streaming service with dependencies
 	c.streamingService = streaming.NewService(streaming.Dependencies{
@@ -124,4 +128,50 @@ func (c *Client) Close() error {
 
 	// Domain service handles cleanup
 	return c.streamingService.Close()
+}
+
+// initializeMCPServers creates runtime MCP server instances from configuration.
+// Only SDK-managed servers are initialized; external servers (stdio, SSE, HTTP)
+// are handled by the Claude CLI.
+func initializeMCPServers(
+	serverConfigs map[string]options.MCPServerConfig,
+) (map[string]ports.MCPServer, error) {
+	if len(serverConfigs) == 0 {
+		return nil, nil
+	}
+
+	servers := make(map[string]ports.MCPServer)
+
+	for name, config := range serverConfigs {
+		// Only SDK servers need runtime instances
+		sdkConfig, ok := config.(options.SDKServerConfig)
+		if !ok {
+			// Skip stdio, SSE, HTTP servers - they're managed by the CLI
+			continue
+		}
+
+		if sdkConfig.Instance == nil {
+			return nil, fmt.Errorf(
+				"SDK MCP server '%s' has nil Instance",
+				name,
+			)
+		}
+
+		server, err := mcp.NewAdapter(name, sdkConfig.Instance)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to create MCP adapter for '%s': %w",
+				name,
+				err,
+			)
+		}
+
+		servers[name] = server
+	}
+
+	if len(servers) == 0 {
+		return nil, nil
+	}
+
+	return servers, nil
 }

@@ -47,7 +47,23 @@ func Query(
 	parser := parse.NewAdapter()
 
 	// Create domain services from config
-	deps := createDependencies(config, transport, protocol, parser)
+	cfg := dependencyConfig{
+		config:    config,
+		opts:      localOpts,
+		transport: transport,
+		protocol:  protocol,
+		parser:    parser,
+	}
+	deps, err := createDependencies(cfg)
+	if err != nil {
+		errCh := make(chan error, 1)
+		msgCh := make(chan messages.Message)
+		errCh <- err
+		close(errCh)
+		close(msgCh)
+
+		return msgCh, errCh
+	}
 
 	// Create query service with all dependencies
 	queryService := querying.NewService(deps)
@@ -56,21 +72,32 @@ func Query(
 	return queryService.Execute(ctx, prompt, localOpts)
 }
 
+// dependencyConfig holds configuration for creating query dependencies.
+type dependencyConfig struct {
+	config    *QueryConfig
+	opts      *options.AgentOptions
+	transport ports.Transport
+	protocol  ports.ProtocolHandler
+	parser    ports.MessageParser
+}
+
 // createDependencies initializes domain services from configuration.
 func createDependencies(
-	config *QueryConfig,
-	transport ports.Transport,
-	protocol ports.ProtocolHandler,
-	parser ports.MessageParser,
-) querying.Dependencies {
-	return querying.Dependencies{
-		Transport:   transport,
-		Protocol:    protocol,
-		Parser:      parser,
-		Hooks:       createHookingService(config),
-		Permissions: createPermissionsService(config),
-		MCPServers:  nil, // TODO: Initialize MCP servers from options
+	cfg dependencyConfig,
+) (querying.Dependencies, error) {
+	mcpServers, err := initializeMCPServers(cfg.opts.MCPServers)
+	if err != nil {
+		return querying.Dependencies{}, err
 	}
+
+	return querying.Dependencies{
+		Transport:   cfg.transport,
+		Protocol:    cfg.protocol,
+		Parser:      cfg.parser,
+		Hooks:       createHookingService(cfg.config),
+		Permissions: createPermissionsService(cfg.config),
+		MCPServers:  mcpServers,
+	}, nil
 }
 
 // createHookingService creates hooking service if configured.
