@@ -29,12 +29,18 @@ type HookMatcher = hooking.HookMatcher
 
 // Re-export hook event constants.
 const (
-	HookEventPreToolUse       = hooking.HookEventPreToolUse
-	HookEventPostToolUse      = hooking.HookEventPostToolUse
+	// HookEventPreToolUse is triggered before a tool is used.
+	HookEventPreToolUse = hooking.HookEventPreToolUse
+	// HookEventPostToolUse is triggered after a tool is used.
+	HookEventPostToolUse = hooking.HookEventPostToolUse
+	// HookEventUserPromptSubmit is triggered when the user submits a prompt.
 	HookEventUserPromptSubmit = hooking.HookEventUserPromptSubmit
-	HookEventStop             = hooking.HookEventStop
-	HookEventSubagentStop     = hooking.HookEventSubagentStop
-	HookEventPreCompact       = hooking.HookEventPreCompact
+	// HookEventStop is triggered when the agent is stopped.
+	HookEventStop = hooking.HookEventStop
+	// HookEventSubagentStop is triggered when a subagent is stopped.
+	HookEventSubagentStop = hooking.HookEventSubagentStop
+	// HookEventPreCompact is triggered before compaction.
+	HookEventPreCompact = hooking.HookEventPreCompact
 )
 
 // Re-export permissions types for public API
