@@ -188,6 +188,7 @@ func (a *Adapter) parseAssistantMessage(data map[string]any) (messages.Message, 
 	}
 	model, _ := msg["model"].(string)
 	parentToolUseID := getStringPtr(data, "parent_tool_use_id")
+
 	return &messages.AssistantMessage{
 		Content:         blocks,
 		Model:           model,
@@ -195,15 +196,16 @@ func (a *Adapter) parseAssistantMessage(data map[string]any) (messages.Message, 
 	}, nil
 }
 
-// Helper function for extracting optional string pointers
+// Helper function for extracting optional string pointers.
 func getStringPtr(data map[string]any, key string) *string {
 	if val, ok := data[key].(string); ok {
 		return &val
 	}
+
 	return nil
 }
 
-// parseUsageStats parses usage statistics from raw data
+// parseUsageStats parses usage statistics from raw data.
 func parseUsageStats(data any) (messages.UsageStats, error) {
 	if data == nil {
 		return messages.UsageStats{}, nil
@@ -227,7 +229,7 @@ func parseUsageStats(data any) (messages.UsageStats, error) {
 	}, nil
 }
 
-// parseModelUsage parses per-model usage statistics
+// parseModelUsage parses per-model usage statistics.
 func parseModelUsage(data any) (map[string]messages.ModelUsage, error) {
 	if data == nil {
 		return make(map[string]messages.ModelUsage), nil
@@ -267,7 +269,7 @@ func parseModelUsage(data any) (map[string]messages.ModelUsage, error) {
 	return result, nil
 }
 
-// parsePermissionDenials parses array of permission denials
+// parsePermissionDenials parses array of permission denials.
 func parsePermissionDenials(data any) ([]messages.PermissionDenial, error) {
 	if data == nil {
 		return []messages.PermissionDenial{}, nil
@@ -299,7 +301,7 @@ func parsePermissionDenials(data any) ([]messages.PermissionDenial, error) {
 	return result, nil
 }
 
-// parseContentBlocks parses an array of content blocks
+// parseContentBlocks parses an array of content blocks.
 func parseContentBlocks(contentArr []any) ([]messages.ContentBlock, error) {
 	blocks := make([]messages.ContentBlock, 0, len(contentArr))
 
@@ -351,7 +353,7 @@ func parseContentBlocks(contentArr []any) ([]messages.ContentBlock, error) {
 	return blocks, nil
 }
 
-// parseTextBlock parses a text content block
+// parseTextBlock parses a text content block.
 func parseTextBlock(block map[string]any) (messages.TextBlock, error) {
 	text, ok := block["text"].(string)
 	if !ok {
@@ -364,7 +366,7 @@ func parseTextBlock(block map[string]any) (messages.TextBlock, error) {
 	}, nil
 }
 
-// parseThinkingBlock parses a thinking content block
+// parseThinkingBlock parses a thinking content block.
 func parseThinkingBlock(block map[string]any) (messages.ThinkingBlock, error) {
 	thinking, ok := block["thinking"].(string)
 	if !ok {
@@ -380,7 +382,7 @@ func parseThinkingBlock(block map[string]any) (messages.ThinkingBlock, error) {
 	}, nil
 }
 
-// parseToolUseBlock parses a tool_use content block
+// parseToolUseBlock parses a tool_use content block.
 func parseToolUseBlock(block map[string]any) (messages.ToolUseBlock, error) {
 	id, ok := block["id"].(string)
 	if !ok {
@@ -406,7 +408,7 @@ func parseToolUseBlock(block map[string]any) (messages.ToolUseBlock, error) {
 	}, nil
 }
 
-// parseToolResultBlock parses a tool_result content block
+// parseToolResultBlock parses a tool_result content block.
 func parseToolResultBlock(block map[string]any) (messages.ToolResultBlock, error) {
 	toolUseID, ok := block["tool_use_id"].(string)
 	if !ok {

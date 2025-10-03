@@ -16,7 +16,7 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/ports"
 )
 
-// Adapter implements ports.Transport using CLI subprocess
+// Adapter implements ports.Transport using CLI subprocess.
 type Adapter struct {
 	options              *options.AgentOptions
 	cliPath              string
@@ -31,7 +31,7 @@ type Adapter struct {
 	maxBufferSize        int
 }
 
-// Verify interface compliance at compile time
+// Verify interface compliance at compile time.
 var _ ports.Transport = (*Adapter)(nil)
 
 const defaultMaxBufferSize = 1024 * 1024 // 1MB
@@ -41,13 +41,14 @@ func NewAdapter(opts *options.AgentOptions) *Adapter {
 	if opts.MaxBufferSize != nil {
 		maxBuf = *opts.MaxBufferSize
 	}
+
 	return &Adapter{
 		options:       opts,
 		maxBufferSize: maxBuf,
 	}
 }
 
-// findCLI locates the Claude CLI binary
+// findCLI locates the Claude CLI binary.
 func (a *Adapter) findCLI() (string, error) {
 	// Check PATH first
 	if path, err := exec.LookPath("claude"); err == nil {
@@ -67,11 +68,12 @@ func (a *Adapter) findCLI() (string, error) {
 			return loc, nil
 		}
 	}
+
 	return "", fmt.Errorf("claude CLI not found in PATH or common locations")
 }
 
 // BuildCommand constructs the CLI command with all options
-// Exported for testing purposes
+// Exported for testing purposes.
 func (a *Adapter) BuildCommand() ([]string, error) {
 	cmd := []string{a.cliPath, "--output-format", "stream-json", "--verbose"}
 	// System prompt
@@ -157,6 +159,7 @@ func (a *Adapter) BuildCommand() ([]string, error) {
 			cmd = append(cmd, "--"+flag, *value)
 		}
 	}
+
 	return cmd, nil
 }
 func (a *Adapter) Connect(ctx context.Context) error {
@@ -216,6 +219,7 @@ func (a *Adapter) Connect(ctx context.Context) error {
 	// The closeStdinAfterWrite flag is managed internally by the adapter
 	// and set via Write() method behavior, not through options
 	a.ready = true
+
 	return nil
 }
 func (a *Adapter) handleStderr() {
@@ -249,6 +253,7 @@ func (a *Adapter) Write(ctx context.Context, data string) error {
 		a.closeStdinAfterWrite = false
 		a.stdin.Close()
 	}
+
 	return nil
 }
 func (a *Adapter) ReadMessages(ctx context.Context) (<-chan map[string]any, <-chan error) {
@@ -267,6 +272,7 @@ func (a *Adapter) ReadMessages(ctx context.Context) (<-chan map[string]any, <-ch
 			select {
 			case <-ctx.Done():
 				errCh <- ctx.Err()
+
 				return
 			default:
 			}
@@ -275,6 +281,7 @@ func (a *Adapter) ReadMessages(ctx context.Context) (<-chan map[string]any, <-ch
 			// Check buffer size
 			if len(buffer) > a.maxBufferSize {
 				errCh <- fmt.Errorf("message buffer exceeded %d bytes", a.maxBufferSize)
+
 				return
 			}
 			// Try to parse JSON
@@ -295,6 +302,7 @@ func (a *Adapter) ReadMessages(ctx context.Context) (<-chan map[string]any, <-ch
 			}
 		}
 	}()
+
 	return msgCh, errCh
 }
 func (a *Adapter) EndInput() error {
@@ -303,6 +311,7 @@ func (a *Adapter) EndInput() error {
 	if a.stdin != nil {
 		return a.stdin.Close()
 	}
+
 	return nil
 }
 
@@ -319,11 +328,13 @@ func (a *Adapter) Close() error {
 		a.cmd.Process.Kill()
 		a.cmd.Wait()
 	}
+
 	return nil
 }
 
 func (a *Adapter) IsReady() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+
 	return a.ready
 }

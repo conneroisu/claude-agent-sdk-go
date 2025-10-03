@@ -10,10 +10,10 @@ import (
 
 func TestAdapter_Parse(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   map[string]any
+		name     string
+		input    map[string]any
 		wantType string
-		wantErr bool
+		wantErr  bool
 	}{
 		{
 			name:     "parse assistant message",
@@ -61,6 +61,7 @@ func TestAdapter_Parse(t *testing.T) {
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+
 				return
 			}
 
@@ -70,6 +71,7 @@ func TestAdapter_Parse(t *testing.T) {
 
 			if got == nil {
 				t.Error("Parse() returned nil message")
+
 				return
 			}
 

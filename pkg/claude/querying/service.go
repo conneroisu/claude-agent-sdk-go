@@ -79,12 +79,14 @@ func (s *Service) executeAsync(
 	// Connect transport
 	if err := s.transport.Connect(ctx); err != nil {
 		errCh <- fmt.Errorf("transport connect: %w", err)
+
 		return
 	}
 
 	// Build hook callbacks and permission service adapter, then start routing
 	if err := s.startRouting(ctx, msgCh, errCh); err != nil {
 		errCh <- err
+
 		return
 	}
 
@@ -158,6 +160,7 @@ func wrapHookCallback(cb hooking.HookCallback) ports.HookCallback {
 		default:
 			hookCtx = hooking.HookContext{}
 		}
+
 		return cb(input, toolUseID, hookCtx)
 	}
 }
@@ -167,6 +170,7 @@ func (s *Service) wrapPermissionService() ports.PermissionService {
 	if s.permissions == nil {
 		return nil
 	}
+
 	return &permissionServiceAdapter{service: s.permissions}
 }
 
@@ -188,6 +192,7 @@ func (a *permissionServiceAdapter) CheckToolUse(
 			permSuggestions = suggList
 		}
 	}
+
 	return a.service.CheckToolUse(ctx, toolName, input, permSuggestions)
 }
 
@@ -228,11 +233,13 @@ func (s *Service) streamMessages(
 			}
 			if err := s.parseAndSend(msg, msgCh, errCh); err != nil {
 				errCh <- err
+
 				return
 			}
 		case err := <-routerErrCh:
 			if err != nil {
 				errCh <- err
+
 				return
 			}
 		}
@@ -250,5 +257,6 @@ func (s *Service) parseAndSend(
 		return fmt.Errorf("parse message: %w", err)
 	}
 	msgCh <- parsedMsg
+
 	return nil
 }

@@ -11,6 +11,7 @@ func TestService_Execute(t *testing.T) {
 	callbackInvoked := false
 	callback := func(input map[string]any, toolUseID *string, ctx hooking.HookContext) (map[string]any, error) {
 		callbackInvoked = true
+
 		return map[string]any{"modified": true}, nil
 	}
 
@@ -97,11 +98,13 @@ func TestService_Execute_MultipleHooks(t *testing.T) {
 
 	hook1 := func(input map[string]any, toolUseID *string, ctx hooking.HookContext) (map[string]any, error) {
 		callOrder = append(callOrder, "hook1")
+
 		return map[string]any{"hook1": true}, nil
 	}
 
 	hook2 := func(input map[string]any, toolUseID *string, ctx hooking.HookContext) (map[string]any, error) {
 		callOrder = append(callOrder, "hook2")
+
 		return map[string]any{"hook2": true}, nil
 	}
 

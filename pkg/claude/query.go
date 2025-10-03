@@ -57,6 +57,7 @@ func Query(ctx context.Context, prompt string, opts *options.AgentOptions, hooks
 		errCh <- fmt.Errorf("failed to initialize MCP servers: %w", err)
 		close(msgCh)
 		close(errCh)
+
 		return msgCh, errCh
 	}
 	queryService := querying.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)

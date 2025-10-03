@@ -125,6 +125,7 @@ func NewService(config *PermissionsConfig) *Service {
 			mode: options.PermissionModeAsk,
 		}
 	}
+
 	return &Service{
 		mode:       config.Mode,
 		canUseTool: config.CanUseTool,
@@ -174,6 +175,7 @@ func (s *Service) checkWithCallback(
 		if err != nil {
 			return nil, fmt.Errorf("permission callback: %w", err)
 		}
+
 		return result, nil
 	}
 	// Default: allow (CLI handles prompting in default mode)

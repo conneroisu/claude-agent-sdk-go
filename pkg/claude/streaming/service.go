@@ -125,6 +125,7 @@ func wrapHookCallback(cb hooking.HookCallback) ports.HookCallback {
 		default:
 			hookCtx = hooking.HookContext{}
 		}
+
 		return cb(input, toolUseID, hookCtx)
 	}
 }
@@ -134,6 +135,7 @@ func (s *Service) wrapPermissionService() ports.PermissionService {
 	if s.permissions == nil {
 		return nil
 	}
+
 	return &permissionServiceAdapter{service: s.permissions}
 }
 
@@ -155,6 +157,7 @@ func (a *permissionServiceAdapter) CheckToolUse(
 			permSuggestions = suggList
 		}
 	}
+
 	return a.service.CheckToolUse(ctx, toolName, input, permSuggestions)
 }
 
@@ -216,11 +219,13 @@ func (s *Service) streamMessages(
 			}
 			if err := s.parseAndSend(msg, msgOutCh, errOutCh); err != nil {
 				errOutCh <- err
+
 				return
 			}
 		case err := <-s.errCh:
 			if err != nil {
 				errOutCh <- err
+
 				return
 			}
 		}
@@ -238,6 +243,7 @@ func (s *Service) parseAndSend(
 		return fmt.Errorf("parse message: %w", err)
 	}
 	msgOutCh <- parsedMsg
+
 	return nil
 }
 
@@ -246,5 +252,6 @@ func (s *Service) Close() error {
 	if s.transport != nil {
 		return s.transport.Close()
 	}
+
 	return nil
 }

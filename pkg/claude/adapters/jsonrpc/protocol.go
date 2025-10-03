@@ -15,7 +15,7 @@ import (
 )
 
 // Adapter implements ports.ProtocolHandler for control protocol
-// This is an INFRASTRUCTURE adapter - it handles protocol state management
+// This is an INFRASTRUCTURE adapter - it handles protocol state management.
 type Adapter struct {
 	transport ports.Transport
 	// Control protocol state (managed by adapter, not domain)
@@ -24,7 +24,7 @@ type Adapter struct {
 	mu             sync.Mutex
 }
 
-// Verify interface compliance at compile time
+// Verify interface compliance at compile time.
 var _ ports.ProtocolHandler = (*Adapter)(nil)
 
 type result struct {
@@ -39,13 +39,13 @@ func NewAdapter(transport ports.Transport) *Adapter {
 	}
 }
 
-// Initialize is a no-op - initialization happens implicitly in StartMessageRouter
+// Initialize is a no-op - initialization happens implicitly in StartMessageRouter.
 func (a *Adapter) Initialize(ctx context.Context, config any) (map[string]any, error) {
 	return nil, nil
 }
 
 // SendControlRequest sends a control request and waits for response
-// This method handles all request ID generation and timeout logic
+// This method handles all request ID generation and timeout logic.
 func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
 	// Generate unique request ID: req_{counter}_{randomHex}
 	a.mu.Lock()
@@ -69,12 +69,14 @@ func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (m
 		a.mu.Lock()
 		delete(a.pendingReqs, requestID)
 		a.mu.Unlock()
+
 		return nil, fmt.Errorf("marshal control request: %w", err)
 	}
 	if err := a.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
 		a.mu.Lock()
 		delete(a.pendingReqs, requestID)
 		a.mu.Unlock()
+
 		return nil, fmt.Errorf("write control request: %w", err)
 	}
 	// Wait for response with 60s timeout
@@ -88,16 +90,18 @@ func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (m
 		if timeoutCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("control request timeout: %s", req["subtype"])
 		}
+
 		return nil, timeoutCtx.Err()
 	case res := <-resCh:
 		if res.err != nil {
 			return nil, res.err
 		}
+
 		return res.data, nil
 	}
 }
 
-// HandleControlRequest routes inbound control requests by subtype
+// HandleControlRequest routes inbound control requests by subtype.
 func (a *Adapter) HandleControlRequest(
 	ctx context.Context,
 	req map[string]any,
@@ -119,7 +123,7 @@ func (a *Adapter) HandleControlRequest(
 	}
 }
 
-// StartMessageRouter continuously reads transport and partitions messages
+// StartMessageRouter continuously reads transport and partitions messages.
 func (a *Adapter) StartMessageRouter(
 	ctx context.Context,
 	msgCh chan<- map[string]any,
@@ -160,6 +164,7 @@ func (a *Adapter) StartMessageRouter(
 						delete(a.pendingReqs, requestID)
 					}
 					a.mu.Unlock()
+
 					continue
 				default:
 					// Forward SDK messages to public stream
@@ -175,15 +180,17 @@ func (a *Adapter) StartMessageRouter(
 					case errCh <- err:
 					case <-ctx.Done():
 					}
+
 					return
 				}
 			}
 		}
 	}()
+
 	return nil
 }
 
-// routeControlResponse routes control_response messages to pending requests
+// routeControlResponse routes control_response messages to pending requests.
 func (a *Adapter) routeControlResponse(msg map[string]any) {
 	response, _ := msg["response"].(map[string]any)
 	requestID, _ := response["request_id"].(string)
@@ -203,7 +210,7 @@ func (a *Adapter) routeControlResponse(msg map[string]any) {
 }
 
 // handleControlRequestAsync handles inbound control requests asynchronously
-// Dependencies (perms, hooks, mcpServers) must be passed by the domain service that starts the router
+// Dependencies (perms, hooks, mcpServers) must be passed by the domain service that starts the router.
 func (a *Adapter) handleControlRequestAsync(
 	ctx context.Context,
 	msg map[string]any,
@@ -240,7 +247,7 @@ func (a *Adapter) handleControlRequestAsync(
 	a.transport.Write(ctx, string(resBytes)+"\n")
 }
 
-// handleCanUseTool handles can_use_tool control requests
+// handleCanUseTool handles can_use_tool control requests.
 func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, perms ports.PermissionService) (map[string]any, error) {
 	toolName, _ := request["tool_name"].(string)
 	input, _ := request["input"].(map[string]any)
@@ -276,6 +283,7 @@ func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, 
 		if r.UpdatedPermissions != nil && len(r.UpdatedPermissions) > 0 {
 			response["updated_permissions"] = r.UpdatedPermissions
 		}
+
 		return response, nil
 	case *permissions.PermissionResultDeny:
 		return map[string]any{
@@ -287,7 +295,7 @@ func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, 
 	}
 }
 
-// parsePermissionUpdate parses a single permission update from raw data
+// parsePermissionUpdate parses a single permission update from raw data.
 func parsePermissionUpdate(data map[string]any) permissions.PermissionUpdate {
 	update := permissions.PermissionUpdate{}
 
@@ -334,7 +342,7 @@ func parsePermissionUpdate(data map[string]any) permissions.PermissionUpdate {
 	return update
 }
 
-// handleHookCallback handles hook_callback control requests
+// handleHookCallback handles hook_callback control requests.
 func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any, hooks map[string]ports.HookCallback) (map[string]any, error) {
 	callbackID, _ := request["callback_id"].(string)
 	input, _ := request["input"].(map[string]any)
@@ -353,6 +361,7 @@ func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any
 	if err != nil {
 		return nil, err
 	}
+
 	return result, nil
 }
 
@@ -380,12 +389,13 @@ func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any, 
 	if err := json.Unmarshal(responseBytes, &mcpResponse); err != nil {
 		return a.mcpErrorResponse(mcpMessage, -32603, "failed to unmarshal mcp response"), nil
 	}
+
 	return map[string]any{
 		"mcp_response": mcpResponse,
 	}, nil
 }
 
-// mcpErrorResponse creates an MCP JSON-RPC error response
+// mcpErrorResponse creates an MCP JSON-RPC error response.
 func (a *Adapter) mcpErrorResponse(message map[string]any, code int, msg string) map[string]any {
 	return map[string]any{
 		"mcp_response": map[string]any{
@@ -399,17 +409,19 @@ func (a *Adapter) mcpErrorResponse(message map[string]any, code int, msg string)
 	}
 }
 
-// randomHex generates a random hex string of n bytes
+// randomHex generates a random hex string of n bytes.
 func randomHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
+
 	return hex.EncodeToString(b)
 }
 
-// getStringPtr extracts an optional string pointer from a map
+// getStringPtr extracts an optional string pointer from a map.
 func getStringPtr(m map[string]any, key string) *string {
 	if v, ok := m[key].(string); ok {
 		return &v
 	}
+
 	return nil
 }

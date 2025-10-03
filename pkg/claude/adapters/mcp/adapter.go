@@ -76,6 +76,7 @@ func (a *Adapter) handleMethod(
 		if err := unmarshalParams(paramsRaw, &params); err != nil {
 			return nil, err
 		}
+
 		return a.session.CallTool(ctx, &params)
 
 	case "resources/list":
@@ -86,6 +87,7 @@ func (a *Adapter) handleMethod(
 		if err := unmarshalParams(paramsRaw, &params); err != nil {
 			return nil, err
 		}
+
 		return a.session.ReadResource(ctx, &params)
 
 	case "prompts/list":
@@ -96,6 +98,7 @@ func (a *Adapter) handleMethod(
 		if err := unmarshalParams(paramsRaw, &params); err != nil {
 			return nil, err
 		}
+
 		return a.session.GetPrompt(ctx, &params)
 
 	default:
@@ -115,6 +118,7 @@ func unmarshalParams(raw any, target any) error {
 	if err := json.Unmarshal(data, target); err != nil {
 		return fmt.Errorf("unmarshal params: %w", err)
 	}
+
 	return nil
 }
 
@@ -128,6 +132,7 @@ func (a *Adapter) successResponse(
 		"id":      id,
 		"result":  result,
 	}
+
 	return json.Marshal(resp)
 }
 
@@ -145,6 +150,7 @@ func (a *Adapter) errorResponse(
 			"message": message,
 		},
 	}
+
 	return json.Marshal(resp)
 }
 

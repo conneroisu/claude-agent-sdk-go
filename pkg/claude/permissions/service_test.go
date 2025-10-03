@@ -46,6 +46,7 @@ func TestService_CheckToolUse_WithCallback(t *testing.T) {
 					Message: "Bash not allowed in tests",
 				}, nil
 			}
+
 			return &permissions.PermissionResultAllow{}, nil
 		},
 	}
@@ -78,6 +79,7 @@ func TestService_CheckToolUse_CallbackWithModifiedInput(t *testing.T) {
 			if command, ok := input["command"].(string); ok {
 				input["command"] = command + " --safe-mode"
 			}
+
 			return &permissions.PermissionResultAllow{
 				UpdatedInput: input,
 			}, nil

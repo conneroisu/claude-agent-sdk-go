@@ -12,7 +12,7 @@ import (
 )
 
 // initializeMCPServers creates MCP client connections from configuration
-// Returns a map of server name -> connected MCP client adapter
+// Returns a map of server name -> connected MCP client adapter.
 func initializeMCPServers(
 	ctx context.Context,
 	configs map[string]options.MCPServerConfig,
@@ -30,6 +30,7 @@ func initializeMCPServers(
 			for _, s := range servers {
 				_ = s.Close()
 			}
+
 			return nil, fmt.Errorf("failed to initialize MCP server %q: %w", name, err)
 		}
 		servers[name] = server
@@ -38,7 +39,7 @@ func initializeMCPServers(
 	return servers, nil
 }
 
-// initializeMCPServer creates a single MCP client connection
+// initializeMCPServer creates a single MCP client connection.
 func initializeMCPServer(
 	ctx context.Context,
 	name string,
@@ -97,11 +98,12 @@ func initializeMCPServer(
 	return mcp.NewAdapter(name, session), nil
 }
 
-// mapToEnvSlice converts map[string]string to []string in KEY=VALUE format
+// mapToEnvSlice converts map[string]string to []string in KEY=VALUE format.
 func mapToEnvSlice(m map[string]string) []string {
 	result := make([]string, 0, len(m))
 	for k, v := range m {
 		result = append(result, fmt.Sprintf("%s=%s", k, v))
 	}
+
 	return result
 }

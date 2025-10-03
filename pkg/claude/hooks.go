@@ -7,13 +7,13 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/hooking"
 )
 
-// Re-export domain hook types for public API
+// Re-export domain hook types for public API.
 type HookEvent = hooking.HookEvent
 type HookContext = hooking.HookContext
 type HookCallback = hooking.HookCallback
 type HookMatcher = hooking.HookMatcher
 
-// Re-export hook event constants
+// Re-export hook event constants.
 const (
 	// HookEventPreToolUse is the event for pre-tool use hooks.
 	HookEventPreToolUse = hooking.HookEventPreToolUse
@@ -29,14 +29,14 @@ const (
 	HookEventPreCompact = hooking.HookEventPreCompact
 )
 
-// HookJSONOutput represents the JSON output structure for hooks
+// HookJSONOutput represents the JSON output structure for hooks.
 type HookJSONOutput struct {
-	Decision           *string        `json:"decision,omitempty"`           // "block"
+	Decision           *string        `json:"decision,omitempty"` // "block"
 	SystemMessage      *string        `json:"systemMessage,omitempty"`
 	HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitempty"`
 }
 
-// BlockBashPatternHook returns a hook callback that blocks bash commands containing forbidden patterns
+// BlockBashPatternHook returns a hook callback that blocks bash commands containing forbidden patterns.
 func BlockBashPatternHook(patterns []string) HookCallback {
 	return func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error) {
 		toolName, _ := input["tool_name"].(string)
@@ -56,6 +56,7 @@ func BlockBashPatternHook(patterns []string) HookCallback {
 				}, nil
 			}
 		}
+
 		return map[string]any{}, nil
 	}
 }

@@ -45,8 +45,9 @@ type Client struct {
 // customizing lifecycle hooks and permission checks respectively.
 func NewClient(opts *options.AgentOptions, hooks map[hooking.HookEvent][]hooking.HookMatcher, perms *permissions.PermissionsConfig) *Client {
 	if opts == nil {
-		opts = &options.AgentOptions{}
+		opts = &options.AgentOptions{} //nolint:revive
 	}
+
 	return &Client{
 		opts:              opts,
 		hooks:             hooks,
@@ -93,6 +94,7 @@ func (c *Client) SendMessage(ctx context.Context, msg string) error {
 	if c.streamingService == nil {
 		return ErrNotConnected
 	}
+
 	return c.streamingService.SendMessage(ctx, msg)
 }
 
@@ -104,8 +106,10 @@ func (c *Client) ReceiveMessages(ctx context.Context) (<-chan messages.Message, 
 		errCh := make(chan error, 1)
 		errCh <- ErrNotConnected
 		close(errCh)
+
 		return nil, errCh
 	}
+
 	return c.streamingService.ReceiveMessages(ctx)
 }
 
@@ -135,5 +139,6 @@ func (c *Client) Close() error {
 	if len(errs) > 0 {
 		return fmt.Errorf("errors during close: %v", errs)
 	}
+
 	return nil
 }

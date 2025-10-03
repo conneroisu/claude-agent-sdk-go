@@ -75,6 +75,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("Error: %v", err)
 			}
+
 			return
 		}
 	}

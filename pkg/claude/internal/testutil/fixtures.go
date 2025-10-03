@@ -31,7 +31,7 @@ var ResultMessageSuccessJSON = map[string]any{
 	"session_id":  "test-session",
 }
 
-// ResultMessageErrorJSON is a test fixture for an error result message
+// ResultMessageErrorJSON is a test fixture for an error result message.
 var ResultMessageErrorJSON = map[string]any{
 	"type":        "result",
 	"subtype":     "error_during_execution",
@@ -44,7 +44,7 @@ var ResultMessageErrorJSON = map[string]any{
 	},
 }
 
-// SystemMessageJSON is a test fixture for a system message
+// SystemMessageJSON is a test fixture for a system message.
 var SystemMessageJSON = map[string]any{
 	"type":    "system",
 	"subtype": "session_start",
@@ -53,7 +53,7 @@ var SystemMessageJSON = map[string]any{
 	},
 }
 
-// ToolUseBlockJSON is a test fixture for a tool use content block
+// ToolUseBlockJSON is a test fixture for a tool use content block.
 var ToolUseBlockJSON = map[string]any{
 	"type": "tool_use",
 	"id":   "tool-123",
@@ -63,15 +63,15 @@ var ToolUseBlockJSON = map[string]any{
 	},
 }
 
-// ToolResultBlockJSON is a test fixture for a tool result content block
+// ToolResultBlockJSON is a test fixture for a tool result content block.
 var ToolResultBlockJSON = map[string]any{
 	"type":        "tool_result",
 	"tool_use_id": "tool-123",
 	"content":     "hello\n",
 }
 
-// ThinkingBlockJSON is a test fixture for a thinking content block
+// ThinkingBlockJSON is a test fixture for a thinking content block.
 var ThinkingBlockJSON = map[string]any{
-	"type":    "thinking",
+	"type":     "thinking",
 	"thinking": "Let me analyze this...",
 }

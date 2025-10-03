@@ -9,7 +9,7 @@ import "fmt"
 // All 18 Claude Code built-in tools are defined as constants.
 type BuiltinTool string
 
-// Execution tools
+// Execution tools.
 const (
 	// ToolBash executes bash commands in a persistent shell.
 	ToolBash BuiltinTool = "Bash"
@@ -19,7 +19,7 @@ const (
 	ToolKillShell BuiltinTool = "KillShell"
 )
 
-// File operation tools
+// File operation tools.
 const (
 	// ToolRead reads files from the filesystem.
 	ToolRead BuiltinTool = "Read"
@@ -33,7 +33,7 @@ const (
 	ToolGrep BuiltinTool = "Grep"
 )
 
-// Agent tools
+// Agent tools.
 const (
 	// ToolTask launches specialized subagents for complex tasks.
 	ToolTask BuiltinTool = "Task"
@@ -41,7 +41,7 @@ const (
 	ToolExitPlanMode BuiltinTool = "ExitPlanMode"
 )
 
-// Web tools
+// Web tools.
 const (
 	// ToolWebFetch fetches and analyzes web content.
 	ToolWebFetch BuiltinTool = "WebFetch"
@@ -49,7 +49,7 @@ const (
 	ToolWebSearch BuiltinTool = "WebSearch"
 )
 
-// MCP tools
+// MCP tools.
 const (
 	// ToolListMcpResources lists available MCP resources.
 	ToolListMcpResources BuiltinTool = "ListMcpResources"
@@ -59,7 +59,7 @@ const (
 	ToolMcp BuiltinTool = "Mcp"
 )
 
-// Other tools
+// Other tools.
 const (
 	// ToolNotebookEdit edits Jupyter notebook cells.
 	ToolNotebookEdit BuiltinTool = "NotebookEdit"

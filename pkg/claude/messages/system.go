@@ -16,7 +16,7 @@ func (SystemMessage) message() {}
 // SystemMessageData is a discriminated union for SystemMessage.Data.
 //
 // Parse from map[string]any based on the Subtype field.
-// Subtypes: "init", "compact_boundary"
+// Subtypes: "init", "compact_boundary".
 type SystemMessageData interface {
 	systemMessageData()
 }
@@ -54,8 +54,8 @@ func (SystemMessageCompactBoundary) systemMessageData() {}
 
 // MCPServerStatus represents the status of an MCP server.
 type MCPServerStatus struct {
-	Name   string `json:"name"`
-	Status string `json:"status"` // "connected" | "failed" | etc.
+	Name       string `json:"name"`
+	Status     string `json:"status"` // "connected" | "failed" | etc.
 	ServerInfo *struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`

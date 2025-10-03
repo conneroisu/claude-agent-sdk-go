@@ -25,6 +25,7 @@ func (s *Service) GetHooks() map[HookEvent][]HookMatcher {
 	if s == nil {
 		return nil
 	}
+
 	return s.hooks
 }
 
