@@ -58,7 +58,11 @@ func TestService_Execute(t *testing.T) {
 				tt.setupMock(transport)
 			}
 			protocol := &mockProtocol{}
-			svc := querying.NewService(transport, protocol)
+			parser := &mockParser{}
+			hooks := &mockHooks{}
+			perms := &mockPermissions{}
+			mcpServers := make(map[string]ports.MCPServer)
+			svc := querying.NewService(transport, protocol, parser, hooks, perms, mcpServers)
 			msgCh, errCh := svc.Execute(context.Background(), tt.prompt, &options.AgentOptions{})
 			// Verify results
 		})
@@ -67,11 +71,11 @@ func TestService_Execute(t *testing.T) {
 ```
 Message Parsing Tests:
 ```go
-// internal/parse/parser_test.go
+// adapters/parse/parser_test.go
 package parse_test
 
 import (
-	"github.com/conneroisu/claude/pkg/claude/internal/parse"
+	"github.com/conneroisu/claude/pkg/claude/adapters/parse"
 	"github.com/conneroisu/claude/pkg/claude/messages"
 	"testing"
 )
@@ -179,12 +183,15 @@ package integration_test
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"testing"
+	"time"
+
 	"github.com/conneroisu/claude/pkg/claude"
 	"github.com/conneroisu/claude/pkg/claude/messages"
 	"github.com/conneroisu/claude/pkg/claude/options"
-	"os"
-	"testing"
-	"time"
 )
 
 func TestMain(m *testing.M) {

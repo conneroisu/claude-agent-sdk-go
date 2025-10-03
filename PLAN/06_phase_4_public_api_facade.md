@@ -76,14 +76,14 @@ import (
 type Client struct {
 	opts             *options.AgentOptions
 	hooks            map[HookEvent][]HookMatcher
-	permissions      *PermissionsConfig
+	permissions      *permissions.PermissionsConfig
 	streamingService *streaming.Service
 	mcpServers       map[string]ports.MCPServer // Track for cleanup
 	mu               sync.Mutex
 }
 
 // NewClient creates a new Claude client
-func NewClient(opts *options.AgentOptions, hooks map[HookEvent][]HookMatcher, perms *PermissionsConfig) *Client {
+func NewClient(opts *options.AgentOptions, hooks map[HookEvent][]HookMatcher, perms *permissions.PermissionsConfig) *Client {
 	if opts == nil {
 		opts = &options.AgentOptions{}
 	}

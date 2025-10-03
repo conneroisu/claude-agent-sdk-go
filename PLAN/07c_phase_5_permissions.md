@@ -7,93 +7,23 @@ Permission callbacks allow users to implement custom authorization logic for too
 
 **Hexagonal Architecture Alignment:**
 - Permissions are a distinct domain boundary (authorization/access control)
-- Isolated in `internal/permissions/` package with clean separation of concerns
-- Public API in `permissions.go` re-exports only consumer-facing types
+- Isolated in `pkg/claude/permissions/` package with clean separation of concerns
+- Public API is directly in the permissions package
 - Core agent/tool logic depends on permission **ports** (abstractions), not implementations
 
 ### Package Structure
 
 ```
-internal/permissions/
+pkg/claude/permissions/
   ├── types.go       # Core types, interfaces, constants
   ├── evaluator.go   # Permission evaluation logic
   ├── updater.go     # Permission update application
   └── callback.go    # Callback orchestration
-
-permissions.go       # Public API - re-exports from internal/permissions
 ```
 
 ---
 
-### Public API (permissions.go)
-
-```go
-package claude
-
-import (
-	"context"
-	"github.com/anthropics/claude-agent-sdk-go/internal/permissions"
-)
-
-// Re-export public-facing types for consumers
-type (
-	// ToolPermissionContext contains context for permission checks
-	ToolPermissionContext = permissions.Context
-
-	// PermissionResult is the result of a permission check
-	PermissionResult = permissions.Result
-
-	// PermissionResultAllow indicates permission granted
-	PermissionResultAllow = permissions.ResultAllow
-
-	// PermissionResultDeny indicates permission denied
-	PermissionResultDeny = permissions.ResultDeny
-
-	// CanUseToolFunc is a function that checks if a tool can be used
-	CanUseToolFunc = permissions.CanUseToolFunc
-
-	// PermissionUpdate represents a permission update
-	PermissionUpdate = permissions.Update
-
-	// PermissionUpdateType is the type of permission update
-	PermissionUpdateType = permissions.UpdateType
-
-	// PermissionRuleValue is a permission rule
-	PermissionRuleValue = permissions.RuleValue
-
-	// PermissionBehavior defines permission behavior (allow/deny/ask)
-	PermissionBehavior = permissions.Behavior
-
-	// PermissionMode defines permission mode
-	PermissionMode = permissions.Mode
-
-	// PermissionUpdateDestination defines where updates are stored
-	PermissionUpdateDestination = permissions.UpdateDestination
-)
-
-// Re-export constants
-const (
-	PermissionUpdateTypeAddRules          = permissions.UpdateTypeAddRules
-	PermissionUpdateTypeReplaceRules      = permissions.UpdateTypeReplaceRules
-	PermissionUpdateTypeRemoveRules       = permissions.UpdateTypeRemoveRules
-	PermissionUpdateTypeSetMode           = permissions.UpdateTypeSetMode
-	PermissionUpdateTypeAddDirectories    = permissions.UpdateTypeAddDirectories
-	PermissionUpdateTypeRemoveDirectories = permissions.UpdateTypeRemoveDirectories
-
-	PermissionBehaviorAllow = permissions.BehaviorAllow
-	PermissionBehaviorDeny  = permissions.BehaviorDeny
-	PermissionBehaviorAsk   = permissions.BehaviorAsk
-
-	PermissionDestinationUserSettings    = permissions.DestinationUserSettings
-	PermissionDestinationProjectSettings = permissions.DestinationProjectSettings
-	PermissionDestinationLocalSettings   = permissions.DestinationLocalSettings
-	PermissionDestinationSession         = permissions.DestinationSession
-)
-```
-
----
-
-### Internal Implementation (internal/permissions/)
+### Implementation (pkg/claude/permissions/)
 
 #### types.go
 ```go
@@ -278,7 +208,7 @@ func (h *Handler) CheckToolUse(ctx context.Context, toolName string, input map[s
 
 **Dependency Inversion:**
 - Tool executors depend on `CanUseToolFunc` (port/abstraction)
-- Implementation details hidden in `internal/permissions/`
+- Implementation details in `pkg/claude/permissions/`
 - Easy to test and mock
 
 **Separation of Concerns:**
@@ -289,7 +219,7 @@ func (h *Handler) CheckToolUse(ctx context.Context, toolName string, input map[s
 
 ### File Size Requirements
 
-**internal/permissions/ package:**
+**pkg/claude/permissions/ package:**
 - `types.go` - ~100 lines (types, interfaces, constants)
 - `evaluator.go` - ~25 lines (evaluation logic)
 - `updater.go` - ~25 lines (update logic)
@@ -297,47 +227,7 @@ func (h *Handler) CheckToolUse(ctx context.Context, toolName string, input map[s
 - ✅ All files under 175 lines
 - Well-organized, focused responsibilities
 
-### Usage Patterns
-
-**Consumer Usage (using public API):**
-```go
-package main
-
-import (
-	"context"
-	"strings"
-
-	"github.com/anthropics/claude-agent-sdk-go"
-)
-
-func restrictedBashCallback(ctx context.Context, toolName string, input map[string]any, permCtx claude.ToolPermissionContext) (claude.PermissionResult, error) {
-	if toolName == "Bash" {
-		command := input["command"].(string)
-		if strings.Contains(command, "rm -rf") {
-			return claude.PermissionResultDeny{
-				Message: "Destructive commands not allowed",
-				Interrupt: true,
-			}, nil
-		}
-	}
-	return claude.PermissionResultAllow{
-		UpdatedInput: input,
-	}, nil
-}
-
-func main() {
-	client := claude.NewClient("api-key")
-
-	agent := client.NewAgent(
-		claude.WithPermissionCallback(restrictedBashCallback),
-	)
-
-	// Permission callback is automatically invoked during tool execution
-	agent.Execute(context.Background(), "run a bash command")
-}
-```
-
-**Integration with Tool Execution:**
+### Integration with Tool Execution
 ```go
 // In internal tool executor
 type ToolExecutor struct {
@@ -382,15 +272,15 @@ permissions.Handler (Adapter/Implementation)
 
 **Key Points:**
 - Core domain (agent/tool execution) depends on **abstraction** (`CanUseToolFunc`)
-- Implementation lives in `internal/permissions/`
+- Implementation lives in `pkg/claude/permissions/`
 - No reverse dependencies - permissions cannot depend on agent
 - Easy to test with mock implementations
 
 ### Checklist
 
 **Architecture:**
-- [ ] `internal/permissions/` package created with proper structure
-- [ ] Public API re-exports types from internal package
+- [ ] `pkg/claude/permissions/` package created with proper structure
+- [ ] Permission types are in the permissions package
 - [ ] Tool executor depends on `CanUseToolFunc` port, not implementation
 
 **Functionality:**

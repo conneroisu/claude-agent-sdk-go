@@ -89,10 +89,11 @@ Each phase builds on the previous one, starting from core domain models and endi
   - `Client` type for streaming conversations
   - Dependency wiring and composition
 
-- **[07. Phase 5: Advanced Features](07_phase_5_advanced_features.md)**
-  - Hooks support (custom lifecycle hooks)
-  - MCP server support (in-process tool servers)
-  - Permission callbacks (custom permission logic)
+- **Phase 5: Advanced Features**
+  - [07a. Hooks Support](07a_phase_5_hooks.md)
+  - [07b. MCP Server Support](07b_phase_5_mcp_servers.md)
+  - [07c. Permission Callbacks](07c_phase_5_permissions.md)
+  - [07d. Integration Summary](07d_phase_5_integration_summary.md)
 
 - **[08. Phase 6: Testing & Documentation](08_phase_6_testing_documentation.md)**
   - Unit tests (domain services and adapters)

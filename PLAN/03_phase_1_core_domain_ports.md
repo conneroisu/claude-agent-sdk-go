@@ -250,6 +250,7 @@ const (
 	PermissionModeAcceptEdits       PermissionMode = "acceptEdits"
 	PermissionModePlan              PermissionMode = "plan"
 	PermissionModeBypassPermissions PermissionMode = "bypassPermissions"
+	PermissionModeAsk               PermissionMode = "ask"
 )
 
 // SettingSource specifies where settings come from
@@ -460,6 +461,8 @@ type MCPServer interface {
 	// HandleMessage takes a raw JSON-RPC message, processes it, and returns
 	// a raw JSON-RPC response. This is used to proxy messages.
 	HandleMessage(ctx context.Context, message []byte) ([]byte, error)
+	// Close closes the MCP server connection and releases resources
+	Close() error
 }
 ```
 

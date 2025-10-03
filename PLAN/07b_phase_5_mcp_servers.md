@@ -43,14 +43,16 @@ func AddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHa
 
 ### Integration Architecture
 
-The `options.SDKServerConfig` will be updated to hold the `*mcp.Server` instance. The agent SDK will then be responsible for internally creating an adapter that implements the `ports.MCPServer` interface.
+SDK-managed servers are registered separately to avoid storing server instances in configuration (preventing circular dependencies as established in Phase 1). The agent SDK maintains an internal registry that maps server names to adapters implementing `ports.MCPServer`.
 
 **Key components:**
 - User creates `*mcp.Server` using `NewMCPServer()` and `AddTool()`
-- User passes server to agent via `AgentOptions.SDKServerConfig`
+- User registers server with SDK using a registration function (not via `options.SDKServerConfig`)
 - SDK creates internal adapter implementing `ports.MCPServer`
 - Adapter manages in-memory transports to communicate with user's server
 - Adapter proxies messages from Claude CLI to user's MCP server
+
+**Note:** The `options.SDKServerConfig` type is only used to mark that a server is SDK-managed. The actual server instances are managed separately by the MCP adapter layer to avoid circular dependencies.
 
 ---
 
