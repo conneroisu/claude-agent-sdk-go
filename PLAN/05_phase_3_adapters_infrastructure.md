@@ -209,11 +209,9 @@ func (a *Adapter) Connect(ctx context.Context) error {
 	if a.options.StderrCallback != nil {
 		go a.handleStderr()
 	}
-	// Detect one-shot mode: _isStreaming flag set by domain services
-	// In one-shot mode, stdin should be closed after first write
-	if !a.options._isStreaming {
-		a.closeStdinAfterWrite = true
-	}
+	// Note: One-shot vs streaming mode is determined by the domain service
+	// The closeStdinAfterWrite flag is managed internally by the adapter
+	// and set via Write() method behavior, not through options
 	a.ready = true
 	return nil
 }

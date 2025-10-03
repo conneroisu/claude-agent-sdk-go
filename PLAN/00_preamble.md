@@ -3,6 +3,7 @@
 ## Introduction
 
 This document outlines the comprehensive implementation plan for a Go SDK for Claude Agent, providing idiomatic Go interfaces for interacting with Claude Code CLI. The SDK enables both simple one-shot queries and complex bidirectional streaming conversations with Claude.
+Do not be lazy during implementation. Simplified versions of this plan are banned.
 
 ### Purpose
 
@@ -24,10 +25,11 @@ This SDK follows **hexagonal architecture** (ports and adapters pattern), which 
 
 The dependency flow is strictly enforced:
 ```
-Public API → Adapters → Ports → Domain Services
+Public API → Adapters ↘
+                       → Ports ← Domain Services
 ```
 
-The domain layer never imports from adapters, ensuring clean separation of concerns.
+Adapters and domain services both depend on ports (interfaces). Domain services never import from adapters, ensuring clean separation of concerns.
 
 ### Core Design Principles
 

@@ -212,7 +212,7 @@ func TestQuery_BasicInteraction(t *testing.T) {
 	opts := &options.AgentOptions{
 		MaxTurns: intPtr(1),
 	}
-	msgCh, errCh := claude.Query(ctx, "What is 2+2?", opts)
+	msgCh, errCh := claude.Query(ctx, "What is 2+2?", opts, nil)
 	var gotResponse bool
 	for {
 		select {
@@ -339,7 +339,7 @@ import (
 
 func main() {
 	ctx := context.Background()
-	msgCh, errCh := claude.Query(ctx, "What is 2 + 2?", nil)
+	msgCh, errCh := claude.Query(ctx, "What is 2 + 2?", nil, nil)
 	for {
 		select {
 		case msg, ok := <-msgCh:

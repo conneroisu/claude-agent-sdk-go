@@ -268,7 +268,7 @@ type AgentDefinition struct {
 	Name         string
 	Description  string
 	SystemPrompt *string
-	AllowedTools []string
+	AllowedTools []BuiltinTool
 	Model        *string
 }
 
@@ -289,6 +289,91 @@ func (StringSystemPrompt) systemPromptConfig()  {}
 func (PresetSystemPrompt) systemPromptConfig() {}
 ```
 
+options/tools.go - Built-in Tool Type Definitions:
+
+```go
+package options
+
+import "fmt"
+
+// BuiltinTool represents a Claude built-in tool name
+// Provides type safety and IDE autocomplete for tool selection
+type BuiltinTool string
+
+// Built-in tool constants - all 18 Claude Code tools
+const (
+	// Execution tools
+	ToolBash       BuiltinTool = "Bash"
+	ToolBashOutput BuiltinTool = "BashOutput"
+	ToolKillShell  BuiltinTool = "KillShell"
+
+	// File operation tools
+	ToolRead  BuiltinTool = "Read"
+	ToolWrite BuiltinTool = "Write"
+	ToolEdit  BuiltinTool = "Edit"
+	ToolGlob  BuiltinTool = "Glob"
+	ToolGrep  BuiltinTool = "Grep"
+
+	// Agent tools
+	ToolTask         BuiltinTool = "Task"
+	ToolExitPlanMode BuiltinTool = "ExitPlanMode"
+
+	// Web tools
+	ToolWebFetch  BuiltinTool = "WebFetch"
+	ToolWebSearch BuiltinTool = "WebSearch"
+
+	// MCP tools
+	ToolListMcpResources BuiltinTool = "ListMcpResources"
+	ToolReadMcpResource  BuiltinTool = "ReadMcpResource"
+	ToolMcp              BuiltinTool = "Mcp"
+
+	// Other tools
+	ToolNotebookEdit BuiltinTool = "NotebookEdit"
+	ToolTodoWrite    BuiltinTool = "TodoWrite"
+	ToolSlashCommand BuiltinTool = "SlashCommand"
+)
+
+// WithMatcher creates a tool matcher pattern (e.g., "Bash(git:*)")
+// Used for fine-grained tool permissions
+func (t BuiltinTool) WithMatcher(matcher string) string {
+	return fmt.Sprintf("%s(%s)", t, matcher)
+}
+
+// String returns the tool name as a string
+func (t BuiltinTool) String() string {
+	return string(t)
+}
+```
+
+**Usage Examples:**
+
+```go
+// Simple tool selection with type safety
+opts := &AgentOptions{
+	AllowedTools: []BuiltinTool{
+		ToolRead,
+		ToolWrite,
+		ToolBash,
+	},
+}
+
+// Using matchers for fine-grained control
+bashGitOnly := ToolBash.WithMatcher("git:*")
+// Returns: "Bash(git:*)"
+
+// In AgentDefinition for subagents
+subagent := AgentDefinition{
+	Name: "code-reviewer",
+	AllowedTools: []BuiltinTool{
+		ToolRead,
+		ToolGrep,
+		ToolGlob,
+	},
+}
+```
+
+**Note:** Helper functions for converting `[]BuiltinTool` to CLI flag format will be added in Phase 4 (see `helpers/tools.go`).
+
 options/transport.go - Transport/Infrastructure Configuration:
 
 ```go
@@ -298,8 +383,8 @@ package options
 // This combines domain and infrastructure configuration
 type AgentOptions struct {
 	// Domain settings (affect business logic)
-	AllowedTools             []string
-	DisallowedTools          []string
+	AllowedTools             []BuiltinTool
+	DisallowedTools          []BuiltinTool
 	Model                    *string
 	MaxTurns                 *int
 	SystemPrompt             SystemPromptConfig
@@ -535,6 +620,7 @@ func (e *JSONDecodeError) Unwrap() error {
 
 **Other files are compliant:**
 - ✅ `options/domain.go` (80 lines)
+- ✅ `options/tools.go` (60 lines) - NEW: Built-in tool type definitions
 - ✅ `options/transport.go` (90 lines)
 - ✅ `options/mcp.go` (70 lines)
 - ✅ `ports/*.go` (25-60 lines each)

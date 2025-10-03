@@ -62,6 +62,9 @@ package claude
 
 import (
 	"context"
+	"fmt"
+	"sync"
+
 	"github.com/conneroisu/claude/pkg/claude/adapters/cli"
 	"github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
 	"github.com/conneroisu/claude/pkg/claude/adapters/parse"
@@ -71,7 +74,6 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/permissions"
 	"github.com/conneroisu/claude/pkg/claude/ports"
 	"github.com/conneroisu/claude/pkg/claude/streaming"
-	"sync"
 )
 
 // Client provides bidirectional, interactive conversations with Claude
@@ -79,7 +81,7 @@ import (
 type Client struct {
 	opts             *options.AgentOptions
 	hooks            map[hooking.HookEvent][]hooking.HookMatcher
-	permissions      *permissions.PermissionsConfig
+	permissionsConfig *permissions.PermissionsConfig
 	streamingService *streaming.Service
 	mcpServers       map[string]ports.MCPServer // Track for cleanup
 	mu               sync.Mutex
@@ -91,9 +93,9 @@ func NewClient(opts *options.AgentOptions, hooks map[hooking.HookEvent][]hooking
 		opts = &options.AgentOptions{}
 	}
 	return &Client{
-		opts:        opts,
-		hooks:       hooks,
-		permissions: perms,
+		opts:              opts,
+		hooks:             hooks,
+		permissionsConfig: perms,
 	}
 }
 
@@ -111,8 +113,8 @@ func (c *Client) Connect(ctx context.Context, prompt *string) error {
 		hookingService = hooking.NewService(c.hooks)
 	}
 	var permissionsService *permissions.Service
-	if c.permissions != nil {
-		permissionsService = permissions.NewService(c.permissions)
+	if c.permissionsConfig != nil {
+		permissionsService = permissions.NewService(c.permissionsConfig)
 	}
 	// Initialize MCP servers from configuration
 	mcpServers, err := initializeMCPServers(ctx, c.opts.MCPServers)
@@ -423,6 +425,125 @@ func (a *Adapter) Close() error {
 }
 ```
 
+### 4.4 Helper Utilities (helpers/ package)
+
+Priority: High
+Convenience utilities for common operations, inspired by TypeScript SDK's `lib/` directory.
+
+helpers/tools.go - Tool Selection Helpers:
+
+```go
+package helpers
+
+import (
+	"strings"
+	"github.com/conneroisu/claude/pkg/claude/options"
+)
+
+// ToolsToString converts a slice of BuiltinTools to CLI format
+// Example: [ToolRead, ToolWrite] -> "Read,Write"
+func ToolsToString(tools []options.BuiltinTool) string {
+	strs := make([]string, len(tools))
+	for i, t := range tools {
+		strs[i] = string(t)
+	}
+	return strings.Join(strs, ",")
+}
+
+// AllowTools creates an allowed tools specification for CLI
+// Supports both simple names and matcher patterns
+func AllowTools(specs ...string) string {
+	return strings.Join(specs, ",")
+}
+
+// DenyTools creates a denied tools specification for CLI
+func DenyTools(specs ...string) string {
+	return AllowTools(specs...)
+}
+
+// AllToolsExcept returns all builtin tools except the specified ones
+func AllToolsExcept(exclude ...options.BuiltinTool) []options.BuiltinTool {
+	excludeMap := make(map[options.BuiltinTool]bool)
+	for _, t := range exclude {
+		excludeMap[t] = true
+	}
+
+	allTools := []options.BuiltinTool{
+		options.ToolBash, options.ToolBashOutput, options.ToolKillShell,
+		options.ToolRead, options.ToolWrite, options.ToolEdit,
+		options.ToolGlob, options.ToolGrep,
+		options.ToolTask, options.ToolExitPlanMode,
+		options.ToolWebFetch, options.ToolWebSearch,
+		options.ToolListMcpResources, options.ToolReadMcpResource, options.ToolMcp,
+		options.ToolNotebookEdit, options.ToolTodoWrite, options.ToolSlashCommand,
+	}
+
+	result := make([]options.BuiltinTool, 0, len(allTools))
+	for _, t := range allTools {
+		if !excludeMap[t] {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+```
+
+helpers/prompts.go - System Prompt Builders:
+
+```go
+package helpers
+
+import "strings"
+
+// BuildSystemPrompt combines multiple prompt parts
+func BuildSystemPrompt(parts ...string) string {
+	return strings.Join(parts, "\n\n")
+}
+
+// AppendSystemPrompt creates an append-style system prompt config
+func AppendSystemPrompt(base, append string) string {
+	if base == "" {
+		return append
+	}
+	if append == "" {
+		return base
+	}
+	return base + "\n\n" + append
+}
+```
+
+**Usage Examples:**
+
+```go
+import (
+	"github.com/conneroisu/claude/pkg/claude/helpers"
+	"github.com/conneroisu/claude/pkg/claude/options"
+)
+
+// Tool selection with helpers
+opts := &options.AgentOptions{
+	AllowedTools: helpers.AllToolsExcept(
+		options.ToolBash,      // Exclude shell access
+		options.ToolWebFetch,  // Exclude web access
+	),
+}
+
+// Using matchers
+allowSpec := helpers.AllowTools(
+	string(options.ToolRead),
+	options.ToolBash.WithMatcher("git:*"),  // Only git commands
+	string(options.ToolGrep),
+)
+// Result: "Read,Bash(git:*),Grep"
+
+// Building system prompts
+systemPrompt := helpers.BuildSystemPrompt(
+	"You are a code review assistant.",
+	"Focus on security and performance.",
+	"Provide actionable feedback.",
+)
+```
+
 ---
 
 ## Linting Compliance Notes
@@ -435,6 +556,10 @@ func (a *Adapter) Close() error {
 - ✅ `mcp_init.go` - 95 lines (compliant)
 - ❌ `adapters/mcp/adapter.go` - 125 lines (compliant, but close to limit)
 - ✅ `errors.go` - Estimated 60 lines (compliant)
+
+**Helper utilities files:**
+- ✅ `helpers/tools.go` - 60 lines (compliant)
+- ✅ `helpers/prompts.go` - 20 lines (compliant)
 
 **If adapter.go exceeds limit later, split into:**
 - `adapter.go` - Adapter struct + constructor + Name/Close (40 lines)
@@ -473,3 +598,8 @@ func NewClient(
 - [ ] Proper cleanup on initialization errors (close partial connections)
 - [ ] MCP client sessions properly closed in Client.Close()
 - [ ] Context cancellation properly handled in MCP connections
+- [ ] All 18 BuiltinTool constants defined in options/tools.go
+- [ ] WithMatcher() method works correctly for pattern matching
+- [ ] Helper utilities tested with unit tests
+- [ ] AllToolsExcept() returns correct subset of tools
+- [ ] Tool helpers properly convert to CLI flag format

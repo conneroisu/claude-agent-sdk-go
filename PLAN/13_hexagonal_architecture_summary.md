@@ -5,25 +5,28 @@
 The SDK strictly follows the dependency rule of hexagonal architecture:
 
 ```
-LAYER 4: Public API (client.go, query.go)     
-- Entry point for SDK users                    
-- Wires domain services with adapters          
+LAYER 4: Public API (client.go, query.go)
+- Entry point for SDK users
+- Wires domain services with adapters
 depends on ↓
-LAYER 3: ADAPTERS (adapters/*)                 
-- cli/      → implements ports.Transport       
-- jsonrpc/  → implements ports.ProtocolHandler 
-- parse/    → implements ports.MessageParser   
-- mcp/      → implements ports.MCPServer       
-depends on ↓
-LAYER 2: PORTS (ports/*)                       
-- Interfaces defined BY domain needs           
-- Contract layer between domain and infra      
-depends on ↓
-LAYER 1: CORE DOMAIN (querying/, streaming/)  
-- Pure business logic                          
-- No infrastructure dependencies               
-- Uses port interfaces, never adapters         
+LAYER 3: ADAPTERS (adapters/*)
+- cli/      → implements ports.Transport
+- jsonrpc/  → implements ports.ProtocolHandler
+- parse/    → implements ports.MessageParser
+- mcp/      → implements ports.MCPServer
+         ↓ depends on
+LAYER 2: PORTS (ports/*)
+- Interfaces defined BY domain needs
+- Contract layer between domain and infra
+         ↑ depends on
+LAYER 1: CORE DOMAIN (querying/, streaming/)
+- Pure business logic
+- No infrastructure dependencies
+- Uses port interfaces, never adapters
 ```
+
+Both adapters (Layer 3) and domain services (Layer 1) depend on ports (Layer 2).
+Domain services never import adapters, ensuring clean separation.
 
 ### Key Architectural Decisions
 

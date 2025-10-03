@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/conneroisu/claude/pkg/claude/hooking"
-	"github.com/conneroisu/claude/pkg/claude/permissions"
 )
 
 // Re-export domain hook types for public API
