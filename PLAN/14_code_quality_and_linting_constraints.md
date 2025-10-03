@@ -6,6 +6,8 @@ This SDK enforces **exceptionally strict** code quality standards via golangci-l
 
 **Key Philosophy**: Code quality constraints drive architectural decisions. The 175-line file limit and 25-line function limit fundamentally shape how we structure the codebase.
 
+The golangci-lint configuration already exists and is maintained in this repository.
+
 ---
 
 ## Critical Linting Rules
