@@ -412,7 +412,7 @@ import "context"
 // ProtocolHandler defines what the domain needs for control protocol
 type ProtocolHandler interface {
 	// Initialize sends the initialize control request with hooks config
-	Initialize(ctx context.Context, config map[string]any) (map[string]any, error)
+	Initialize(ctx context.Context, config any) (map[string]any, error)
 	// SendControlRequest sends a control request and waits for response (60s timeout)
 	SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error)
 	// HandleControlRequest routes inbound control requests by subtype

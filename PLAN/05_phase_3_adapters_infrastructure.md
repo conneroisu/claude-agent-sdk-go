@@ -672,7 +672,11 @@ func parsePermissionUpdate(data map[string]any) permissions.PermissionUpdate {
 func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any, hooks map[string]hooking.HookCallback) (map[string]any, error) {
 	callbackID, _ := request["callback_id"].(string)
 	input, _ := request["input"].(map[string]any)
-	toolUseID, _ := request["tool_use_id"].(*string)
+	// toolUseID is a string, not *string - JSON decoding produces plain string values
+	var toolUseID *string
+	if id, ok := request["tool_use_id"].(string); ok {
+		toolUseID = &id
+	}
 	callback, exists := hooks[callbackID]
 	if !exists {
 		return nil, fmt.Errorf("no hook callback found for ID: %s", callbackID)

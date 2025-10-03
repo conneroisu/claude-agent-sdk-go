@@ -89,7 +89,7 @@ Each phase builds on the previous one, starting from core domain models and endi
   - `Client` type for streaming conversations
   - Dependency wiring and composition
 
-- **Phase 5: Advanced Features**
+- **[Phase 5: Advanced Features](#phase-5-advanced-features)**
   - [07a. Hooks Support](07a_phase_5_hooks.md)
   - [07b. MCP Server Support](07b_phase_5_mcp_servers.md)
   - [07c. Permission Callbacks](07c_phase_5_permissions.md)

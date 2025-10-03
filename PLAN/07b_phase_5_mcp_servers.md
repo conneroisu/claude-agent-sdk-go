@@ -52,7 +52,7 @@ SDK-managed servers are registered separately to avoid storing server instances 
 - Adapter manages in-memory transports to communicate with user's server
 - Adapter proxies messages from Claude CLI to user's MCP server
 
-**Note:** The `options.SDKServerConfig` type is only used to mark that a server is SDK-managed. The actual server instances are managed separately by the MCP adapter layer to avoid circular dependencies.
+**Note:** The `options.SDKServerConfig` type (defined in Phase 1) is ONLY used to mark that a server is SDK-managed. It ONLY contains configuration data (type and name), NOT the server instance itself. The actual `*mcp.Server` instances are managed separately by the MCP adapter layer to avoid circular dependencies between the options package and the MCP SDK.
 
 ---
 

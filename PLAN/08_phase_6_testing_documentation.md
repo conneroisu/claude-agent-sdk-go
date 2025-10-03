@@ -59,8 +59,8 @@ func TestService_Execute(t *testing.T) {
 			}
 			protocol := &mockProtocol{}
 			parser := &mockParser{}
-			hooks := &mockHooks{}
-			perms := &mockPermissions{}
+			hooks := hooking.NewService(nil)
+			perms := permissions.NewService(nil)
 			mcpServers := make(map[string]ports.MCPServer)
 			svc := querying.NewService(transport, protocol, parser, hooks, perms, mcpServers)
 			msgCh, errCh := svc.Execute(context.Background(), tt.prompt, &options.AgentOptions{})
@@ -109,7 +109,8 @@ func TestParseMessage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parse.ParseMessage(tt.input)
+			parser := parse.NewAdapter()
+			got, err := parser.Parse(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseMessage() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -222,9 +223,9 @@ func TestQuery_BasicInteraction(t *testing.T) {
 				}
 				return
 			}
-			if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
+			if _, ok := msg.(messages.AssistantMessage); ok {
 				gotResponse = true
-				t.Logf("Received: %+v", assistantMsg)
+				t.Logf("Received: %+v", msg)
 			}
 		case err := <-errCh:
 			t.Fatalf("error: %v", err)
@@ -345,7 +346,7 @@ func main() {
 			if !ok {
 				return
 			}
-			if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
+			if assistantMsg, ok := msg.(messages.AssistantMessage); ok {
 				for _, block := range assistantMsg.Content {
 					if textBlock, ok := block.(messages.TextBlock); ok {
 						fmt.Printf("Claude: %s\n", textBlock.Text)
