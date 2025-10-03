@@ -1,4 +1,5 @@
 ## Phase 6: Testing & Documentation
+Priority: Critical
 ### 6.1 Unit Tests
 Priority: Critical
 Testing Strategy:
