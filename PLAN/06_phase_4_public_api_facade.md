@@ -33,10 +33,20 @@ func Query(ctx context.Context, prompt string, opts *options.AgentOptions, hooks
 	if hooks != nil {
 		hookingService = hooking.NewService(hooks)
 	}
-	// TODO: Create permissions config from options
+	// Create permissions service from options
 	var permissionsService *permissions.Service
-	// TODO: Create MCP servers from options
-	var mcpServers map[string]ports.MCPServer
+	if opts.PermissionMode != nil {
+		// TODO: Initialize permissions service based on permission mode
+		// permissionsService = permissions.NewService(...)
+	}
+	// Initialize MCP servers from configuration
+	mcpServers, err := initializeMCPServers(ctx, opts.MCPServers)
+	if err != nil {
+		errCh := make(chan error, 1)
+		errCh <- fmt.Errorf("failed to initialize MCP servers: %w", err)
+		close(errCh)
+		return nil, errCh
+	}
 	queryService := querying.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
 	// Execute domain logic
 	return queryService.Execute(ctx, prompt, opts)
@@ -100,8 +110,11 @@ func (c *Client) Connect(ctx context.Context, prompt *string) error {
 	if c.permissions != nil {
 		permissionsService = permissions.NewService(c.permissions)
 	}
-	// TODO: Create MCP servers from options
-	var mcpServers map[string]ports.MCPServer
+	// Initialize MCP servers from configuration
+	mcpServers, err := initializeMCPServers(ctx, c.opts.MCPServers)
+	if err != nil {
+		return fmt.Errorf("failed to initialize MCP servers: %w", err)
+	}
 	// Create streaming service with dependencies
 	c.streamingService = streaming.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
 	// Execute domain logic

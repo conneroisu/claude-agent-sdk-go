@@ -136,25 +136,6 @@ func extractRequiredArray(
 	return arr, nil
 }
 
-// extractOptionalBool extracts an optional boolean field.
-// Returns false if field is missing or not a bool.
-func extractOptionalBool(
-	data map[string]any,
-	key string,
-) bool {
-	val, ok := data[key]
-	if !ok {
-		return false
-	}
-
-	boolVal, ok := val.(bool)
-	if !ok {
-		return false
-	}
-
-	return boolVal
-}
-
 // extractOptionalBoolPtr extracts an optional bool pointer.
 // Returns nil if field is missing.
 func extractOptionalBoolPtr(

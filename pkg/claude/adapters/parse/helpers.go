@@ -18,7 +18,7 @@ func getStringPtr(data map[string]any, key string) *string {
 
 // parseContentBlocks parses an array of content blocks.
 // Validates against TypeScript SDK ContentBlock types:
-// TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock
+// TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock.
 func parseContentBlocks(
 	contentArr []any,
 ) ([]messages.ContentBlock, error) {

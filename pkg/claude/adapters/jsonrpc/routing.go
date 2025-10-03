@@ -99,22 +99,32 @@ func (a *Adapter) routeMessage(
 
 // routeControlResponse routes control_response messages.
 func (a *Adapter) routeControlResponse(msg map[string]any) {
-	response, _ := msg["response"].(map[string]any)
-	requestID, _ := response["request_id"].(string)
+	response, ok := msg["response"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	requestID := extractOptionalString(response, "request_id")
+	if requestID == "" {
+		return
+	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if ch, exists := a.pendingReqs[requestID]; exists {
-		subtype, _ := response["subtype"].(string)
+		subtype := extractOptionalString(response, "subtype")
 
 		if subtype == "error" {
-			errorMsg, _ := response["error"].(string)
+			errorMsg := extractOptionalString(response, "error")
 			ch <- result{
 				err: fmt.Errorf("control error: %s", errorMsg),
 			}
 		} else {
-			responseData, _ := response["response"].(map[string]any) //nolint:lll
+			responseData, ok := response["response"].(map[string]any)
+			if !ok {
+				responseData = make(map[string]any)
+			}
 			ch <- result{data: responseData}
 		}
 
@@ -124,7 +134,10 @@ func (a *Adapter) routeControlResponse(msg map[string]any) {
 
 // handleCancelRequest handles control_cancel_request messages.
 func (a *Adapter) handleCancelRequest(msg map[string]any) {
-	requestID, _ := msg["request_id"].(string)
+	requestID := extractOptionalString(msg, "request_id")
+	if requestID == "" {
+		return
+	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
