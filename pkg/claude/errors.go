@@ -1,4 +1,4 @@
-// Package claude provides the public API for the Claude Agent SDK.
+// Package claude provides a Go SDK for Claude Agent.
 package claude
 
 import (
@@ -6,52 +6,58 @@ import (
 	"fmt"
 )
 
-// Common errors returned by the SDK.
+// Common SDK errors.
 var (
 	// ErrNotConnected indicates the client is not connected to Claude CLI.
 	ErrNotConnected = errors.New("claude: not connected")
 
-	// ErrCLINotFound indicates Claude CLI executable was not found.
+	// ErrCLINotFound indicates the Claude CLI binary was not found.
 	ErrCLINotFound = errors.New("claude: CLI not found")
 
-	// ErrCLIConnection indicates connection to Claude CLI failed.
+	// ErrCLIConnection indicates a connection failure to Claude CLI.
 	ErrCLIConnection = errors.New("claude: connection failed")
 
 	// ErrProcessFailed indicates the CLI process failed.
 	ErrProcessFailed = errors.New("claude: process failed")
 
-	// ErrJSONDecode indicates JSON decoding failed.
+	// ErrJSONDecode indicates a JSON decoding failure.
 	ErrJSONDecode = errors.New("claude: JSON decode failed")
 
-	// ErrMessageParse indicates message parsing failed.
+	// ErrMessageParse indicates a message parsing failure.
 	ErrMessageParse = errors.New("claude: message parse failed")
 
-	// ErrControlTimeout indicates control request timeout.
+	// ErrControlTimeout indicates a control request timeout.
 	ErrControlTimeout = errors.New("claude: control request timeout")
 
-	// ErrInvalidInput indicates invalid input was provided.
+	// ErrInvalidInput indicates invalid user input.
 	ErrInvalidInput = errors.New("claude: invalid input")
 )
 
-// CLINotFoundError indicates Claude Code CLI was not found at expected path.
+// CLINotFoundError indicates the Claude CLI binary was not found.
+//
+// This error provides the path that was searched for troubleshooting.
 type CLINotFoundError struct {
-	// Path is the path that was searched
+	// Path is the location where the CLI was expected.
 	Path string
 }
 
+// Error implements the error interface.
 func (e *CLINotFoundError) Error() string {
 	return fmt.Sprintf("Claude Code not found: %s", e.Path)
 }
 
-// ProcessError indicates the CLI process failed with an exit code.
+// ProcessError indicates a CLI process failure.
+//
+// This error includes the exit code and stderr output for debugging.
 type ProcessError struct {
-	// ExitCode is the process exit code
+	// ExitCode is the process exit code.
 	ExitCode int
 
-	// Stderr contains error output from the process
+	// Stderr contains the process stderr output.
 	Stderr string
 }
 
+// Error implements the error interface.
 func (e *ProcessError) Error() string {
 	return fmt.Sprintf(
 		"process failed with exit code %d: %s",
@@ -60,19 +66,23 @@ func (e *ProcessError) Error() string {
 	)
 }
 
-// JSONDecodeError indicates JSON decoding failed.
+// JSONDecodeError indicates a JSON decoding failure.
+//
+// This error wraps the underlying error and includes the problematic line.
 type JSONDecodeError struct {
-	// Line is the raw input line that failed to decode
+	// Line is the JSON line that failed to decode.
 	Line string
 
-	// Err is the underlying error
+	// Err is the underlying decoding error.
 	Err error
 }
 
+// Error implements the error interface.
 func (e *JSONDecodeError) Error() string {
 	return fmt.Sprintf("failed to decode JSON: %v", e.Err)
 }
 
+// Unwrap returns the underlying error.
 func (e *JSONDecodeError) Unwrap() error {
 	return e.Err
 }

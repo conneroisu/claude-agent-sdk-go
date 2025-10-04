@@ -5,121 +5,99 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 )
 
-// Write sends data to the CLI subprocess stdin.
-// Data should be newline-terminated JSON messages.
+// Write sends data to the CLI process via stdin.
+// If closeStdinAfterWrite is set, stdin will be closed after writing.
 func (a *Adapter) Write(_ context.Context, data string) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	shouldClose := a.closeStdinAfterWrite
+	a.mu.RUnlock()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	if !a.ready {
-		return ErrNotConnected
+		return fmt.Errorf("transport not ready")
 	}
 
-	if a.stdin == nil {
-		return ErrStdinClosed
+	if a.exitErr != nil {
+		return fmt.Errorf("transport has exited: %w", a.exitErr)
 	}
 
-	// Write data with newline
-	_, err := io.WriteString(a.stdin, data+"\n")
+	_, err := a.stdin.Write([]byte(data))
 	if err != nil {
-		return fmt.Errorf("write failed: %w", err)
+		return err
 	}
 
-	// Close stdin if configured to do so
-	if a.closeStdinAfterWrite {
+	// Close stdin after write for one-shot queries
+	if shouldClose {
+		a.closeStdinAfterWrite = false
 		_ = a.stdin.Close()
-		a.stdin = nil
 	}
 
 	return nil
 }
 
-// EndInput closes stdin to signal no more input.
-// This is used in one-shot query mode.
+// ReadMessages continuously reads JSON messages from stdout.
+// Returns channels for messages and errors.
+func (a *Adapter) ReadMessages(ctx context.Context) (<-chan map[string]any, <-chan error) {
+	msgCh := make(chan map[string]any, 10)
+	errCh := make(chan error, 1)
+
+	go func() {
+		defer close(msgCh)
+		defer close(errCh)
+
+		scanner := bufio.NewScanner(a.stdout)
+		scanBuf := make([]byte, 64*1024)
+		scanner.Buffer(scanBuf, a.maxBufferSize)
+
+		buffer := ""
+		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			default:
+			}
+
+			line := scanner.Text()
+			buffer += line
+
+			if len(buffer) > a.maxBufferSize {
+				errCh <- fmt.Errorf("message buffer exceeded %d bytes", a.maxBufferSize)
+				return
+			}
+
+			var msg map[string]any
+			if err := json.Unmarshal([]byte(buffer), &msg); err == nil {
+				buffer = ""
+				msgCh <- msg
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			errCh <- err
+		}
+
+		if a.cmd != nil {
+			if err := a.cmd.Wait(); err != nil {
+				errCh <- fmt.Errorf("process exited with error: %w", err)
+			}
+		}
+	}()
+
+	return msgCh, errCh
+}
+
+// EndInput closes stdin to signal no more input will be sent.
 func (a *Adapter) EndInput() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if a.stdin != nil {
-		err := a.stdin.Close()
-		a.stdin = nil
-
-		return err
+		return a.stdin.Close()
 	}
-
 	return nil
-}
-
-// ReadMessages reads JSON messages from stdout.
-// Returns channels for messages and errors.
-// Messages are raw map[string]any for flexibility.
-func (a *Adapter) ReadMessages(
-	ctx context.Context,
-) (<-chan map[string]any, <-chan error) {
-	msgCh := make(chan map[string]any, 10) //nolint:revive // Buffer size appropriate
-	errCh := make(chan error, 1)
-
-	go a.readLoop(ctx, msgCh, errCh)
-
-	return msgCh, errCh
-}
-
-// readLoop implements the message reading logic.
-// This runs in a goroutine and sends to channels.
-func (a *Adapter) readLoop(
-	ctx context.Context,
-	msgCh chan<- map[string]any,
-	errCh chan<- error,
-) {
-	defer close(msgCh)
-	defer close(errCh)
-
-	a.mu.RLock()
-	stdout := a.stdout
-	a.mu.RUnlock()
-
-	if stdout == nil {
-		errCh <- ErrNotConnected
-
-		return
-	}
-
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 4096), a.maxBufferSize) //nolint:revive // Standard buffer
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			errCh <- ctx.Err()
-
-			return
-		default:
-		}
-
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		var msg map[string]any
-		if err := json.Unmarshal(line, &msg); err != nil {
-			// Skip invalid JSON lines (e.g., debug output)
-			continue
-		}
-
-		select {
-		case msgCh <- msg:
-		case <-ctx.Done():
-			errCh <- ctx.Err()
-
-			return
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		errCh <- fmt.Errorf("scan error: %w", err)
-	}
 }

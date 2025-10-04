@@ -2,38 +2,27 @@ package mcp
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
-// SerializeToolArgs converts tool arguments to JSON.
-// This is used when sending tool calls over the wire.
-func SerializeToolArgs(args map[string]any) (string, error) {
-	data, err := json.Marshal(args)
-	if err != nil {
-		return "", fmt.Errorf("serialize failed: %w", err)
+// createErrorResponse creates a JSON-RPC error response.
+func createErrorResponse(req map[string]any, code int, message string) ([]byte, error) {
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      req["id"],
+		"error": map[string]any{
+			"code":    code,
+			"message": message,
+		},
 	}
-
-	return string(data), nil
+	return json.Marshal(response)
 }
 
-// DeserializeToolArgs parses JSON tool arguments.
-// This is used when receiving tool calls.
-func DeserializeToolArgs(data string) (map[string]any, error) {
-	var args map[string]any
-	if err := json.Unmarshal([]byte(data), &args); err != nil {
-		return nil, fmt.Errorf("deserialize failed: %w", err)
+// createSuccessResponse creates a JSON-RPC success response.
+func createSuccessResponse(req map[string]any, result any) ([]byte, error) {
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      req["id"],
+		"result":  result,
 	}
-
-	return args, nil
-}
-
-// ValidateToolResult checks if a tool result is valid.
-// Tool results should be JSON-serializable.
-func ValidateToolResult(result map[string]any) error {
-	_, err := json.Marshal(result)
-	if err != nil {
-		return fmt.Errorf("invalid tool result: %w", err)
-	}
-
-	return nil
+	return json.Marshal(response)
 }

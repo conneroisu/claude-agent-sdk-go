@@ -1,61 +1,51 @@
 package permissions
 
-import "github.com/conneroisu/claude/pkg/claude/options"
+import (
+	"context"
+
+	"github.com/conneroisu/claude/pkg/claude/options"
+)
 
 // PermissionResult represents the outcome of a permission check.
+// It is a discriminated union that can be either Allow or Deny.
 type PermissionResult interface {
 	permissionResult()
 }
 
 // PermissionResultAllow indicates tool use is allowed.
+// It can optionally include updated tool input and permission changes.
 type PermissionResultAllow struct {
-	// UpdatedInput can modify tool input (varies by tool)
-	UpdatedInput map[string]any
-
-	// UpdatedPermissions can update permission rules
+	// UpdatedInput is intentionally flexible as tool inputs vary
+	UpdatedInput       map[string]any
 	UpdatedPermissions []PermissionUpdate
 }
 
 func (PermissionResultAllow) permissionResult() {}
 
 // PermissionResultDeny indicates tool use is denied.
+// It provides a denial message and controls whether to interrupt execution.
 type PermissionResultDeny struct {
-	// Message explains why permission was denied
-	Message string
-
-	// Interrupt stops execution completely if true
+	Message   string
 	Interrupt bool
 }
 
 func (PermissionResultDeny) permissionResult() {}
 
 // PermissionUpdate represents a permission change.
+// It encapsulates rule changes, mode updates, and storage destinations.
 type PermissionUpdate struct {
-	// Type indicates the update operation
-	Type string
-
-	// Rules contains permission rules (for rule operations)
-	Rules []PermissionRuleValue
-
-	// Behavior is the permission action (for rule operations)
-	Behavior *PermissionBehavior
-
-	// Mode is the new permission mode (for setMode operation)
-	Mode *options.PermissionMode
-
-	// Directories are paths (for directory operations)
+	Type        string
+	Rules       []PermissionRuleValue
+	Behavior    *PermissionBehavior
+	Mode        *options.PermissionMode
 	Directories []string
-
-	// Destination specifies where to save the update
 	Destination *PermissionUpdateDestination
 }
 
-// PermissionRuleValue defines a permission rule.
+// PermissionRuleValue represents a single permission rule.
+// It targets a specific tool with optional content matching.
 type PermissionRuleValue struct {
-	// ToolName is the tool this rule applies to
-	ToolName string
-
-	// RuleContent is the rule pattern (e.g., "git:*")
+	ToolName    string
 	RuleContent *string
 }
 
@@ -63,38 +53,46 @@ type PermissionRuleValue struct {
 type PermissionBehavior string
 
 const (
-	// PermissionBehaviorAllow automatically allows the tool.
+	// PermissionBehaviorAllow automatically allows matching operations.
 	PermissionBehaviorAllow PermissionBehavior = "allow"
-
-	// PermissionBehaviorDeny automatically denies the tool.
+	// PermissionBehaviorDeny automatically denies matching operations.
 	PermissionBehaviorDeny PermissionBehavior = "deny"
-
-	// PermissionBehaviorAsk prompts the user for permission.
+	// PermissionBehaviorAsk prompts for permission on matching.
 	PermissionBehaviorAsk PermissionBehavior = "ask"
 )
 
-// PermissionUpdateDestination specifies where to save permission updates.
+// PermissionUpdateDestination specifies where permission changes are stored.
 type PermissionUpdateDestination string
 
-//revive:disable:line-length-limit Long type and const names required by API
 const (
-	// PermissionDestinationUserSettings saves to user settings.
+	// PermissionDestinationUserSettings stores in user settings.
 	PermissionDestinationUserSettings PermissionUpdateDestination = "userSettings"
-
-	// PermissionDestinationProjectSettings saves to project settings.
+	// PermissionDestinationProjectSettings stores in project.
 	PermissionDestinationProjectSettings PermissionUpdateDestination = "projectSettings"
-
-	// PermissionDestinationLocalSettings saves to local settings.
+	// PermissionDestinationLocalSettings stores locally.
 	PermissionDestinationLocalSettings PermissionUpdateDestination = "localSettings"
-
-	// PermissionDestinationSession saves for current session only.
+	// PermissionDestinationSession stores for session.
 	PermissionDestinationSession PermissionUpdateDestination = "session"
 )
 
-//revive:enable:line-length-limit
-
 // ToolPermissionContext provides context for permission decisions.
+// It includes CLI-provided suggestions for "always allow" workflows.
 type ToolPermissionContext struct {
-	// Suggestions from CLI for "always allow" workflows
 	Suggestions []PermissionUpdate
+}
+
+// CanUseToolFunc is a callback for permission checks.
+// input is intentionally map[string]any as tool inputs vary by tool.
+type CanUseToolFunc func(
+	ctx context.Context,
+	toolName string,
+	input map[string]any,
+	permCtx ToolPermissionContext,
+) (PermissionResult, error)
+
+// PermissionsConfig holds permission service configuration.
+// It defines the initial permission mode and optional callback.
+type PermissionsConfig struct {
+	Mode       options.PermissionMode
+	CanUseTool CanUseToolFunc
 }

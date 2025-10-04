@@ -2,74 +2,82 @@ package options
 
 import "fmt"
 
-// BuiltinTool represents a Claude built-in tool name.
-// This provides type safety and IDE autocomplete for tool selection.
+// BuiltinTool represents a Claude Code built-in tool name.
+// This type provides compile-time safety and IDE autocomplete,
+// preventing typos and making tool configuration maintainable.
 type BuiltinTool string
 
-// Built-in tool constants - all 18 Claude Code tools.
+// Execution tools for running commands and managing processes.
 const (
-	// ToolBash executes bash commands.
+	// ToolBash executes bash commands in a persistent shell session.
 	ToolBash BuiltinTool = "Bash"
-
-	// ToolBashOutput reads output from background bash shells.
+	// ToolBashOutput retrieves output from a running background shell.
 	ToolBashOutput BuiltinTool = "BashOutput"
-
-	// ToolKillShell kills a background bash shell.
+	// ToolKillShell terminates a running background shell by ID.
 	ToolKillShell BuiltinTool = "KillShell"
+)
 
-	// ToolRead reads files from the filesystem.
+// File operation tools for reading, writing, and searching files.
+const (
+	// ToolRead reads file contents with optional line range selection.
 	ToolRead BuiltinTool = "Read"
-
-	// ToolWrite writes files to the filesystem.
+	// ToolWrite writes or overwrites file contents.
 	ToolWrite BuiltinTool = "Write"
-
-	// ToolEdit edits existing files.
+	// ToolEdit performs exact string replacements in files.
 	ToolEdit BuiltinTool = "Edit"
-
-	// ToolGlob finds files using glob patterns.
+	// ToolGlob finds files matching glob patterns.
 	ToolGlob BuiltinTool = "Glob"
-
-	// ToolGrep searches file contents using regex.
+	// ToolGrep searches file contents using regex patterns.
 	ToolGrep BuiltinTool = "Grep"
+)
 
-	// ToolTask launches specialized subagents.
+// Agent coordination tools for delegating tasks and managing planning mode.
+const (
+	// ToolTask delegates work to a subagent with specific capabilities.
 	ToolTask BuiltinTool = "Task"
-
-	// ToolExitPlanMode exits plan mode.
+	// ToolExitPlanMode exits planning mode and returns to normal execution.
 	ToolExitPlanMode BuiltinTool = "ExitPlanMode"
+)
 
-	// ToolWebFetch fetches web content.
+// Web interaction tools for fetching and searching online content.
+const (
+	// ToolWebFetch retrieves and processes content from URLs.
 	ToolWebFetch BuiltinTool = "WebFetch"
-
-	// ToolWebSearch performs web searches.
+	// ToolWebSearch performs web searches and returns results.
 	ToolWebSearch BuiltinTool = "WebSearch"
+)
 
-	// ToolListMcpResources lists MCP server resources.
+// MCP (Model Context Protocol) tools for interacting with MCP servers.
+const (
+	// ToolListMcpResources lists available resources from MCP servers.
 	ToolListMcpResources BuiltinTool = "ListMcpResources"
-
-	// ToolReadMcpResource reads a specific MCP resource.
+	// ToolReadMcpResource reads a specific resource from an MCP server.
 	ToolReadMcpResource BuiltinTool = "ReadMcpResource"
-
-	// ToolMcp invokes MCP server tools.
+	// ToolMcp sends raw JSON-RPC messages to MCP servers.
 	ToolMcp BuiltinTool = "Mcp"
+)
 
-	// ToolNotebookEdit edits Jupyter notebooks.
+// Specialized tools for notebooks, task management, and slash commands.
+const (
+	// ToolNotebookEdit edits cells in Jupyter notebooks.
 	ToolNotebookEdit BuiltinTool = "NotebookEdit"
-
-	// ToolTodoWrite manages TODO lists.
+	// ToolTodoWrite creates and manages task lists.
 	ToolTodoWrite BuiltinTool = "TodoWrite"
-
-	// ToolSlashCommand executes slash commands.
+	// ToolSlashCommand executes custom slash commands.
 	ToolSlashCommand BuiltinTool = "SlashCommand"
 )
 
-// WithMatcher creates a tool matcher pattern (e.g., "Bash(git:*)").
-// This is used for fine-grained tool permissions.
+// WithMatcher creates a tool matcher pattern for fine-grained permissions.
+// Matchers allow restricting tool usage to specific patterns, such as limiting
+// Bash to only git commands: ToolBash.WithMatcher("git:*")
+//
+// Returns a formatted string like "Bash(git:*)" for use in permission rules.
 func (t BuiltinTool) WithMatcher(matcher string) string {
 	return fmt.Sprintf("%s(%s)", t, matcher)
 }
 
 // String returns the tool name as a string.
+// This method enables seamless conversion to string for CLI flag construction.
 func (t BuiltinTool) String() string {
 	return string(t)
 }

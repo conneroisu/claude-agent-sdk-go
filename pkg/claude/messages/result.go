@@ -1,105 +1,150 @@
 package messages
 
+// ResultMessage is a discriminated union for query execution results.
+//
+// Results can be either success or error, distinguished by the Subtype field.
+// Both variants share common metrics (duration, cost, usage, etc.).
+type ResultMessage interface {
+	resultMessage()
+}
+
 // ResultMessageSuccess indicates a successful query completion.
-// This contains the final result along with usage statistics
-// and cost information.
+//
+// Contains the final result text, execution metrics, token usage,
+// and cost information. Sent when Claude completes a query successfully.
+//
+// Example:
+//
+//	result := ResultMessageSuccess{
+//	    Subtype: "success",
+//	    Result: "Task completed successfully",
+//	    NumTurns: 5,
+//	    TotalCostUSD: 0.025,
+//	}
 type ResultMessageSuccess struct {
-	// Subtype is always "success"
+	// Subtype is always "success" for successful results.
 	Subtype string `json:"subtype"`
 
-	// DurationMs is total execution time in milliseconds
+	// DurationMs is the total execution time in milliseconds.
 	DurationMs int `json:"duration_ms"`
 
-	// DurationAPIMs is API call time in milliseconds
+	// DurationAPIMs is the time spent in API calls in milliseconds.
 	DurationAPIMs int `json:"duration_api_ms"`
 
-	// IsError is always false for success
+	// IsError is always false for success results.
 	IsError bool `json:"is_error"`
 
-	// NumTurns is the number of conversation turns executed
+	// NumTurns is the number of conversation turns executed.
 	NumTurns int `json:"num_turns"`
 
-	// SessionID identifies the conversation session
+	// SessionID identifies the conversation session.
 	SessionID string `json:"session_id"`
 
-	// Result contains the final response text
+	// Result is the final result text from Claude.
 	Result string `json:"result"`
 
-	// TotalCostUSD is the total cost in US dollars
+	// TotalCostUSD is the estimated cost in US dollars.
 	TotalCostUSD float64 `json:"total_cost_usd"`
 
-	// Usage contains aggregate token usage statistics
+	// Usage contains aggregated token usage statistics.
 	Usage UsageStats `json:"usage"`
 
-	// ModelUsage breaks down usage by model
+	// ModelUsage maps model names to their individual usage stats.
 	ModelUsage map[string]ModelUsage `json:"modelUsage"`
 
-	// PermissionDenials lists tools that were denied by permissions
+	// PermissionDenials lists tools that were denied by permissions.
 	PermissionDenials []PermissionDenial `json:"permission_denials"`
 }
 
+// resultMessage implements the ResultMessage interface.
 func (ResultMessageSuccess) resultMessage() {}
-func (ResultMessageSuccess) message()       {}
 
-// MessageErrorSubtype indicates the type of error that occurred.
+// message implements the Message interface.
+func (ResultMessageSuccess) message() {}
+
+// MessageErrorSubtype represents the type of error that occurred.
 type MessageErrorSubtype string
 
-//revive:disable:line-length-limit Long const names required by API
 const (
-	// MessageErrorSubtypeErrorMaxTurns indicates max turns was reached.
+	// MessageErrorSubtypeErrorMaxTurns indicates max turns limit reached.
 	MessageErrorSubtypeErrorMaxTurns MessageErrorSubtype = "error_max_turns"
 
-	// MessageErrorSubtypeErrorDuringExecution indicates an execution error.
+	// MessageErrorSubtypeErrorDuringExecution indicates execution error.
+	//nolint:revive // Constant name from API spec
 	MessageErrorSubtypeErrorDuringExecution MessageErrorSubtype = "error_during_execution"
 )
 
-//revive:enable:line-length-limit
-
-// ResultMessageError indicates an error during execution.
-// This contains error information along with usage statistics.
+// ResultMessageError indicates an error during query execution.
+//
+// Contains execution metrics and error information. Sent when Claude
+// encounters an error or reaches the maximum turn limit.
+//
+// Example:
+//
+//	result := ResultMessageError{
+//	    Subtype: MessageErrorSubtypeErrorMaxTurns,
+//	    NumTurns: 25,
+//	    IsError: true,
+//	}
 type ResultMessageError struct {
-	// Subtype indicates the error type
+	// Subtype indicates the type of error.
+	// Values: "error_max_turns", "error_during_execution"
 	Subtype MessageErrorSubtype `json:"subtype"`
 
-	// DurationMs is total execution time in milliseconds
+	// DurationMs is the total execution time in milliseconds.
 	DurationMs int `json:"duration_ms"`
 
-	// DurationAPIMs is API call time in milliseconds
+	// DurationAPIMs is the time spent in API calls in milliseconds.
 	DurationAPIMs int `json:"duration_api_ms"`
 
-	// IsError is always true for errors
+	// IsError is always true for error results.
 	IsError bool `json:"is_error"`
 
-	// NumTurns is the number of conversation turns before error
+	// NumTurns is the number of conversation turns executed before error.
 	NumTurns int `json:"num_turns"`
 
-	// SessionID identifies the conversation session
+	// SessionID identifies the conversation session.
 	SessionID string `json:"session_id"`
 
-	// TotalCostUSD is the total cost in US dollars
+	// TotalCostUSD is the estimated cost in US dollars.
 	TotalCostUSD float64 `json:"total_cost_usd"`
 
-	// Usage contains aggregate token usage statistics
+	// Usage contains aggregated token usage statistics.
 	Usage UsageStats `json:"usage"`
 
-	// ModelUsage breaks down usage by model
+	// ModelUsage maps model names to their individual usage stats.
 	ModelUsage map[string]ModelUsage `json:"modelUsage"`
 
-	// PermissionDenials lists tools that were denied by permissions
+	// PermissionDenials lists tools that were denied by permissions.
 	PermissionDenials []PermissionDenial `json:"permission_denials"`
 }
 
+// resultMessage implements the ResultMessage interface.
 func (ResultMessageError) resultMessage() {}
-func (ResultMessageError) message()       {}
+
+// message implements the Message interface.
+func (ResultMessageError) message() {}
 
 // PermissionDenial represents a tool use that was denied by permissions.
+//
+// Contains the tool name, tool use ID, and the input that was denied.
+// Used to track permission-based rejections in query results.
+//
+// Example:
+//
+//	denial := PermissionDenial{
+//	    ToolName: "Bash",
+//	    ToolUseID: "toolu_123",
+//	    ToolInput: map[string]any{"command": "rm -rf /"},
+//	}
 type PermissionDenial struct {
-	// ToolName is the name of the denied tool
+	// ToolName is the name of the tool that was denied.
 	ToolName string `json:"tool_name"`
 
-	// ToolUseID is the ID of the denied tool use
+	// ToolUseID is the ID of the denied tool use.
 	ToolUseID string `json:"tool_use_id"`
 
-	// ToolInput is the input that was attempted (varies by tool)
+	// ToolInput contains the input parameters that were denied.
+	// Flexible map since tool inputs vary by tool.
 	ToolInput map[string]any `json:"tool_input"`
 }

@@ -1,4 +1,3 @@
-// Package streaming provides message sending functionality.
 package streaming
 
 import (
@@ -7,22 +6,20 @@ import (
 	"fmt"
 )
 
-// SendMessage sends a message in the streaming conversation.
-// Formats the message as a user message and writes to the transport.
+// SendMessage sends a user message to Claude CLI.
+// It formats the message as a user prompt and writes it to the transport.
+// Returns error if marshaling or writing fails.
 func (s *Service) SendMessage(ctx context.Context, msg string) error {
-	// Create user message format expected by Claude CLI
 	userMsg := map[string]any{
 		"type":   "user",
 		"prompt": msg,
 	}
 
-	// Marshal to JSON
 	msgBytes, err := json.Marshal(userMsg)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
 
-	// Write to transport with newline delimiter
 	if err := s.transport.Write(ctx, string(msgBytes)+"\n"); err != nil {
 		return fmt.Errorf("write message: %w", err)
 	}

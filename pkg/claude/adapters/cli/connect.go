@@ -3,41 +3,47 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 )
 
-// Connect establishes connection to Claude CLI subprocess.
+// Connect establishes connection to the Claude CLI process.
 // This method discovers the CLI binary, builds the command,
-// and starts the subprocess with proper I/O pipes.
+// and starts the subprocess with appropriate environment.
 func (a *Adapter) Connect(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if a.ready {
-		return ErrAlreadyConnected
+		return nil
 	}
 
-	// Discover CLI binary
-	if a.cliPath == "" {
-		path, err := a.findCLI()
-		if err != nil {
-			return fmt.Errorf("CLI discovery failed: %w", err)
-		}
-		a.cliPath = path
+	// Find CLI
+	cliPath, err := a.findCLI()
+	if err != nil {
+		return fmt.Errorf("CLI discovery failed: %w", err)
 	}
+	a.cliPath = cliPath
 
-	// Build command arguments
+	// Build command
 	cmdArgs, err := a.BuildCommand()
 	if err != nil {
-		return fmt.Errorf("command build failed: %w", err)
+		return fmt.Errorf("command construction failed: %w", err)
 	}
 
-	// Create command with context
-	a.cmd = exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+	// Set up environment
+	env := a.buildEnvironment()
 
-	// Setup I/O pipes
+	// Create command
+	a.cmd = exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+	a.cmd.Env = env
+	if a.options.Cwd != nil {
+		a.cmd.Dir = *a.options.Cwd
+	}
+
+	// Set up pipes
 	if err := a.setupPipes(); err != nil {
-		return fmt.Errorf("pipe setup failed: %w", err)
+		return err
 	}
 
 	// Start process
@@ -45,15 +51,24 @@ func (a *Adapter) Connect(ctx context.Context) error {
 		return fmt.Errorf("process start failed: %w", err)
 	}
 
+	// Start stderr handler if callback is set
+	if a.options.StderrCallback != nil {
+		go a.handleStderr()
+	}
+
 	a.ready = true
-
-	// Monitor process in background
-	go a.monitorProcess()
-
 	return nil
 }
 
-// setupPipes creates stdin, stdout, stderr pipes for the subprocess.
+func (a *Adapter) buildEnvironment() []string {
+	env := os.Environ()
+	env = append(env, "CLAUDE_CODE_ENTRYPOINT=sdk-go")
+	for k, v := range a.options.Env {
+		env = append(env, k+"="+v)
+	}
+	return env
+}
+
 func (a *Adapter) setupPipes() error {
 	stdin, err := a.cmd.StdinPipe()
 	if err != nil {

@@ -1,42 +1,35 @@
-// Package hooking manages lifecycle hook execution for Claude Agent SDK.
-// Hooks allow users to intercept and respond to events during agent execution.
 package hooking
 
 import "context"
 
-// HookEvent represents different hook trigger points.
+// HookEvent represents different hook trigger points throughout
+// the agent's lifecycle. Each event corresponds to a specific
+// interaction pattern between the SDK and Claude CLI.
 type HookEvent string
 
 const (
-	// HookEventPreToolUse fires before a tool is executed.
+	// HookEventPreToolUse triggers before a tool is executed.
 	HookEventPreToolUse HookEvent = "PreToolUse"
-
-	// HookEventPostToolUse fires after a tool executes.
+	// HookEventPostToolUse triggers after a tool completes.
 	HookEventPostToolUse HookEvent = "PostToolUse"
-
-	// HookEventUserPromptSubmit fires when user submits a prompt.
+	// HookEventUserPromptSubmit triggers when user submits a prompt.
 	HookEventUserPromptSubmit HookEvent = "UserPromptSubmit"
-
-	// HookEventNotification fires for system notifications.
+	// HookEventNotification triggers for system notifications.
 	HookEventNotification HookEvent = "Notification"
-
-	// HookEventSessionStart fires when a session begins.
+	// HookEventSessionStart triggers at session initialization.
 	HookEventSessionStart HookEvent = "SessionStart"
-
-	// HookEventSessionEnd fires when a session ends.
+	// HookEventSessionEnd triggers at session termination.
 	HookEventSessionEnd HookEvent = "SessionEnd"
-
-	// HookEventStop fires when execution stops.
+	// HookEventStop triggers when execution stops.
 	HookEventStop HookEvent = "Stop"
-
-	// HookEventSubagentStop fires when a subagent stops.
+	// HookEventSubagentStop triggers when a subagent stops.
 	HookEventSubagentStop HookEvent = "SubagentStop"
-
-	// HookEventPreCompact fires before conversation compaction.
+	// HookEventPreCompact triggers before transcript compaction.
 	HookEventPreCompact HookEvent = "PreCompact"
 )
 
 // BaseHookInput contains fields common to all hook inputs.
+// It provides session context, file paths, and permission state.
 type BaseHookInput struct {
 	SessionID      string  `json:"session_id"`
 	TranscriptPath string  `json:"transcript_path"`
@@ -45,33 +38,39 @@ type BaseHookInput struct {
 }
 
 // HookInput is a discriminated union of all hook input types.
-// The specific type is determined by the HookEventName field.
+// The specific type can be determined by the HookEventName field.
 type HookInput interface {
 	hookInput()
 }
 
 // PreToolUseHookInput is the input for PreToolUse hooks.
+// It provides tool name and input before tool execution.
 type PreToolUseHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "PreToolUse"
 	ToolName      string `json:"tool_name"`
-	ToolInput     any    `json:"tool_input"` // Flexible - varies by tool
+	// ToolInput is intentionally flexible as it varies by tool
+	ToolInput any `json:"tool_input"`
 }
 
 func (PreToolUseHookInput) hookInput() {}
 
 // PostToolUseHookInput is the input for PostToolUse hooks.
+// It provides tool name, input, and response after execution.
 type PostToolUseHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "PostToolUse"
 	ToolName      string `json:"tool_name"`
-	ToolInput     any    `json:"tool_input"`    // Flexible - varies by tool
-	ToolResponse  any    `json:"tool_response"` // Flexible - varies by tool
+	// ToolInput is intentionally flexible as it varies by tool
+	ToolInput any `json:"tool_input"`
+	// ToolResponse is intentionally flexible as it varies by tool
+	ToolResponse any `json:"tool_response"`
 }
 
 func (PostToolUseHookInput) hookInput() {}
 
 // NotificationHookInput is the input for Notification hooks.
+// It provides notification message and optional title.
 type NotificationHookInput struct {
 	BaseHookInput
 	HookEventName string  `json:"hook_event_name"` // "Notification"
@@ -82,6 +81,7 @@ type NotificationHookInput struct {
 func (NotificationHookInput) hookInput() {}
 
 // UserPromptSubmitHookInput is the input for UserPromptSubmit hooks.
+// It provides the user's submitted prompt text.
 type UserPromptSubmitHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "UserPromptSubmit"
@@ -94,38 +94,39 @@ func (UserPromptSubmitHookInput) hookInput() {}
 type SessionStartSource string
 
 const (
-	// SessionStartSourceStartup indicates a new session.
+	// SessionStartSourceStartup indicates a fresh session start.
 	SessionStartSourceStartup SessionStartSource = "startup"
-
 	// SessionStartSourceResume indicates resuming an existing session.
 	SessionStartSourceResume SessionStartSource = "resume"
-
-	// SessionStartSourceClear indicates session was cleared.
+	// SessionStartSourceClear indicates starting after clearing.
 	SessionStartSourceClear SessionStartSource = "clear"
-
-	// SessionStartSourceCompact indicates session was compacted.
+	// SessionStartSourceCompact indicates starting after compacting.
 	SessionStartSourceCompact SessionStartSource = "compact"
 )
 
 // SessionStartHookInput is the input for SessionStart hooks.
+// It indicates how the session was initiated.
 type SessionStartHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "SessionStart"
-	Source        string `json:"source"`
+	// Source can be "startup", "resume", "clear", or "compact"
+	Source string `json:"source"`
 }
 
 func (SessionStartHookInput) hookInput() {}
 
 // SessionEndHookInput is the input for SessionEnd hooks.
+// It provides the reason for session termination.
 type SessionEndHookInput struct {
 	BaseHookInput
 	HookEventName string `json:"hook_event_name"` // "SessionEnd"
-	Reason        string `json:"reason"`
+	Reason        string `json:"reason"`          // Exit reason
 }
 
 func (SessionEndHookInput) hookInput() {}
 
 // StopHookInput is the input for Stop hooks.
+// It indicates whether the stop hook is currently active.
 type StopHookInput struct {
 	BaseHookInput
 	HookEventName  string `json:"hook_event_name"` // "Stop"
@@ -135,6 +136,7 @@ type StopHookInput struct {
 func (StopHookInput) hookInput() {}
 
 // SubagentStopHookInput is the input for SubagentStop hooks.
+// It indicates whether the stop hook is currently active.
 type SubagentStopHookInput struct {
 	BaseHookInput
 	HookEventName  string `json:"hook_event_name"` // "SubagentStop"
@@ -144,40 +146,37 @@ type SubagentStopHookInput struct {
 func (SubagentStopHookInput) hookInput() {}
 
 // PreCompactHookInput is the input for PreCompact hooks.
+// It provides compaction trigger and optional custom instructions.
 type PreCompactHookInput struct {
 	BaseHookInput
 	HookEventName      string  `json:"hook_event_name"` // "PreCompact"
-	Trigger            string  `json:"trigger"`
+	Trigger            string  `json:"trigger"`         // "manual" | "auto"
 	CustomInstructions *string `json:"custom_instructions,omitempty"`
 }
 
 func (PreCompactHookInput) hookInput() {}
 
 // HookContext provides context for hook execution.
+// It enables cancellation and timeout support via standard context.
 type HookContext struct {
-	// Signal provides cancellation and timeout support.
+	// Signal provides cancellation and timeout support via context.
 	// Hook implementations should check Signal.Done() for cancellation.
 	Signal context.Context
 }
 
 // HookCallback is a function that handles hook events.
-// Note: The input parameter is intentionally map[string]any to allow
-// the protocol adapter to pass raw JSON.
-//
-//revive:disable:line-length-limit Long function signature required for callback
+// The input parameter is intentionally map[string]any to allow the
+// protocol adapter to pass raw JSON. Domain services should parse
+// this into the appropriate HookInput type based on hook_event_name.
 type HookCallback func(
 	input map[string]any,
 	toolUseID *string,
 	ctx HookContext,
 ) (map[string]any, error)
 
-//revive:enable:line-length-limit
-
 // HookMatcher defines when a hook should execute.
+// It combines a pattern matcher with one or more callbacks.
 type HookMatcher struct {
-	// Matcher is a pattern to match (e.g., tool name, event type)
-	Matcher string
-
-	// Hooks are callbacks to execute when matcher applies
-	Hooks []HookCallback
+	Matcher string         // Pattern to match (e.g., tool name, event type)
+	Hooks   []HookCallback // Callbacks to execute
 }

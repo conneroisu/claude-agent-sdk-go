@@ -1,138 +1,87 @@
-// Package mcp implements MCP (Model Context Protocol) adapters.
-// This package provides both client and server adapters.
 package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
-	"github.com/conneroisu/claude/pkg/claude/options"
 	"github.com/conneroisu/claude/pkg/claude/ports"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// ClientAdapter implements ports.MCPServer for client connections.
+// ClientAdapter wraps an external MCP client session.
+// This adapter implements ports.MCPServer for external MCP servers
+// connected via stdio, HTTP, or SSE transports.
 type ClientAdapter struct {
-	config *options.MCPServerConfig
-	name   string
-	ready  bool
+	name    string
+	session *mcp.ClientSession
 }
 
 // Verify interface compliance at compile time.
 var _ ports.MCPServer = (*ClientAdapter)(nil)
 
 // NewClientAdapter creates a new MCP client adapter.
-func NewClientAdapter(
-	name string,
-	config *options.MCPServerConfig,
-) *ClientAdapter {
+// The session should already be connected to an external MCP server.
+func NewClientAdapter(name string, session *mcp.ClientSession) *ClientAdapter {
 	return &ClientAdapter{
-		config: config,
-		name:   name,
-		ready:  false,
+		name:    name,
+		session: session,
 	}
 }
 
 // Name returns the server identifier.
-func (c *ClientAdapter) Name() string {
-	return c.name
+func (a *ClientAdapter) Name() string {
+	return a.name
 }
 
-// HandleMessage routes a JSON-RPC message to the external MCP server.
-func (c *ClientAdapter) HandleMessage(
-	ctx context.Context,
-	message []byte,
-) ([]byte, error) {
-	if !c.ready {
-		// Auto-connect if not connected
-		if err := c.Connect(ctx); err != nil {
-			return nil, fmt.Errorf("connection failed: %w", err)
+// HandleMessage forwards a JSON-RPC message to the external MCP server.
+// It uses the session to send arbitrary JSON-RPC requests.
+func (a *ClientAdapter) HandleMessage(ctx context.Context, message []byte) ([]byte, error) {
+	// The message is already in JSON-RPC format
+	// We need to forward it to the session's underlying connection
+	// Since the SDK doesn't expose a generic Request method,
+	// we parse the method and route to the appropriate typed method
+
+	var req map[string]any
+	if err := json.Unmarshal(message, &req); err != nil {
+		return createErrorResponse(req, -32700, "Parse error")
+	}
+
+	method, _ := req["method"].(string)
+
+	// Route to appropriate session method based on MCP protocol
+	switch method {
+	case "tools/list":
+		result, err := a.session.ListTools(ctx, &mcp.ListToolsParams{})
+		if err != nil {
+			return createErrorResponse(req, -32603, err.Error())
 		}
-	}
 
-	// Route message to external server
-	// This would send the JSON-RPC message and return the response
-	_ = ctx
-	_ = message
+		return createSuccessResponse(req, result)
 
-	return []byte(`{"result":"success"}`), nil
-}
+	case "tools/call":
+		var params mcp.CallToolParams
+		if paramsData, ok := req["params"].(map[string]any); ok {
+			paramsJSON, _ := json.Marshal(paramsData)
+			_ = json.Unmarshal(paramsJSON, &params)
+		}
+		result, err := a.session.CallTool(ctx, &params)
+		if err != nil {
+			return createErrorResponse(req, -32603, err.Error())
+		}
 
-// Connect establishes connection to the MCP server.
-// The connection method depends on the server config type.
-func (c *ClientAdapter) Connect(ctx context.Context) error {
-	switch cfg := (*c.config).(type) {
-	case options.StdioServerConfig:
-		return c.connectStdio(ctx, cfg)
-	case options.SSEServerConfig:
-		return c.connectSSE(ctx, cfg)
-	case options.HTTPServerConfig:
-		return c.connectHTTP(ctx, cfg)
-	case options.SDKServerConfig:
-		return c.connectSDK(ctx, cfg)
+		return createSuccessResponse(req, result)
+
 	default:
-		return fmt.Errorf("unknown MCP server type: %T", cfg)
+		return createErrorResponse(req, -32601, fmt.Sprintf("Method not found: %s", method))
 	}
 }
 
-// connectStdio establishes a stdio-based MCP connection.
-func (c *ClientAdapter) connectStdio(
-	ctx context.Context,
-	cfg options.StdioServerConfig,
-) error {
-	// Stdio connection implementation
-	// This would spawn the command and setup pipes
-	_ = ctx
-	_ = cfg
-	c.ready = true
-
-	return nil
-}
-
-// connectSSE establishes an SSE-based MCP connection.
-func (c *ClientAdapter) connectSSE(
-	ctx context.Context,
-	cfg options.SSEServerConfig,
-) error {
-	// SSE connection implementation
-	// This would connect to the SSE endpoint
-	_ = ctx
-	_ = cfg
-	c.ready = true
-
-	return nil
-}
-
-// connectHTTP establishes an HTTP-based MCP connection.
-func (c *ClientAdapter) connectHTTP(
-	ctx context.Context,
-	cfg options.HTTPServerConfig,
-) error {
-	// HTTP connection implementation
-	// This would setup HTTP client
-	_ = ctx
-	_ = cfg
-	c.ready = true
-
-	return nil
-}
-
-// connectSDK establishes an SDK-based MCP connection.
-func (c *ClientAdapter) connectSDK(
-	ctx context.Context,
-	cfg options.SDKServerConfig,
-) error {
-	// SDK connection implementation
-	// This would use the SDK transport
-	_ = ctx
-	_ = cfg
-	c.ready = true
-
-	return nil
-}
-
-// Close terminates the MCP connection.
-func (c *ClientAdapter) Close() error {
-	c.ready = false
+// Close terminates the connection to the external MCP server.
+func (a *ClientAdapter) Close() error {
+	if a.session != nil {
+		return a.session.Close()
+	}
 
 	return nil
 }

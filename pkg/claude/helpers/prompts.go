@@ -1,16 +1,40 @@
-// Package helpers provides utility functions for SDK users.
 package helpers
 
-import "github.com/conneroisu/claude/pkg/claude/options"
+import "strings"
 
-// StringPrompt creates a simple string system prompt.
-func StringPrompt(text string) options.SystemPromptConfig {
-	return options.StringSystemPrompt(text)
+// BuildSystemPrompt combines multiple prompt parts into a single prompt.
+// Parts are joined with double newlines for clear separation.
+//
+// Example:
+//
+//	prompt := helpers.BuildSystemPrompt(
+//		"You are a code review assistant.",
+//		"Focus on security and performance.",
+//		"Provide actionable feedback.",
+//	)
+//	// Returns the parts joined with "\n\n"
+func BuildSystemPrompt(parts ...string) string {
+	return strings.Join(parts, "\n\n")
 }
 
-// PresetPrompt creates a preset system prompt with optional append.
+// AppendSystemPrompt creates a system prompt by appending to a base.
+// Returns the suffix part if base is empty, base if suffix is empty,
+// or both joined with double newlines.
 //
-//nolint:revive // Parameter name matches Claude API naming convention
-func PresetPrompt(append *string) options.SystemPromptConfig {
-	return options.PresetSystemPrompt{Append: append}
+// Example:
+//
+//	prompt := helpers.AppendSystemPrompt(
+//		"You are a helpful assistant.",
+//		"Focus on Go best practices.",
+//	)
+//	// Returns: "You are a helpful assistant.\n\nFocus on Go best practices."
+func AppendSystemPrompt(base, suffix string) string {
+	if base == "" {
+		return suffix
+	}
+	if suffix == "" {
+		return base
+	}
+
+	return base + "\n\n" + suffix
 }

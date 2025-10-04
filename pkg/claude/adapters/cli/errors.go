@@ -3,24 +3,15 @@ package cli
 import "errors"
 
 var (
-	// ErrNotConnected indicates the transport is not connected.
-	ErrNotConnected = errors.New("transport not connected")
+	// ErrNotReady indicates the adapter is not ready for operations.
+	ErrNotReady = errors.New("transport not ready")
 
-	// ErrAlreadyConnected indicates connection already established.
-	ErrAlreadyConnected = errors.New("already connected")
+	// ErrProcessExited indicates the CLI process has terminated.
+	ErrProcessExited = errors.New("transport has exited")
 
-	// ErrCommandFailed indicates CLI command execution failed.
-	ErrCommandFailed = errors.New("CLI command failed")
+	// ErrCLINotFound indicates the Claude CLI binary was not found.
+	ErrCLINotFound = errors.New("claude CLI not found")
 
-	// ErrProcessDied indicates the CLI process terminated unexpectedly.
-	ErrProcessDied = errors.New("CLI process died unexpectedly")
-
-	// ErrStdinClosed indicates stdin was closed before writing.
-	ErrStdinClosed = errors.New("stdin already closed")
-
-	// ErrReadTimeout indicates a read operation timed out.
-	ErrReadTimeout = errors.New("read operation timed out")
-
-	// ErrBufferOverflow indicates buffer size exceeded.
-	ErrBufferOverflow = errors.New("buffer overflow")
+	// ErrBufferExceeded indicates a message exceeded max buffer size.
+	ErrBufferExceeded = errors.New("message buffer exceeded limit")
 )

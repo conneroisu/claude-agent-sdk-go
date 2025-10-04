@@ -2,68 +2,49 @@ package mcp
 
 import (
 	"context"
-	"errors"
+
+	"github.com/conneroisu/claude/pkg/claude/ports"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// ServerAdapter implements an MCP server.
-// This allows exposing local tools via MCP protocol.
+// ServerAdapter wraps a user-provided in-process MCP server.
+// This adapter implements ports.MCPServer for *mcp.Server instances
+// that run in the same process as the SDK.
 type ServerAdapter struct {
-	tools map[string]ToolHandler
-	ready bool
+	name   string
+	server *mcp.Server
 }
 
-// ToolHandler processes a tool invocation.
-type ToolHandler func(
-	ctx context.Context,
-	args map[string]any,
-) (map[string]any, error)
+// Verify interface compliance at compile time.
+var _ ports.MCPServer = (*ServerAdapter)(nil)
 
 // NewServerAdapter creates a new MCP server adapter.
-func NewServerAdapter() *ServerAdapter {
+// The server should be created by the user using mcp.NewServer().
+func NewServerAdapter(name string, server *mcp.Server) *ServerAdapter {
 	return &ServerAdapter{
-		tools: make(map[string]ToolHandler),
-		ready: false,
+		name:   name,
+		server: server,
 	}
 }
 
-// RegisterTool adds a tool handler to the server.
-// The tool will be available for MCP clients to invoke.
-func (s *ServerAdapter) RegisterTool(
-	name string,
-	handler ToolHandler,
-) {
-	s.tools[name] = handler
+// Name returns the server identifier.
+func (a *ServerAdapter) Name() string {
+	return a.name
 }
 
-// Start begins serving MCP requests.
-// The transport type (stdio, HTTP, etc.) is configured separately.
-func (s *ServerAdapter) Start(ctx context.Context) error {
-	if s.ready {
-		return errors.New("server already running")
-	}
-
-	// Server start implementation
-	// This would setup the listener and start accepting requests
-	_ = ctx
-
-	s.ready = true
-
-	return nil
+// HandleMessage routes a JSON-RPC message to the in-process MCP server.
+// For SDK servers, this is handled by the server's built-in request handling.
+func (a *ServerAdapter) HandleMessage(_ context.Context, _ []byte) ([]byte, error) {
+	// SDK servers are handled differently - the control protocol
+	// routes messages directly to the server's handlers via
+	// the in-memory transport connection.
+	// This method exists to satisfy the interface but isn't
+	// called in practice for SDK servers.
+	return nil, nil
 }
 
-// handleToolCall processes an incoming tool invocation request.
-// This method is called by the transport layer.
-
-// handleListTools returns the list of available tools.
-// This method is called by the transport layer.
-
-// Stop terminates the MCP server.
-func (s *ServerAdapter) Stop() error {
-	if !s.ready {
-		return nil
-	}
-
-	s.ready = false
-
+// Close is a no-op for SDK servers.
+// The server lifecycle is managed by the user, not the adapter.
+func (_ *ServerAdapter) Close() error {
 	return nil
 }

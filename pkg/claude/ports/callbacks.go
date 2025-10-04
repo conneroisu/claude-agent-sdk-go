@@ -1,25 +1,25 @@
 package ports
 
-import (
-	"context"
+import "context"
 
-	"github.com/conneroisu/claude/pkg/claude/messages"
-)
+// Callback types needed for protocol.go
+// These define the hook callback signature used throughout the SDK.
 
-// HookCallback is called when a hook event occurs.
-// Returns modified input or error.
-type HookCallback func(
-	ctx context.Context,
-	event string,
-	input map[string]any,
-	toolUseID *string,
-) (map[string]any, error)
-
-// PermissionCallback is called to check tool use permission.
-// Returns permission decision or error.
-type PermissionCallback func(
-	ctx context.Context,
-	toolName string,
-	input map[string]any,
-	suggestions []messages.PermissionUpdate,
-) (messages.PermissionResult, error)
+// HookCallback is a function type for hook implementations.
+//
+// Hook callbacks are invoked at specific points during Claude's execution
+// to allow custom logic, validation, or data transformation.
+//
+// The input parameter contains hook-specific data as a flexible map.
+// The context can be used for cancellation and timeout control.
+//
+// Returns a map containing the hook result, or an error if the hook fails.
+//
+// Example:
+//
+//	callback := func(ctx context.Context, input map[string]any) (map[string]any, error) {
+//	    toolName := input["tool_name"].(string)
+//	    log.Printf("Hook called for tool: %s", toolName)
+//	    return map[string]any{"modified": true}, nil
+//	}
+type HookCallback func(ctx context.Context, input map[string]any) (map[string]any, error)

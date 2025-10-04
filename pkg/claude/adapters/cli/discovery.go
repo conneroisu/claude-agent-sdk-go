@@ -7,12 +7,9 @@ import (
 	"path/filepath"
 )
 
-// findCLI locates the Claude CLI binary.
-// Checks PATH first, then common installation locations.
-//
-//nolint:revive // Receiver required for method interface consistency
-func (a *Adapter) findCLI() (string, error) {
-	_ = a
+// findCLI locates the Claude CLI binary by searching PATH
+// and common installation locations.
+func (_ *Adapter) findCLI() (string, error) {
 	// Check PATH first
 	if path, err := exec.LookPath("claude"); err == nil {
 		return path, nil
@@ -34,7 +31,5 @@ func (a *Adapter) findCLI() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf(
-		"claude CLI not found in PATH or common locations",
-	)
+	return "", fmt.Errorf("claude CLI not found in PATH or common locations")
 }

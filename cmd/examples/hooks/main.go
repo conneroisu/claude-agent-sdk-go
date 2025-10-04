@@ -1,126 +1,146 @@
-//nolint:revive // Example file with acceptable complexity
+// Package main demonstrates hook usage with the Claude Agent SDK.
+//
+// This example shows:
+//   - Registering PreToolUse and PostToolUse hooks
+//   - Implementing hook callbacks
+//   - Inspecting tool usage in real-time
+//   - Hook context and error handling
+//
+// Prerequisites: Claude CLI must be installed and configured
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/conneroisu/claude/pkg/claude"
+	"github.com/conneroisu/claude/pkg/claude/hooking"
 	"github.com/conneroisu/claude/pkg/claude/messages"
-	"github.com/conneroisu/claude/pkg/claude/options"
 )
 
 func main() {
-	ctx := context.Background()
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
-	// Define hooks
-	hooks := createHooks()
-
-	// Configure options
-	maxTurns := 1
-	opts := &options.AgentOptions{
-		MaxTurns: &maxTurns,
-	}
-
-	// Execute query with hooks
-	msgCh, errCh := claude.Query(
-		ctx,
-		"List files in the current directory",
-		opts,
-		hooks,
-	)
-
-	// Process responses
-	if err := processResponses(msgCh, errCh); err != nil {
-		log.Fatal(err)
-	}
-}
-
-// createHooks builds the hook configuration.
-func createHooks() map[claude.HookEvent][]claude.HookMatcher {
-	return map[claude.HookEvent][]claude.HookMatcher{
-		claude.HookEventPreToolUse: {
+	// Register hooks for tool usage monitoring
+	hooks := map[hooking.HookEvent][]hooking.HookMatcher{
+		// PreToolUse fires before any tool is executed
+		hooking.HookEventPreToolUse: {
 			{
-				Matcher: "Bash",
-				Hooks:   []claude.HookCallback{preToolHook},
+				Matcher: "*", // Match all tools
+				Hooks:   []hooking.HookCallback{preToolUseCallback},
 			},
 		},
-		claude.HookEventPostToolUse: {
+		// PostToolUse fires after any tool completes
+		hooking.HookEventPostToolUse: {
 			{
-				Matcher: "Bash",
-				Hooks:   []claude.HookCallback{postToolHook},
+				Matcher: "*", // Match all tools
+				Hooks:   []hooking.HookCallback{postToolUseCallback},
 			},
 		},
 	}
+
+	// Create a prompt that will trigger tool usage
+	// This asks Claude to list files, which uses the Glob or Bash tool
+	prompt := "Please list the Go files in the current directory."
+
+	fmt.Println("Executing query with hooks enabled...")
+	fmt.Printf("Prompt: %s\n\n", prompt)
+
+	if err := run(ctx, prompt, hooks); err != nil {
+		cancel()
+		log.Fatalf("Error: %v", err)
+	}
+
+	cancel()
+	fmt.Println("\nQuery with hooks completed successfully!")
 }
 
-// preToolHook executes before tool use.
-func preToolHook(
-	input map[string]any,
-	_ *string,
-	_ claude.HookContext,
-) (map[string]any, error) {
-	fmt.Println("=== Pre-Tool Hook ===")
-	fmt.Println("Tool: Bash")
-	fmt.Printf("Input: %v\n", input)
-	fmt.Println("====================")
-
-	return make(map[string]any), nil
-}
-
-// postToolHook executes after tool use.
-func postToolHook(
-	input map[string]any,
-	_ *string,
-	_ claude.HookContext,
-) (map[string]any, error) {
-	fmt.Println("=== Post-Tool Hook ===")
-	fmt.Println("Tool: Bash")
-	fmt.Printf("Result: %v\n", input)
-	fmt.Println("======================")
-
-	return make(map[string]any), nil
-}
-
-// processResponses handles incoming messages and errors.
-func processResponses(
-	msgCh <-chan messages.Message,
-	errCh <-chan error,
+func run(
+	ctx context.Context,
+	prompt string,
+	hooks map[hooking.HookEvent][]hooking.HookMatcher,
 ) error {
-	for {
-		select {
-		case msg, ok := <-msgCh:
-			if !ok {
-				return nil
+	// Execute the query with hooks
+	msgCh, errCh := claude.Query(ctx, prompt, nil, hooks)
+
+	// Process messages
+	for msg := range msgCh {
+		switch m := msg.(type) {
+		case messages.AssistantMessage:
+			fmt.Println("\nClaude's response:")
+			for _, block := range m.Content {
+				fmt.Printf("%+v\n", block)
 			}
-
-			handleMessage(msg)
-
-		case err := <-errCh:
-			return err
 		}
 	}
-}
 
-// handleMessage processes a single message.
-func handleMessage(msg messages.Message) {
-	assistantMsg, ok := msg.(*messages.AssistantMessage)
-	if !ok {
-		return
+	// Check for errors
+	if err := <-errCh; err != nil {
+		return fmt.Errorf("query failed: %w", err)
 	}
 
-	printTextBlocks(assistantMsg.Content)
+	return nil
 }
 
-// printTextBlocks prints all text blocks from content.
-func printTextBlocks(content []messages.ContentBlock) {
-	for _, block := range content {
-		textBlock, ok := block.(messages.TextBlock)
-		if !ok {
-			continue
-		}
+// preToolUseCallback is called before a tool is executed.
+func preToolUseCallback(
+	input map[string]any,
+	toolUseID *string,
+	ctx hooking.HookContext,
+) (map[string]any, error) {
+	// Extract tool information from the hook input
+	toolName, _ := input["tool_name"].(string)
+	toolInput := input["tool_input"]
 
-		fmt.Printf("Claude: %s\n", textBlock.Text)
+	fmt.Printf("\n[PRE-HOOK] Tool about to execute:\n")
+	fmt.Printf("  Tool Name: %s\n", toolName)
+	fmt.Printf("  Tool Input: %+v\n", toolInput)
+	if toolUseID != nil {
+		fmt.Printf("  Tool Use ID: %s\n", *toolUseID)
 	}
+
+	// Check if the hook context is cancelled
+	select {
+	case <-ctx.Signal.Done():
+		return nil, fmt.Errorf("hook cancelled: %w", ctx.Signal.Err())
+	default:
+		// Continue execution
+	}
+
+	// Return nil to allow the tool to execute
+	// You could return modified input to change tool behavior
+	return nil, nil
+}
+
+// postToolUseCallback is called after a tool completes execution.
+func postToolUseCallback(
+	input map[string]any,
+	toolUseID *string,
+	ctx hooking.HookContext,
+) (map[string]any, error) {
+	// Extract tool information and results
+	toolName, _ := input["tool_name"].(string)
+	toolResponse := input["tool_response"]
+
+	fmt.Printf("\n[POST-HOOK] Tool execution completed:\n")
+	fmt.Printf("  Tool Name: %s\n", toolName)
+	fmt.Printf("  Tool Response: %+v\n", toolResponse)
+	if toolUseID != nil {
+		fmt.Printf("  Tool Use ID: %s\n", *toolUseID)
+	}
+
+	// Check for cancellation
+	select {
+	case <-ctx.Signal.Done():
+		return nil, fmt.Errorf("hook cancelled: %w", ctx.Signal.Err())
+	default:
+		// Continue execution
+	}
+
+	// Return nil to continue normally
+	// You could log results, validate output, or modify the response
+	return nil, nil
 }

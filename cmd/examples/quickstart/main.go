@@ -1,81 +1,80 @@
-// Package main demonstrates a simple quickstart example.
+// Package main demonstrates basic Query() usage with the Claude Agent SDK.
+//
+// This example shows:
+//   - Simple one-shot query to Claude
+//   - Basic response handling
+//   - Error handling patterns
+//
+// Prerequisites: Claude CLI must be installed and configured
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/conneroisu/claude/pkg/claude"
 	"github.com/conneroisu/claude/pkg/claude/messages"
-	"github.com/conneroisu/claude/pkg/claude/options"
 )
 
 func main() {
-	ctx := context.Background()
+	// Create a context with timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
-	// Set max turns to limit conversation length
-	maxTurns := 1
-	opts := &options.AgentOptions{
-		MaxTurns: &maxTurns,
+	if err := run(ctx); err != nil {
+		cancel()
+		log.Fatalf("Error: %v", err)
 	}
 
-	// Execute a one-shot query
+	cancel()
+}
+
+func run(ctx context.Context) error {
+	// Prepare a simple prompt
+	prompt := "What are the three Great Lakes that border Michigan? Please be concise."
+
+	// Execute the query
+	// Query returns immediately with channels that populate as the query executes
 	msgCh, errCh := claude.Query(
 		ctx,
-		"What is 2 + 2? Please explain briefly.",
-		opts,
-		nil,
+		prompt,
+		nil, // Use default agent options
+		nil, // No hooks needed for this simple example
 	)
 
-	// Process responses
-	if err := processResponses(msgCh, errCh); err != nil {
-		log.Fatal(err)
-	}
-}
+	fmt.Println("Sending query to Claude...")
+	fmt.Printf("Prompt: %s\n\n", prompt)
 
-// processResponses handles incoming messages and errors.
-func processResponses(
-	msgCh <-chan messages.Message,
-	errCh <-chan error,
-) error {
-	for {
-		select {
-		case msg, ok := <-msgCh:
-			if !ok {
-				return nil
+	// Process messages as they arrive
+	// The message channel closes when Claude finishes responding
+	for msg := range msgCh {
+		// Type assert to get the specific message type
+		switch m := msg.(type) {
+		case messages.AssistantMessage:
+			// Assistant messages contain Claude's actual response
+			fmt.Println("Claude's response:")
+			for _, block := range m.Content {
+				// Content blocks can be text, thinking, tool uses, etc.
+				// For this simple example, we just print the text content
+				fmt.Printf("%+v\n", block)
 			}
-
-			handleMessage(msg)
-
-		case err := <-errCh:
-			if err != nil {
-				return err
-			}
-
-			return nil
+		case messages.SystemMessage:
+			// System messages contain metadata and notifications
+			fmt.Printf("System: %+v\n", m)
+		default:
+			// Other message types (UserMessage, ResultMessage, StreamEvent)
+			fmt.Printf("Message: %+v\n", m)
 		}
 	}
-}
 
-// handleMessage processes a single message.
-func handleMessage(msg messages.Message) {
-	assistantMsg, ok := msg.(*messages.AssistantMessage)
-	if !ok {
-		return
+	// Check for errors after all messages are processed
+	// The error channel always receives exactly one value (nil or an error)
+	if err := <-errCh; err != nil {
+		return fmt.Errorf("query failed: %w", err)
 	}
 
-	printTextBlocks(assistantMsg.Content)
-}
+	fmt.Println("\nQuery completed successfully!")
 
-// printTextBlocks prints all text blocks from content.
-func printTextBlocks(content []messages.ContentBlock) {
-	for _, block := range content {
-		textBlock, ok := block.(messages.TextBlock)
-		if !ok {
-			continue
-		}
-
-		fmt.Printf("Claude: %s\n", textBlock.Text)
-	}
+	return nil
 }

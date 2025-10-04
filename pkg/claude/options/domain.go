@@ -1,81 +1,72 @@
-// Package options provides configuration types for the Claude Agent SDK.
-// This package defines domain options (affecting business logic) and
-// infrastructure options (affecting connection/execution).
+// Package options provides domain and infrastructure config types.
+// This package defines pure domain configuration.
 package options
 
-// PermissionMode defines how permissions are handled.
+// PermissionMode defines how permissions are handled during agent execution.
 // This is a domain concept that affects business logic.
 type PermissionMode string
 
 const (
-	// PermissionModeDefault uses standard permission handling.
+	// PermissionModeDefault uses the CLI's default permission behavior.
 	PermissionModeDefault PermissionMode = "default"
-
-	// PermissionModeAcceptEdits auto-accepts file edits.
+	// PermissionModeAcceptEdits automatically accepts all file edits.
 	PermissionModeAcceptEdits PermissionMode = "acceptEdits"
-
-	// PermissionModePlan enables plan mode.
+	// PermissionModePlan enables planning mode for task lists.
 	PermissionModePlan PermissionMode = "plan"
-
-	// PermissionModeBypassPermissions skips all permission checks.
+	// PermissionModeBypassPermissions bypasses all permission checks.
 	PermissionModeBypassPermissions PermissionMode = "bypassPermissions"
-
-	// PermissionModeAsk always prompts for permission.
+	// PermissionModeAsk prompts for permission before each tool use.
 	PermissionModeAsk PermissionMode = "ask"
 )
 
-// SettingSource specifies where settings come from.
+// SettingSource specifies the origin of configuration settings.
+// Settings can come from user, project, or local config.
 type SettingSource string
 
 const (
-	// SettingSourceUser indicates user-level settings.
+	// SettingSourceUser indicates settings from user-level configuration.
 	SettingSourceUser SettingSource = "user"
-
-	// SettingSourceProject indicates project-level settings.
+	// SettingSourceProject indicates settings from project configuration.
 	SettingSourceProject SettingSource = "project"
-
-	// SettingSourceLocal indicates local-level settings.
+	// SettingSourceLocal indicates settings from local overrides.
 	SettingSourceLocal SettingSource = "local"
 )
 
-// AgentDefinition defines a subagent configuration.
-// Subagents are specialized agents with specific tools and prompts.
+// AgentDefinition defines configuration for a subagent.
+// Subagents are specialized agents with restricted tool access
+// and custom system prompts. This is pure domain configuration.
 type AgentDefinition struct {
-	// Name identifies the subagent
+	// Name is the unique identifier for the subagent
 	Name string
-
-	// Description explains what the subagent does
+	// Description explains the subagent's purpose and capabilities
 	Description string
-
-	// SystemPrompt is the agent's system prompt (optional)
+	// SystemPrompt is an optional custom system prompt for the subagent
 	SystemPrompt *string
-
-	// AllowedTools lists which tools this agent can use
+	// AllowedTools restricts which built-in tools this subagent can use
 	AllowedTools []BuiltinTool
-
-	// Model specifies which AI model to use (optional)
+	// Model optionally specifies a different model for this subagent
 	Model *string
 }
 
-// SystemPromptConfig is configuration for system prompts.
+// SystemPromptConfig is a discriminated union for system prompts.
+// System prompts can be simple strings or preset-based configurations.
 type SystemPromptConfig interface {
 	systemPromptConfig()
 }
 
-// StringSystemPrompt is a plain string system prompt.
+// StringSystemPrompt represents a simple string-based system prompt.
 type StringSystemPrompt string
 
 func (StringSystemPrompt) systemPromptConfig() {}
 
-// PresetSystemPrompt uses a predefined prompt with optional append.
+// PresetSystemPrompt represents a preset-based system prompt configuration.
+// Presets are predefined prompt templates that can be optionally extended.
 type PresetSystemPrompt struct {
-	// Type indicates this is a preset
+	// Type identifies this as a preset configuration
 	Type string
-
-	// Preset is the name of the preset to use
+	// Preset is the name of the preset template to use
 	Preset string
-
-	// Append is text to append to the preset (optional)
+	// Append is optional additional content to append to the preset
 	Append *string
 }
 

@@ -1,4 +1,3 @@
-// Package streaming provides message receiving functionality.
 package streaming
 
 import (
@@ -8,8 +7,10 @@ import (
 	"github.com/conneroisu/claude/pkg/claude/messages"
 )
 
-// ReceiveMessages returns channels for receiving streaming messages.
-// The returned channels provide async access to incoming messages and errors.
+// ReceiveMessages streams messages from Claude CLI.
+// It reads from the internal message channels, parses messages using
+// the parser, and forwards them to the returned channels.
+// Returns channels for messages and errors that close when stream ends.
 func (s *Service) ReceiveMessages(
 	ctx context.Context,
 ) (<-chan messages.Message, <-chan error) {
@@ -20,54 +21,50 @@ func (s *Service) ReceiveMessages(
 		defer close(msgOutCh)
 		defer close(errOutCh)
 
-		s.receiveLoop(ctx, msgOutCh, errOutCh)
+		if err := s.receiveLoop(ctx, msgOutCh, errOutCh); err != nil {
+			errOutCh <- err
+		}
 	}()
 
 	return msgOutCh, errOutCh
 }
 
-// receiveLoop handles the message receive loop.
-// Continuously reads messages from internal channels and forwards to output.
+// receiveLoop runs the message receiving loop.
 func (s *Service) receiveLoop(
 	ctx context.Context,
-	msgOutCh chan<- messages.Message,
-	errOutCh chan<- error,
-) {
+	msgOutCh chan messages.Message,
+	_ chan error,
+) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 
 		case msg, ok := <-s.msgCh:
 			if !ok {
-				return
+				return nil
 			}
-			if err := s.parseAndSend(msg, msgOutCh); err != nil {
-				errOutCh <- err
-
-				return
+			if err := s.handleMessage(msg, msgOutCh); err != nil {
+				return err
 			}
 
 		case err := <-s.errCh:
 			if err != nil {
-				errOutCh <- err
-
-				return
+				return err
 			}
 		}
 	}
 }
 
-// parseAndSend parses a message and sends it to the output channel.
-func (s *Service) parseAndSend(
+// handleMessage parses and sends a message to the output channel.
+func (s *Service) handleMessage(
 	msg map[string]any,
-	msgOutCh chan<- messages.Message,
+	msgOutCh chan messages.Message,
 ) error {
 	parsedMsg, err := s.parser.Parse(msg)
 	if err != nil {
 		return fmt.Errorf("parse message: %w", err)
 	}
-
 	msgOutCh <- parsedMsg
 
 	return nil
