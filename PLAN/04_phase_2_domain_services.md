@@ -194,7 +194,53 @@ case result := <-resultChan:
 ### 2.1 Querying Service (querying/service.go)
 Priority: Critical
 The querying service encapsulates the domain logic for executing one-shot queries.
+
+**Python SDK Parity Check:**
+The Python SDK's `query()` function (`src/claude_agent/client.py`) follows this pattern:
+1. Initialize client session
+2. Send prompt
+3. Stream messages until result message received
+4. Close session automatically
+
+The Go implementation mirrors this with channels instead of async generators:
+1. Connect transport (equivalent to Python's session init)
+2. Write prompt to transport
+3. Stream messages via channels (equivalent to Python's `async for message in client`)
+4. Domain service handles cleanup (equivalent to Python's context manager)
+
+**Concurrency Model:**
+The querying service uses Go's native concurrency primitives:
+- **Goroutines:** Message routing runs in a background goroutine started by the protocol handler
+- **Channels:** `msgCh` and `errCh` provide async message delivery (unbuffered for backpressure)
+- **Context:** Enables cancellation propagation through the entire stack
+- **Select:** Used in the main loop to multiplex between message, error, and cancellation channels
+
+**Channel Wiring Details:**
+```
+User calls Execute()
+    ↓
+  Launches goroutine
+    ↓
+  Protocol.StartMessageRouter(ctx, routerMsgCh, routerErrCh, ...)
+    ↓ (starts another goroutine)
+  Transport.ReadMessages(ctx) → (transportMsgCh, transportErrCh)
+    ↓ (message routing goroutine)
+  Route messages by type:
+    - control_response → pending request handlers
+    - control_request → inbound request handlers
+    - SDK messages → forward to routerMsgCh
+    ↓
+  Domain goroutine receives from routerMsgCh
+    ↓
+  Parser.Parse(rawMsg) → typed message
+    ↓
+  Send to user's msgCh
+```
+
+All goroutines respect context cancellation via `select` statements.
+
 Key Design Decision: Control protocol state management (pending requests, callback IDs, request counters) is handled by the `jsonrpc` adapter, NOT by domain services. The domain only uses the port interface.
+
 ```go
 package querying
 

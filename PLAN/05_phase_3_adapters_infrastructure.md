@@ -91,11 +91,21 @@ func (a *Adapter) BuildCommand() ([]string, error) {
 		}
 	}
 	// Tools
+	// Note: Use helper function from Phase 4 to convert []BuiltinTool to string
+	// Cannot use strings.Join directly on []BuiltinTool (type mismatch)
 	if len(a.options.AllowedTools) > 0 {
-		cmd = append(cmd, "--allowedTools", strings.Join(a.options.AllowedTools, ","))
+		toolsStr := make([]string, len(a.options.AllowedTools))
+		for i, t := range a.options.AllowedTools {
+			toolsStr[i] = string(t)
+		}
+		cmd = append(cmd, "--allowedTools", strings.Join(toolsStr, ","))
 	}
 	if len(a.options.DisallowedTools) > 0 {
-		cmd = append(cmd, "--disallowedTools", strings.Join(a.options.DisallowedTools, ","))
+		toolsStr := make([]string, len(a.options.DisallowedTools))
+		for i, t := range a.options.DisallowedTools {
+			toolsStr[i] = string(t)
+		}
+		cmd = append(cmd, "--disallowedTools", strings.Join(toolsStr, ","))
 	}
 	// Model and turns
 	if a.options.Model != nil {
@@ -206,6 +216,8 @@ func (a *Adapter) Connect(ctx context.Context) error {
 		return fmt.Errorf("process start failed: %w", err)
 	}
 	// Start stderr handler if callback is set
+	// This runs in a goroutine to continuously stream stderr lines
+	// The Python SDK demonstrates this pattern in its subprocess handling
 	if a.options.StderrCallback != nil {
 		go a.handleStderr()
 	}
@@ -215,6 +227,10 @@ func (a *Adapter) Connect(ctx context.Context) error {
 	a.ready = true
 	return nil
 }
+
+// handleStderr continuously reads stderr and invokes the callback
+// Runs in a goroutine started by Connect()
+// The Python SDK streams stderr in a similar fashion for logging/debugging
 func (a *Adapter) handleStderr() {
 	scanner := bufio.NewScanner(a.stderr)
 	for scanner.Scan() {
@@ -223,6 +239,8 @@ func (a *Adapter) handleStderr() {
 			a.options.StderrCallback(line)
 		}
 	}
+	// Scanner exits when stderr is closed (process terminated)
+	// No error handling needed - this is informational only
 }
 
 func (a *Adapter) Write(ctx context.Context, data string) error {

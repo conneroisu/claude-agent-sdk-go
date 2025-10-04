@@ -372,7 +372,37 @@ subagent := AgentDefinition{
 }
 ```
 
-**Note:** Helper functions for converting `[]BuiltinTool` to CLI flag format will be added in Phase 4 (see `helpers/tools.go`).
+**Converting BuiltinTool slices to strings:**
+
+The `[]BuiltinTool` type cannot be directly passed to `strings.Join` since it's not `[]string`. Helper functions for converting `[]BuiltinTool` to CLI flag format are defined in Phase 4 (`helpers/tools.go`):
+
+```go
+// helpers/tools.go
+func ToolsToString(tools []options.BuiltinTool) string {
+	strs := make([]string, len(tools))
+	for i, t := range tools {
+		strs[i] = string(t)
+	}
+	return strings.Join(strs, ",")
+}
+```
+
+**Usage in CLI adapter (Phase 3):**
+
+```go
+// adapters/cli/transport.go
+import "github.com/conneroisu/claude/pkg/claude/helpers"
+
+// In BuildCommand method:
+if len(a.options.AllowedTools) > 0 {
+	cmd = append(cmd, "--allowedTools", helpers.ToolsToString(a.options.AllowedTools))
+}
+if len(a.options.DisallowedTools) > 0 {
+	cmd = append(cmd, "--disallowedTools", helpers.ToolsToString(a.options.DisallowedTools))
+}
+```
+
+This avoids the compilation error that would occur from using `strings.Join(a.options.AllowedTools, ",")` directly.
 
 options/transport.go - Transport/Infrastructure Configuration:
 

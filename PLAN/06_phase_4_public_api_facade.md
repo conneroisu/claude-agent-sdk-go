@@ -1,5 +1,32 @@
 ## Phase 4: Public API (Facade)
+
 The public API acts as a facade over the domain services, hiding the complexity of ports and adapters.
+
+### Overview: Helper Functions
+
+This phase introduces several critical helper functions that wire up the SDK:
+
+**MCP Server Initialization (`mcp_init.go`):**
+- `initializeMCPServers(ctx, configs)` - Initializes all MCP server connections from configuration map
+- `initializeMCPServer(ctx, name, cfg)` - Creates a single MCP client/SDK server adapter based on config type
+- `mapToEnvSlice(m)` - Converts environment variable map to KEY=VALUE slice for stdio transports
+
+These helpers handle the complex initialization logic for:
+- **Stdio servers:** Spawn subprocess with command/args/env, create CommandTransport
+- **HTTP/SSE servers:** Create StreamableClientTransport with endpoint and headers
+- **SDK servers:** Wrap user's `*mcp.Server` in SDKServerAdapter with in-memory transport
+- **Error handling:** Clean up partial connections on initialization failure
+
+**Options Configuration (`options/` package):**
+The options package defines all configuration types used by the public API:
+- `AgentOptions` - Main configuration struct (tools, permissions, MCP servers, CLI path, etc.)
+- `MCPServerConfig` - Discriminated union interface for MCP server types
+- `StdioServerConfig`, `HTTPServerConfig`, `SSEServerConfig`, `SDKServerConfig` - Concrete MCP config types
+- `PermissionsConfig` - Permission mode and callback configuration
+- `BuiltinTool` - Enum of 18 built-in tool types with matcher support
+
+These configuration types eliminate the need for TODO placeholders - all wiring is explicit and type-safe.
+
 ### 4.1 Query Function (query.go)
 Priority: Critical
 ```go
@@ -36,9 +63,8 @@ func Query(ctx context.Context, prompt string, opts *options.AgentOptions, hooks
 	}
 	// Create permissions service from options
 	var permissionsService *permissions.Service
-	if opts.PermissionMode != nil {
-		// TODO: Initialize permissions service based on permission mode
-		// permissionsService = permissions.NewService(...)
+	if opts.PermissionsConfig != nil {
+		permissionsService = permissions.NewService(opts.PermissionsConfig)
 	}
 	// Initialize MCP servers from configuration
 	mcpServers, err := initializeMCPServers(ctx, opts.MCPServers)
