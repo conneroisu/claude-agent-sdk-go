@@ -1,4 +1,196 @@
 ## Phase 2: Domain Services
+
+### Control Protocol Architecture
+
+Before implementing domain services, it's critical to understand how bidirectional communication works between the SDK and Claude CLI. This understanding shapes how domain services are designed.
+
+#### Overview
+
+The SDK uses a JSON-RPC control protocol layered on top of the transport (stdin/stdout). There are **three types of messages**:
+
+1. **SDK Messages** - Regular messages (user, assistant, system, result, stream_event)
+2. **Control Requests** - Bidirectional control messages (`type: "control_request"`)
+3. **Control Responses** - Responses to control requests (`type: "control_response"`)
+
+#### Message Flow Diagram
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ Domain Service Layer                                                  │
+│  - Querying/Streaming services focus on business logic               │
+│  - Delegate control protocol details to protocol adapter             │
+└──────────────────────────────────────────────────────────────────────┘
+                              │ ▲
+                              │ │
+                    SDK Messages + Control Requests/Responses
+                              │ │
+                              ▼ │
+┌──────────────────────────────────────────────────────────────────────┐
+│ Protocol Handler (jsonrpc adapter)                                   │
+│  - Routes messages by type                                           │
+│  - Manages pending requests (map[requestID]chan)                     │
+│  - Tracks callback IDs for hooks                                     │
+│  - Handles 60s timeouts on outbound requests                         │
+│  - Generates request IDs: req_{counter}_{randomHex(4)}               │
+└──────────────────────────────────────────────────────────────────────┘
+                              │ ▲
+                              │ │
+                       JSON lines over stdin/stdout
+                              │ │
+                              ▼ │
+┌──────────────────────────────────────────────────────────────────────┐
+│ Transport Adapter (CLI subprocess)                                    │
+│  - Manages subprocess and pipes                                       │
+│  - Buffers partial JSON until complete                               │
+│  - Handles process lifecycle                                         │
+└──────────────────────────────────────────────────────────────────────┘
+                              │ ▲
+                              │ │
+                              ▼ │
+                      ┌──────────────┐
+                      │  Claude CLI  │
+                      └──────────────┘
+```
+
+#### Control Request Types
+
+**SDK → CLI (Outbound):**
+- `interrupt` - Stop current operation
+- `set_permission_mode` - Change permission mode
+- `set_model` - Change AI model
+- `initialize` - Setup hooks (streaming only)
+
+**CLI → SDK (Inbound):**
+- `can_use_tool` - Ask permission for tool use
+- `hook_callback` - Execute registered hook
+- `mcp_message` - Proxy message to/from MCP server
+
+#### Request ID Generation
+
+Every control request needs a unique ID for response routing:
+
+```go
+// Pattern: req_{counter}_{randomHex}
+requestID := fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(4))
+a.requestCounter++
+
+// Examples:
+// "req_1_a3f2"
+// "req_2_b8c4"
+// "req_3_d1e9"
+
+func randomHex(n int) string {
+    b := make([]byte, n)
+    rand.Read(b)
+    return hex.EncodeToString(b)
+}
+```
+
+#### Hook Callback ID Registration
+
+During streaming initialization, hooks are registered with generated callback IDs:
+
+```go
+// Initialize request structure:
+{
+  "type": "control_request",
+  "request_id": "req_1_a3f2",
+  "request": {
+    "subtype": "initialize",
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hookCallbackIds": ["hook_0", "hook_1"]  // Generated IDs
+        }
+      ],
+      "PostToolUse": [
+        {
+          "matcher": "*",
+          "hookCallbackIds": ["hook_2"]
+        }
+      ]
+    }
+  }
+}
+```
+
+**Hook ID Generation Pattern:**
+
+```go
+// During initialization, generate IDs for all hook callbacks
+callbackID := fmt.Sprintf("hook_%d", nextCallbackID)
+nextCallbackID++
+hookCallbacksMap[callbackID] = userCallback
+
+// When CLI sends hook_callback request:
+// {
+//   "subtype": "hook_callback",
+//   "callback_id": "hook_0",  // <-- References our generated ID
+//   "input": {...},
+//   "tool_use_id": "toolu_xxx"
+// }
+//
+// SDK looks up hookCallbacksMap["hook_0"] and invokes it
+```
+
+#### Permission Flow with Suggestions
+
+When CLI requests permission, it includes suggestions for "always allow" workflows:
+
+```go
+// Inbound permission request from CLI:
+{
+  "subtype": "can_use_tool",
+  "tool_name": "Bash",
+  "input": {"command": "git status"},
+  "permission_suggestions": [
+    {
+      "type": "addRules",
+      "rules": [{"toolName": "Bash", "ruleContent": "git:*"}],
+      "behavior": "allow",
+      "destination": "userSettings"
+    }
+  ],
+  "blocked_path": "/home/user/project"
+}
+
+// SDK calls user's can_use_tool callback, passing suggestions
+permCtx := ToolPermissionContext{
+    Suggestions: request.PermissionSuggestions,
+}
+result, err := canUseTool(ctx, toolName, input, permCtx)
+
+// If user accepts with "always allow":
+return &PermissionResultAllow{
+    UpdatedPermissions: permCtx.Suggestions,  // Return CLI's suggestions
+}
+
+// SDK sends response:
+{
+  "allow": true,
+  "updated_permissions": [...]  // CLI's original suggestions
+}
+```
+
+#### Timeouts
+
+All outbound control requests have a **60-second timeout** to prevent deadlocks:
+
+```go
+timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+defer cancel()
+
+select {
+case <-timeoutCtx.Done():
+    return nil, fmt.Errorf("control request timeout: %s", subtype)
+case result := <-resultChan:
+    return result, nil
+}
+```
+
+---
+
 ### 2.1 Querying Service (querying/service.go)
 Priority: Critical
 The querying service encapsulates the domain logic for executing one-shot queries.
@@ -44,9 +236,14 @@ func NewService(
 		parser:      parser,
 		hooks:       hooks,
 		permissions: perms,
-		mcpServers:  mcpServers,
+		mcpServers:  mcpServers, // Both client and SDK MCP servers (already wrapped as adapters)
 	}
 }
+
+// Note: The mcpServers map contains ports.MCPServer implementations.
+// For SDK servers: These are ServerAdapter instances wrapping user's *mcp.Server
+// For client servers: These are ClientAdapter instances with active MCP client sessions
+// The protocol adapter uses this map to route control protocol mcp_message requests
 
 func (s *Service) Execute(ctx context.Context, prompt string, opts *options.AgentOptions) (<-chan messages.Message, <-chan error) {
 	msgCh := make(chan messages.Message)
@@ -177,11 +374,15 @@ func NewService(
 		parser:      parser,
 		hooks:       hooks,
 		permissions: perms,
-		mcpServers:  mcpServers,
+		mcpServers:  mcpServers, // MCP servers passed to protocol for control request handling
 		msgCh:       make(chan map[string]any),
 		errCh:       make(chan error, 1),
 	}
 }
+
+// Note: MCP servers are initialized by the public API layer before creating this service.
+// The service receives already-connected adapters (both client and SDK types).
+// When control protocol receives mcp_message requests, it uses this map for routing.
 
 func (s *Service) Connect(ctx context.Context, prompt *string) error {
 	// 1. Connect transport

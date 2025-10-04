@@ -691,29 +691,39 @@ func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any
 }
 
 // handleMCPMessage handles mcp_message control requests by proxying
-// the raw message to the appropriate in-process MCPServer.
+// the raw message to the appropriate MCP server adapter (client or SDK type).
+// The mcpServers map contains both:
+// - ClientAdapter instances (connected to external MCP servers via stdio/HTTP/SSE)
+// - ServerAdapter instances (wrapping user's in-process *mcp.Server instances)
 func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any, mcpServers map[string]ports.MCPServer) (map[string]any, error) {
 	serverName, _ := request["server_name"].(string)
 	mcpMessage, _ := request["message"].(map[string]any)
+
+	// Look up server adapter by name
 	server, exists := mcpServers[serverName]
 	if !exists {
 		return a.mcpErrorResponse(mcpMessage, -32601, fmt.Sprintf("Server '%s' not found", serverName)), nil
 	}
-	// Marshal the message to be sent to the server wrapper.
+
+	// Marshal message to JSON-RPC format
 	mcpMessageBytes, err := json.Marshal(mcpMessage)
 	if err != nil {
 		return a.mcpErrorResponse(mcpMessage, -32603, "failed to marshal mcp message"), nil
 	}
-	// The MCPServer port handles the message and returns a raw response.
+
+	// Forward to adapter (ClientAdapter or ServerAdapter)
+	// The adapter handles routing to either external server or in-process server
 	responseBytes, err := server.HandleMessage(ctx, mcpMessageBytes)
 	if err != nil {
 		return a.mcpErrorResponse(mcpMessage, -32603, err.Error()), nil
 	}
-	// Unmarshal the response to be embedded in the control protocol response.
+
+	// Unmarshal response for control protocol
 	var mcpResponse map[string]any
 	if err := json.Unmarshal(responseBytes, &mcpResponse); err != nil {
 		return a.mcpErrorResponse(mcpMessage, -32603, "failed to unmarshal mcp response"), nil
 	}
+
 	return map[string]any{
 		"mcp_response": mcpResponse,
 	}, nil
@@ -1226,7 +1236,11 @@ func parseToolResultBlock(block map[string]any) (messages.ToolResultBlock, error
   - `helpers.go` - Shared helper functions (40 lines)
 
 **adapters/mcp/ package:**
-- ✅ Likely 1-2 files (under 175 lines total)
+- ❌ Single file approach insufficient - need TWO distinct adapters
+- ✅ Split into 3 files (under 175 lines each):
+  - `client.go` - ClientAdapter for external MCP servers (90 lines)
+  - `server.go` - ServerAdapter for SDK MCP servers (85 lines)
+  - `helpers.go` - Shared utilities (40 lines)
 
 ### Complexity Hotspots
 

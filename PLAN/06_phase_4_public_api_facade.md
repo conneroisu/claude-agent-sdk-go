@@ -255,9 +255,16 @@ func initializeMCPServer(
 		}
 
 	case options.SDKServerConfig:
-		// SDK-managed servers are handled by the MCP adapter layer
-		// This case should be handled by a separate registry/factory
-		return nil, fmt.Errorf("SDK-managed MCP servers not yet implemented")
+		// SDK-managed servers use in-memory transport
+		adapter, err := mcp.NewSDKServerAdapter(name, config.Instance)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SDK server adapter: %w", err)
+		}
+		// Connect the adapter (initializes in-memory transport and server session)
+		if err := adapter.Connect(ctx); err != nil {
+			return nil, fmt.Errorf("failed to connect SDK server: %w", err)
+		}
+		return adapter, nil
 
 	default:
 		return nil, fmt.Errorf("unknown MCP server config type: %T", cfg)
@@ -278,8 +285,8 @@ func initializeMCPServer(
 		return nil, fmt.Errorf("failed to connect to MCP server: %w", err)
 	}
 
-	// Wrap the session in our adapter that implements ports.MCPServer
-	return mcp.NewAdapter(name, session), nil
+	// Wrap the session in our client adapter that implements ports.MCPServer
+	return mcp.NewClientAdapter(name, session), nil
 }
 
 // mapToEnvSlice converts map[string]string to []string in KEY=VALUE format
@@ -292,12 +299,10 @@ func mapToEnvSlice(m map[string]string) []string {
 }
 ```
 
-### 4.4 MCP Adapter (adapters/mcp/adapter.go)
+### 4.4 MCP Client Adapter (adapters/mcp/client.go)
 Priority: Critical
 
-This adapter wraps the MCP SDK's ClientSession to implement our ports.MCPServer interface:
-
-**Note:** The `ports.MCPServer` interface needs a `Close() error` method added to support resource cleanup. Update Phase 1 port definition accordingly.
+This adapter wraps the MCP SDK's ClientSession to connect TO external MCP servers (stdio/HTTP/SSE):
 
 ```go
 package mcp
@@ -312,32 +317,33 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Adapter wraps an MCP ClientSession to implement ports.MCPServer
-type Adapter struct {
+// ClientAdapter wraps an MCP ClientSession to implement ports.MCPServer
+// This is used to connect TO external MCP servers via stdio/HTTP/SSE
+type ClientAdapter struct {
 	name    string
 	session *mcpsdk.ClientSession
 }
 
 // Verify interface compliance at compile time
-var _ ports.MCPServer = (*Adapter)(nil)
+var _ ports.MCPServer = (*ClientAdapter)(nil)
 
-// NewAdapter creates a new MCP adapter wrapping the given session
-func NewAdapter(name string, session *mcpsdk.ClientSession) *Adapter {
-	return &Adapter{
+// NewClientAdapter creates a new MCP client adapter wrapping the given session
+func NewClientAdapter(name string, session *mcpsdk.ClientSession) *ClientAdapter {
+	return &ClientAdapter{
 		name:    name,
 		session: session,
 	}
 }
 
 // Name returns the server name
-func (a *Adapter) Name() string {
+func (a *ClientAdapter) Name() string {
 	return a.name
 }
 
-// HandleMessage forwards a raw JSON-RPC message to the MCP server
+// HandleMessage forwards a raw JSON-RPC message to the external MCP server
 // and returns the response. This is used by the domain to proxy
-// messages from Claude CLI to the MCP server.
-func (a *Adapter) HandleMessage(ctx context.Context, message []byte) ([]byte, error) {
+// messages from Claude CLI to external MCP servers.
+func (a *ClientAdapter) HandleMessage(ctx context.Context, message []byte) ([]byte, error) {
 	// Decode the raw JSON-RPC message
 	msg, err := jsonrpc.DecodeMessage(message)
 	if err != nil {
@@ -347,7 +353,7 @@ func (a *Adapter) HandleMessage(ctx context.Context, message []byte) ([]byte, er
 	// Route the message based on type
 	switch m := msg.(type) {
 	case *jsonrpc.Request:
-		// Forward request to MCP server via session
+		// Forward request to external MCP server via session
 		// The session handles method routing internally
 		result, err := a.handleRequest(ctx, m)
 		if err != nil {
@@ -375,7 +381,7 @@ func (a *Adapter) HandleMessage(ctx context.Context, message []byte) ([]byte, er
 }
 
 // handleRequest routes JSON-RPC requests to appropriate MCP SDK methods
-func (a *Adapter) handleRequest(ctx context.Context, req *jsonrpc.Request) (any, error) {
+func (a *ClientAdapter) handleRequest(ctx context.Context, req *jsonrpc.Request) (any, error) {
 	switch req.Method {
 	case "tools/list":
 		return a.session.ListTools(ctx, nil)
@@ -413,17 +419,19 @@ func (a *Adapter) handleRequest(ctx context.Context, req *jsonrpc.Request) (any,
 }
 
 // handleNotification routes JSON-RPC notifications
-func (a *Adapter) handleNotification(ctx context.Context, notif *jsonrpc.Notification) error {
+func (a *ClientAdapter) handleNotification(ctx context.Context, notif *jsonrpc.Notification) error {
 	// MCP notifications are typically one-way, no response needed
 	// Could implement logging/monitoring here
 	return nil
 }
 
-// Close closes the MCP session
-func (a *Adapter) Close() error {
+// Close closes the MCP client session
+func (a *ClientAdapter) Close() error {
 	return a.session.Close()
 }
 ```
+
+**Note:** This client adapter is for EXTERNAL MCP servers. For SDK MCP servers (user-defined tools), see Phase 5b which defines `SDKServerAdapter` in `adapters/mcp/sdk_server.go`.
 
 ### 4.4 Helper Utilities (helpers/ package)
 
@@ -553,17 +561,19 @@ systemPrompt := helpers.BuildSystemPrompt(
 **Public API files:**
 - ✅ `client.go` - Estimated 130 lines (compliant with error handling)
 - ✅ `query.go` - Estimated 95 lines (compliant with error handling)
-- ✅ `mcp_init.go` - 95 lines (compliant)
-- ❌ `adapters/mcp/adapter.go` - 125 lines (compliant, but close to limit)
+- ✅ `mcp.go` - 35 lines (SDK MCP server public API)
+- ✅ `mcp_init.go` - 95 lines (compliant, includes SDK server handling)
 - ✅ `errors.go` - Estimated 60 lines (compliant)
+
+**MCP adapter files:**
+- ✅ `adapters/mcp/client.go` - 125 lines (external MCP client adapter)
+- ✅ `adapters/mcp/sdk_server.go` - 175 lines (SDK server adapter + in-memory transport)
 
 **Helper utilities files:**
 - ✅ `helpers/tools.go` - 60 lines (compliant)
 - ✅ `helpers/prompts.go` - 20 lines (compliant)
 
-**If adapter.go exceeds limit later, split into:**
-- `adapter.go` - Adapter struct + constructor + Name/Close (40 lines)
-- `handler.go` - HandleMessage + routing logic (85 lines)
+All files are under the 175-line limit.
 
 ### Complexity Considerations
 
@@ -593,11 +603,23 @@ func NewClient(
 - [ ] Public API fully documented with godoc examples
 - [ ] Error types have clear documentation
 - [ ] Builder pattern for complex init if needed
-- [ ] MCP server initialization handles all config types (stdio, HTTP, SSE)
-- [ ] MCP adapter correctly implements ports.MCPServer interface
+
+**MCP Client Integration (External Servers):**
+- [ ] MCP server initialization handles all config types (stdio, HTTP, SSE, SDK)
+- [ ] ClientAdapter correctly implements ports.MCPServer interface
 - [ ] Proper cleanup on initialization errors (close partial connections)
 - [ ] MCP client sessions properly closed in Client.Close()
 - [ ] Context cancellation properly handled in MCP connections
+
+**SDK MCP Server Integration (In-Process):**
+- [ ] SDKServerAdapter correctly implements ports.MCPServer interface
+- [ ] In-memory transport pair created with channels
+- [ ] SDK server connected to transport on initialization
+- [ ] SDK server cleanup handled in Client.Close()
+- [ ] Public API (NewMCPServer, AddTool) in pkg/claude/mcp.go
+- [ ] Complete example in cmd/examples/mcp/calculator/
+
+**Tool Helpers:**
 - [ ] All 18 BuiltinTool constants defined in options/tools.go
 - [ ] WithMatcher() method works correctly for pattern matching
 - [ ] Helper utilities tested with unit tests

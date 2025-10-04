@@ -366,9 +366,11 @@ Examples to Create:
 1. `quickstart/` - Basic query
 2. `streaming/` - Bidirectional conversation
 3. `hooks/` - Custom hooks
-4. `mcp/` - SDK MCP server
-5. `permissions/` - Permission callbacks
-6. `tools/` - Tool filtering
+4. `mcp/calculator/` - SDK MCP server with math tools (see Phase 5b)
+5. `mcp/external/` - External MCP server integration
+6. `permissions/` - Permission callbacks
+7. `tools/` - Tool filtering
+8. `integration/` - Combined hooks + MCP + permissions (see Phase 5 summary)
 ### 6.6 Documentation
 Priority: High
 - Comprehensive README.md with architecture diagram

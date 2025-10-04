@@ -22,11 +22,20 @@ Lifecycle hooks that execute at key points in agent execution:
 [📄 Full Documentation](./07b_phase_5_mcp_servers.md)
 
 In-process user-defined tools via Model Context Protocol:
+- **Two integration modes:**
+  - External servers: Connect TO external MCP servers via stdio/HTTP/SSE
+  - SDK servers: User creates in-process servers with direct state access
 - Wraps official `github.com/modelcontextprotocol/go-sdk`
 - Provides `NewMCPServer()` and `AddTool()` convenience functions
-- SDK manages internal adapter for message proxying
+- Type-safe tool definitions using Go generics
+- Automatic JSON schema inference from struct types
+- In-memory transport for zero IPC overhead (SDK servers)
+- Unified `ports.MCPServer` interface for both modes
 
-**Key file:** `mcp.go` in public API
+**Key files:**
+- `mcp.go` - Public API (NewMCPServer, AddTool)
+- `adapters/mcp/client.go` - External server adapter
+- `adapters/mcp/sdk_server.go` - SDK server adapter
 
 #### **5c. Permission Callbacks** (Medium Priority)
 [📄 Full Documentation](./07c_phase_5_permissions.md)
@@ -56,6 +65,157 @@ Custom authorization logic for tool usage:
 - Hooks may trigger permission checks
 - Permission callbacks may generate hook events
 - MCP tools participate in both hooks and permissions
+
+---
+
+## End-to-End Integration Example
+
+Example showing all three integrations working together:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/conneroisu/claude/pkg/claude"
+	"github.com/conneroisu/claude/pkg/claude/hooking"
+	"github.com/conneroisu/claude/pkg/claude/options"
+	"github.com/conneroisu/claude/pkg/claude/permissions"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// 1. Create SDK MCP server with custom tools
+	server := claude.NewMCPServer("api-client", "1.0")
+
+	type APICallArgs struct {
+		Endpoint string `json:"endpoint" jsonschema:"description=API endpoint to call"`
+		Method   string `json:"method" jsonschema:"description=HTTP method"`
+	}
+
+	apiHandler := func(ctx context.Context, req *mcpsdk.CallToolRequest, args APICallArgs) (*mcpsdk.CallToolResult, struct{ Response string }, error) {
+		// Make actual API call here
+		return nil, struct{ Response string }{Response: "API response"}, nil
+	}
+
+	claude.AddTool(server, &mcpsdk.Tool{
+		Name:        "call_api",
+		Description: "Make API calls to external services",
+	}, apiHandler)
+
+	// 2. Set up hooks for logging and monitoring
+	hooks := map[hooking.HookEvent][]hooking.HookMatcher{
+		hooking.HookEventPreToolUse: {
+			{
+				Matcher: "call_api",
+				Hooks: []hooking.HookCallback{
+					func(input hooking.HookInput) (hooking.HookOutput, error) {
+						log.Printf("About to call API: %v", input)
+						// Optionally block or modify the call
+						return hooking.HookOutput{Continue: true}, nil
+					},
+				},
+			},
+		},
+		hooking.HookEventPostToolUse: {
+			{
+				Hooks: []hooking.HookCallback{
+					func(input hooking.HookInput) (hooking.HookOutput, error) {
+						log.Printf("Tool executed: %v", input)
+						return hooking.HookOutput{}, nil
+					},
+				},
+			},
+		},
+	}
+
+	// 3. Set up permission callback for authorization
+	canUseTool := func(toolName string, input map[string]any, ctx permissions.Context) (permissions.Result, error) {
+		// Custom authorization logic
+		if toolName == "call_api" {
+			endpoint, _ := input["endpoint"].(string)
+			if isAllowedEndpoint(endpoint) {
+				return permissions.ResultAllow{}, nil
+			}
+			return permissions.ResultDeny{
+				Message: fmt.Sprintf("Endpoint %s not allowed", endpoint),
+			}, nil
+		}
+		return permissions.ResultAllow{}, nil
+	}
+
+	// 4. Configure Claude with all three integrations
+	opts := &options.AgentOptions{
+		MCPServers: map[string]options.MCPServerConfig{
+			"api": options.SDKServerConfig{
+				Type:     "sdk",
+				Name:     "api",
+				Instance: server,
+			},
+		},
+		AllowedTools: []options.BuiltinTool{
+			options.ToolMcp,
+		},
+	}
+
+	permsConfig := &permissions.PermissionsConfig{
+		CanUseTool: canUseTool,
+	}
+
+	// 5. Execute query with all integrations active
+	client := claude.NewClient(opts, hooks, permsConfig)
+	if err := client.Connect(ctx, nil); err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	// Send message and receive responses
+	if err := client.SendMessage(ctx, "Use the API to fetch user data"); err != nil {
+		log.Fatal(err)
+	}
+
+	msgCh, errCh := client.ReceiveMessages(ctx)
+	for {
+		select {
+		case msg, ok := <-msgCh:
+			if !ok {
+				return
+			}
+			fmt.Printf("Response: %v\n", msg)
+
+		case err, ok := <-errCh:
+			if !ok {
+				return
+			}
+			if err != nil {
+				log.Printf("Error: %v", err)
+			}
+		}
+	}
+}
+
+func isAllowedEndpoint(endpoint string) bool {
+	// Authorization logic
+	allowedEndpoints := []string{"/api/users", "/api/data"}
+	for _, allowed := range allowedEndpoints {
+		if endpoint == allowed {
+			return true
+		}
+	}
+	return false
+}
+```
+
+**Integration Flow:**
+1. User defines custom tools via SDK MCP server
+2. Hooks log and monitor tool usage
+3. Permission callback authorizes tool calls
+4. All three work together seamlessly via hexagonal architecture
 
 ---
 

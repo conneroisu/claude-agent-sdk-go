@@ -418,15 +418,23 @@ options/mcp.go - MCP Server Configuration:
 ```go
 package options
 
-// MCPServerConfig is configuration for MCP servers (not runtime instances)
-// These are infrastructure configurations for connecting to MCP servers
+import (
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// MCPServerConfig represents configuration for MCP servers
+// There are two distinct types:
+// 1. Client Configs (Stdio, SSE, HTTP): SDK connects TO external MCP servers
+// 2. SDK Config: SDK wraps user's in-process MCP server to EXPOSE to Claude CLI
 type MCPServerConfig interface {
 	mcpServerConfig()
 }
 
-// StdioServerConfig configures an MCP server using stdio transport
+// === CLIENT MCP SERVERS (SDK connects TO them) ===
+
+// StdioServerConfig configures connection to an external MCP server via stdio
 type StdioServerConfig struct {
-	Type    string // "stdio"
+	Type    string // "stdio" (optional for backwards compatibility)
 	Command string
 	Args    []string
 	Env     map[string]string
@@ -434,7 +442,7 @@ type StdioServerConfig struct {
 
 func (StdioServerConfig) mcpServerConfig() {}
 
-// SSEServerConfig configures an MCP server using Server-Sent Events
+// SSEServerConfig configures connection to an external MCP server via Server-Sent Events
 type SSEServerConfig struct {
 	Type    string // "sse"
 	URL     string
@@ -443,7 +451,7 @@ type SSEServerConfig struct {
 
 func (SSEServerConfig) mcpServerConfig() {}
 
-// HTTPServerConfig configures an MCP server using HTTP transport
+// HTTPServerConfig configures connection to an external MCP server via HTTP
 type HTTPServerConfig struct {
 	Type    string // "http"
 	URL     string
@@ -452,14 +460,15 @@ type HTTPServerConfig struct {
 
 func (HTTPServerConfig) mcpServerConfig() {}
 
-// SDKServerConfig is a marker for SDK-managed MCP servers
-// The actual server instance is managed separately by the MCP adapter
-// This ONLY contains configuration, NOT the server instance itself
+// === SDK MCP SERVERS (User creates, SDK wraps and exposes to CLI) ===
+
+// SDKServerConfig wraps a user-created in-process MCP server
+// The Instance field contains the actual *mcp.Server created by the user
+// The SDK wraps this server and exposes it to Claude CLI via control protocol
 type SDKServerConfig struct {
-	Type string // "sdk"
-	Name string
-	// Note: Instance is NOT stored here to avoid circular dependencies
-	// The MCP adapter will manage server instances separately
+	Type     string // "sdk"
+	Name     string
+	Instance *mcpsdk.Server // The user's MCP server instance (created with mcp.NewServer)
 }
 
 func (SDKServerConfig) mcpServerConfig() {}
@@ -536,17 +545,24 @@ package ports
 
 import "context"
 
-// MCPServer defines an interface for an in-process MCP Server.
-// It abstracts the underlying implementation, which should be a wrapper around
-// the official MCP Go SDK (github.com/modelcontextprotocol/go-sdk).
-// This allows the agent to route raw MCP messages from the Claude CLI
-// to a user-defined tool server.
+// MCPServer defines what the domain needs from an MCP server adapter
+// This port has TWO implementations:
+//   1. ClientAdapter: Wraps an MCP client session that connects TO external servers
+//   2. ServerAdapter: Wraps a user's in-process *mcp.Server to expose TO Claude CLI
+//
+// The domain doesn't care which type - it just needs to route JSON-RPC messages
 type MCPServer interface {
+	// Name returns the server identifier (used for routing control protocol messages)
 	Name() string
-	// HandleMessage takes a raw JSON-RPC message, processes it, and returns
-	// a raw JSON-RPC response. This is used to proxy messages.
+
+	// HandleMessage routes a raw JSON-RPC message and returns the response
+	// For ClientAdapter: Forwards message to external server via MCP client session
+	// For ServerAdapter: Routes message to user's in-process server via in-memory transport
 	HandleMessage(ctx context.Context, message []byte) ([]byte, error)
-	// Close closes the MCP server connection and releases resources
+
+	// Close releases resources
+	// For ClientAdapter: Closes the client session connection
+	// For ServerAdapter: Closes in-memory transport (server itself is user-managed)
 	Close() error
 }
 ```
@@ -598,6 +614,165 @@ func (e *JSONDecodeError) Error() string {
 func (e *JSONDecodeError) Unwrap() error {
 	return e.Err
 }
+```
+
+### 1.4 Control Protocol Types (messages/control.go)
+
+Priority: Critical
+
+The SDK communicates bidirectionally with Claude CLI using a JSON-RPC control protocol. These types define the control message structures based on the TypeScript SDK reference.
+
+```go
+package messages
+
+// ControlMessage types for bidirectional communication with Claude CLI
+// Based on TypeScript SDK control protocol specification
+
+// ControlRequest is sent from SDK to CLI
+type ControlRequest struct {
+	Type      string `json:"type"` // Always "control_request"
+	RequestID string `json:"request_id"`
+	Request   any    `json:"request"` // One of: InterruptRequest, SetPermissionModeRequest, SetModelRequest
+}
+
+// ControlResponse is received from CLI in response to SDK requests
+type ControlResponse struct {
+	Type     string         `json:"type"` // Always "control_response"
+	Response ResponseUnion  `json:"response"`
+}
+
+type ResponseUnion struct {
+	Subtype   string         `json:"subtype"` // "success" | "error"
+	RequestID string         `json:"request_id"`
+	Response  map[string]any `json:"response,omitempty"` // Present when subtype is "success"
+	Error     string         `json:"error,omitempty"`    // Present when subtype is "error"
+}
+
+// SDK → CLI Control Requests
+
+type InterruptRequest struct {
+	Subtype string `json:"subtype"` // "interrupt"
+}
+
+type SetPermissionModeRequest struct {
+	Subtype string `json:"subtype"` // "set_permission_mode"
+	Mode    string `json:"mode"`    // PermissionMode value
+}
+
+type SetModelRequest struct {
+	Subtype string  `json:"subtype"` // "set_model"
+	Model   *string `json:"model"`   // nil to reset to default
+}
+
+type InitializeRequest struct {
+	Subtype string         `json:"subtype"` // "initialize"
+	Hooks   map[string]any `json:"hooks"`   // Hook configurations
+}
+
+// CLI → SDK Control Requests (inbound)
+
+type InboundControlRequest struct {
+	Type      string `json:"type"` // Always "control_request"
+	RequestID string `json:"request_id"`
+	Request   any    `json:"request"` // One of: CanUseToolRequest, HookCallbackRequest, MCPMessageRequest
+}
+
+type CanUseToolRequest struct {
+	Subtype              string           `json:"subtype"` // "can_use_tool"
+	ToolName             string           `json:"tool_name"`
+	Input                map[string]any   `json:"input"`
+	PermissionSuggestions []PermissionUpdate `json:"permission_suggestions,omitempty"`
+	BlockedPath          *string          `json:"blocked_path,omitempty"`
+}
+
+type HookCallbackRequest struct {
+	Subtype    string         `json:"subtype"` // "hook_callback"
+	CallbackID string         `json:"callback_id"`
+	Input      map[string]any `json:"input"`
+	ToolUseID  *string        `json:"tool_use_id,omitempty"`
+}
+
+type MCPMessageRequest struct {
+	Subtype    string         `json:"subtype"` // "mcp_message"
+	ServerName string         `json:"server_name"`
+	Message    map[string]any `json:"message"` // Raw JSON-RPC message
+}
+
+// ControlCancelRequest cancels a pending control request
+type ControlCancelRequest struct {
+	Type      string `json:"type"` // "control_cancel_request"
+	RequestID string `json:"request_id"`
+}
+
+// Permission Types (used in control protocol)
+
+type PermissionUpdate struct {
+	Type        string                   `json:"type"` // "addRules" | "replaceRules" | "removeRules" | "setMode" | "addDirectories" | "removeDirectories"
+	Rules       []PermissionRuleValue    `json:"rules,omitempty"`
+	Behavior    *PermissionBehavior      `json:"behavior,omitempty"`
+	Mode        *string                  `json:"mode,omitempty"`        // PermissionMode
+	Directories []string                 `json:"directories,omitempty"`
+	Destination *PermissionUpdateDestination `json:"destination,omitempty"`
+}
+
+type PermissionRuleValue struct {
+	ToolName    string  `json:"toolName"`
+	RuleContent *string `json:"ruleContent,omitempty"`
+}
+
+type PermissionBehavior string
+
+const (
+	PermissionBehaviorAllow PermissionBehavior = "allow"
+	PermissionBehaviorDeny  PermissionBehavior = "deny"
+	PermissionBehaviorAsk   PermissionBehavior = "ask"
+)
+
+type PermissionUpdateDestination string
+
+const (
+	PermissionUpdateDestinationUserSettings    PermissionUpdateDestination = "userSettings"
+	PermissionUpdateDestinationProjectSettings PermissionUpdateDestination = "projectSettings"
+	PermissionUpdateDestinationLocalSettings   PermissionUpdateDestination = "localSettings"
+	PermissionUpdateDestinationSession         PermissionUpdateDestination = "session"
+)
+
+// Permission Result types (returned by can_use_tool callback)
+
+type PermissionResult interface {
+	permissionResult()
+}
+
+type PermissionResultAllow struct {
+	Behavior           string              `json:"behavior"` // Always "allow"
+	UpdatedInput       map[string]any      `json:"updatedInput,omitempty"`
+	UpdatedPermissions []PermissionUpdate  `json:"updatedPermissions,omitempty"`
+}
+
+func (PermissionResultAllow) permissionResult() {}
+
+type PermissionResultDeny struct {
+	Behavior  string `json:"behavior"` // Always "deny"
+	Message   string `json:"message"`
+	Interrupt bool   `json:"interrupt,omitempty"` // If true, stop execution completely
+}
+
+func (PermissionResultDeny) permissionResult() {}
+```
+
+**Control Protocol Flow:**
+
+1. **SDK → CLI**: Send `ControlRequest` with unique `request_id`
+2. **CLI → SDK**: Respond with `ControlResponse` matching the `request_id`
+3. **CLI → SDK**: Send `InboundControlRequest` for permissions/hooks/MCP
+4. **SDK → CLI**: Respond with `ControlResponse` for the inbound request
+
+**Request ID Format:** `req_{counter}_{randomHex(4)}`
+
+Example:
+```go
+requestID := fmt.Sprintf("req_%d_%s", counter, randomHex(4))
+// Produces: "req_1_a3f2", "req_2_b4c1", etc.
 ```
 
 ---
