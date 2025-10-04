@@ -161,6 +161,92 @@ func TestAdapter_BuildCommand(t *testing.T) {
 	}
 }
 ```
+SDK MCP Server Adapter Tests:
+```go
+// adapters/mcp/sdk_server_test.go
+package mcp_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/conneroisu/claude/pkg/claude/adapters/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+func TestSDKServerAdapter_InMemoryTransport(t *testing.T) {
+	// Create MCP server instance
+	server := mcpsdk.NewServer("test", "1.0")
+
+	// Create adapter with in-memory transport
+	adapter, err := mcp.NewSDKServerAdapter("test", server)
+	if err != nil {
+		t.Fatalf("failed to create adapter: %v", err)
+	}
+
+	// Test connection
+	ctx := context.Background()
+	if err := adapter.Connect(ctx); err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer adapter.Close()
+
+	// Verify server is ready
+	if !adapter.IsReady() {
+		t.Fatal("adapter should be ready after connect")
+	}
+}
+
+func TestSDKServerAdapter_ToolExecution(t *testing.T) {
+	server := mcpsdk.NewServer("test", "1.0")
+
+	// Add test tool
+	type AddArgs struct {
+		A int `json:"a"`
+		B int `json:"b"`
+	}
+	handler := func(ctx context.Context, req *mcpsdk.CallToolRequest, args AddArgs) (*mcpsdk.CallToolResult, struct{ Sum int }, error) {
+		return nil, struct{ Sum int }{Sum: args.A + args.B}, nil
+	}
+
+	// Register tool (using helper from public API)
+	tool := &mcpsdk.Tool{Name: "add", Description: "Add two numbers"}
+	// Add tool registration logic here
+
+	adapter, _ := mcp.NewSDKServerAdapter("test", server)
+	adapter.Connect(context.Background())
+	defer adapter.Close()
+
+	// Test tool call via JSON-RPC
+	request := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "add",
+			"arguments": map[string]any{
+				"a": 5,
+				"b": 3,
+			},
+		},
+	}
+
+	response, err := adapter.HandleRequest(context.Background(), request)
+	if err != nil {
+		t.Fatalf("tool call failed: %v", err)
+	}
+
+	// Verify response
+	result, ok := response["result"].(map[string]any)
+	if !ok {
+		t.Fatal("expected result in response")
+	}
+	sum, ok := result["Sum"].(int)
+	if !ok || sum != 8 {
+		t.Fatalf("expected sum=8, got %v", sum)
+	}
+}
+```
 Run Unit Tests:
 ```bash
 go test -v ./pkg/claude/...
@@ -255,6 +341,88 @@ func TestStreamingClient(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	case <-time.After(30 * time.Second):
 		t.Fatal("timeout")
+	}
+}
+func TestSDKMCPServer_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	ctx := context.Background()
+
+	// Create SDK MCP server with calculator tools
+	server := claude.NewMCPServer("calculator", "1.0")
+
+	type MathArgs struct {
+		A int `json:"a"`
+		B int `json:"b"`
+	}
+	type MathResult struct {
+		Result int `json:"result"`
+	}
+
+	addHandler := func(ctx context.Context, req *mcpsdk.CallToolRequest, args MathArgs) (*mcpsdk.CallToolResult, MathResult, error) {
+		return nil, MathResult{Result: args.A + args.B}, nil
+	}
+
+	claude.AddTool(server, &mcpsdk.Tool{
+		Name:        "add",
+		Description: "Add two numbers",
+	}, addHandler)
+
+	// Configure client with SDK MCP server
+	opts := &options.AgentOptions{
+		MCPServers: map[string]options.MCPServerConfig{
+			"calculator": options.SDKServerConfig{
+				Type:     "sdk",
+				Name:     "calculator",
+				Instance: server,
+			},
+		},
+		AllowedTools: []options.BuiltinTool{options.ToolMcp},
+	}
+
+	client := claude.NewClient(opts, nil, nil)
+	if err := client.Connect(ctx, nil); err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	defer client.Close()
+
+	// Test that Claude can use the calculator tool
+	if err := client.SendMessage(ctx, "Use the calculator to add 5 and 3"); err != nil {
+		t.Fatalf("send failed: %v", err)
+	}
+
+	msgCh, errCh := client.ReceiveMessages(ctx)
+	timeout := time.After(60 * time.Second)
+	var foundToolUse bool
+
+	for {
+		select {
+		case msg, ok := <-msgCh:
+			if !ok {
+				if !foundToolUse {
+					t.Fatal("expected tool use message")
+				}
+				return
+			}
+			// Look for tool use in message
+			if assistantMsg, ok := msg.(messages.AssistantMessage); ok {
+				for _, block := range assistantMsg.Content {
+					if toolUse, ok := block.(messages.ToolUseBlock); ok {
+						if toolUse.Name == "add" {
+							foundToolUse = true
+							t.Logf("Tool used successfully: %+v", toolUse)
+						}
+					}
+				}
+			}
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("error: %v", err)
+			}
+		case <-timeout:
+			t.Fatal("timeout waiting for tool use")
+		}
 	}
 }
 ```
