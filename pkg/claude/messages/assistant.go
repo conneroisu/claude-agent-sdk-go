@@ -1,15 +1,17 @@
-// Assistant message types for Claude Agent.
 package messages
 
-// AssistantMessage represents a message from Claude.
-//
-// Contains Claude's response, which can include text, thinking blocks,
-// tool use requests, and other content types. The Model field indicates
-// which Claude model generated this response.
+// AssistantMessage represents a response from Claude.
+// Assistant messages contain the AI's response content,
+// including text, thinking blocks, and tool use requests.
 type AssistantMessage struct {
-	Content         []ContentBlock `json:"content"`
-	Model           string         `json:"model"`
-	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
+	// Content is always a list of ContentBlocks for assistant messages
+	Content []ContentBlock `json:"content"`
+
+	// Model identifies which AI model generated this response
+	Model string `json:"model"`
+
+	// ParentToolUseID links this response to a tool use if applicable
+	ParentToolUseID *string `json:"parent_tool_use_id,omitempty"`
 }
 
 func (AssistantMessage) message() {}

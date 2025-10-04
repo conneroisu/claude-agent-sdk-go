@@ -1,29 +1,78 @@
+// Package claude provides a high-level API for interacting with Claude.
 package claude
 
 import (
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // NewMCPServer creates a new in-process MCP server using the go-sdk.
-// This server can be configured with tools and then passed to the Claude client
-// via AgentOptions.
-func NewMCPServer(name, version string) *mcpsdk.Server {
-	return mcpsdk.NewServer(&mcpsdk.Implementation{Name: name, Version: version}, nil)
-}
-
-// AddTool is a convenience wrapper around the go-sdk's generic AddTool function.
-// It allows users to add a tool with a typed handler to an mcp.Server instance,
-// benefiting from automatic schema inference and validation provided by the go-sdk.
+// This server can be configured with tools and then passed to the Claude
+// client via AgentOptions.
 //
 // Example:
 //
-//	server := NewMCPServer("my-server", "1.0")
-//	type myArgs struct { Arg1 string `json:"arg1"` }
-//	type myResult struct { Res string `json:"res"` }
-//	myHandler := func(ctx context.Context, req *mcpsdk.CallToolRequest, args myArgs) (*mcpsdk.CallToolResult, myResult, error) {
-//	    return nil, myResult{Res: "Result for " + args.Arg1}, nil
+//	server := claude.NewMCPServer("calculator", "1.0")
+//	claude.AddTool(server, &mcp.Tool{
+//	    Name: "add",
+//	    Description: "Add numbers",
+//	}, addHandler)
+//
+//	opts := &options.AgentOptions{
+//	    MCPServers: map[string]options.MCPServerConfig{
+//	        "calc": options.SDKServerConfig{
+//	            Type: "sdk",
+//	            Name: "calc",
+//	            Instance: server,
+//	        },
+//	    },
 //	}
-//	AddTool(server, &mcpsdk.Tool{Name: "my_tool", Description: "My test tool"}, myHandler)
-func AddTool[In, Out any](server *mcpsdk.Server, tool *mcpsdk.Tool, handler mcpsdk.ToolHandlerFor[In, Out]) {
-	mcpsdk.AddTool(server, tool, handler)
+func NewMCPServer(name, version string) *mcp.Server {
+	return mcp.NewServer(
+		&mcp.Implementation{
+			Name:    name,
+			Version: version,
+		},
+		nil,
+	)
+}
+
+// AddTool is a convenience wrapper around the go-sdk's generic AddTool
+// function. It allows users to add a tool with a typed handler to an
+// mcp.Server instance, benefiting from automatic schema inference and
+// validation provided by the go-sdk.
+//
+// The Go MCP SDK uses generics to automatically infer JSON schema from
+// the Args and Result type parameters. Struct tags (json, jsonschema)
+// control schema generation.
+//
+// Example:
+//
+//	type AddArgs struct {
+//	    A float64 `json:"a" jsonschema:"description=First number"`
+//	    B float64 `json:"b" jsonschema:"description=Second number"`
+//	}
+//
+//	type AddResult struct {
+//	    Sum float64 `json:"sum"`
+//	}
+//
+//	addHandler := func(
+//	    ctx context.Context,
+//	    req *mcp.CallToolRequest,
+//	    args AddArgs,
+//	) (*mcp.CallToolResult, AddResult, error) {
+//	    return nil, AddResult{Sum: args.A + args.B}, nil
+//	}
+//
+//	server := NewMCPServer("calculator", "1.0")
+//	AddTool(server, &mcp.Tool{
+//	    Name: "add",
+//	    Description: "Add two numbers",
+//	}, addHandler)
+func AddTool[In, Out any](
+	server *mcp.Server,
+	tool *mcp.Tool,
+	handler mcp.ToolHandlerFor[In, Out],
+) {
+	mcp.AddTool(server, tool, handler)
 }

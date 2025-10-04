@@ -1,3 +1,4 @@
+// Package main demonstrates a simple quickstart example.
 package main
 
 import (
@@ -13,50 +14,68 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// Create agent options
+	// Set max turns to limit conversation length
+	maxTurns := 1
 	opts := &options.AgentOptions{
-		MaxTurns: intPtr(1),
+		MaxTurns: &maxTurns,
 	}
 
-	// Execute a simple query
-	msgCh, errCh := claude.Query(ctx, "What is 2 + 2?", opts, nil)
+	// Execute a one-shot query
+	msgCh, errCh := claude.Query(
+		ctx,
+		"What is 2 + 2? Please explain briefly.",
+		opts,
+		nil,
+	)
 
-	// Process messages
+	// Process responses
+	if err := processResponses(msgCh, errCh); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// processResponses handles incoming messages and errors.
+func processResponses(
+	msgCh <-chan messages.Message,
+	errCh <-chan error,
+) error {
 	for {
 		select {
 		case msg, ok := <-msgCh:
 			if !ok {
-				// Channel closed, query complete
-				return
+				return nil
 			}
 
-			// Handle different message types
-			switch m := msg.(type) {
-			case *messages.AssistantMessage:
-				fmt.Println("Claude says:")
-				for _, block := range m.Content {
-					if textBlock, ok := block.(messages.TextBlock); ok {
-						fmt.Printf("  %s\n", textBlock.Text)
-					}
-				}
-
-			case *messages.ResultMessageSuccess:
-				fmt.Printf("\nQuery completed successfully in %dms\n", m.DurationMs)
-
-			case *messages.ResultMessageError:
-				fmt.Printf("\nQuery failed: %s\n", m.Subtype)
-			}
+			handleMessage(msg)
 
 		case err := <-errCh:
 			if err != nil {
-				log.Fatalf("Error: %v", err)
+				return err
 			}
 
-			return
+			return nil
 		}
 	}
 }
 
-func intPtr(i int) *int {
-	return &i
+// handleMessage processes a single message.
+func handleMessage(msg messages.Message) {
+	assistantMsg, ok := msg.(*messages.AssistantMessage)
+	if !ok {
+		return
+	}
+
+	printTextBlocks(assistantMsg.Content)
+}
+
+// printTextBlocks prints all text blocks from content.
+func printTextBlocks(content []messages.ContentBlock) {
+	for _, block := range content {
+		textBlock, ok := block.(messages.TextBlock)
+		if !ok {
+			continue
+		}
+
+		fmt.Printf("Claude: %s\n", textBlock.Text)
+	}
 }

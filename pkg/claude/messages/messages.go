@@ -1,41 +1,62 @@
-// Package messages provides domain models for Claude Agent messages.
-//
-// This package defines the core message types used throughout the SDK.
-// Messages represent the communication protocol between the SDK and Claude.
-//
-// Message Types:
-//   - UserMessage: User input to Claude
-//   - AssistantMessage: Claude's response
-//   - SystemMessage: System events and initialization
-//   - ResultMessage: Final query results (success or error)
-//   - StreamEvent: Real-time streaming events
-//
-// Design Decision: Uses typed structs for well-defined structures and
-// map[string]any for flexible/variable data (e.g., tool inputs).
+// Package messages provides domain models for Claude Agent SDK.
+// This package defines message types used in bidirectional communication
+// with Claude CLI, following hexagonal architecture principles where
+// domain models are infrastructure-independent.
 package messages
 
-// Message is the base interface for all message types.
-//
-// All message types implement this interface to enable type-safe
-// message handling throughout the SDK.
+// Message represents any message type in the Claude protocol.
+// This is the top-level discriminated union for all message types.
 type Message interface {
 	message()
 }
 
-// MessageContent represents the content of a user message.
-//
-// Can be either a simple string or a list of content blocks.
-// This flexibility supports both simple text input and complex
-// multi-modal content (text, images, tool results, etc.).
+// MessageContent can be either a simple string or a list of content blocks.
+// This allows messages to have structured or unstructured content.
 type MessageContent interface {
 	messageContent()
 }
 
-// StringContent is a simple string message content.
+// StringContent represents simple text content in a message.
 type StringContent string
 
-// BlockListContent is a list of content blocks.
+func (StringContent) messageContent() {}
+
+// BlockListContent represents structured content as a list of blocks.
 type BlockListContent []ContentBlock
 
-func (StringContent) messageContent()    {}
 func (BlockListContent) messageContent() {}
+
+// ContentBlock represents a structured content element.
+// Content blocks can be text, thinking, tool use, or tool results.
+type ContentBlock interface {
+	contentBlock()
+}
+
+// SystemMessageData is a discriminated union for SystemMessage.Data.
+// Parse this from map[string]any based on the Subtype field.
+type SystemMessageData interface {
+	systemMessageData()
+}
+
+// ResultMessage is a discriminated union based on Subtype field.
+// Results can be successful completions or errors during execution.
+type ResultMessage interface {
+	resultMessage()
+	Message
+}
+
+// ToolResultContent can be either a string or a list of content blocks.
+// This matches the flexibility of the Anthropic API tool result format.
+type ToolResultContent interface {
+	toolResultContent()
+}
+
+// ToolResultStringContent represents simple string tool results.
+type ToolResultStringContent string
+
+func (ToolResultStringContent) toolResultContent() {}
+
+// ToolResultBlockListContent represents structured tool result content.
+type ToolResultBlockListContent []map[string]any
+
+func (ToolResultBlockListContent) toolResultContent() {}

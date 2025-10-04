@@ -1,42 +1,82 @@
-// Transport and infrastructure configuration for Claude Agent.
 package options
 
 // AgentOptions configures the Claude agent.
-//
-// Combines domain configuration (permissions, tools, prompts) with
-// infrastructure configuration (cwd, settings, env, MCP servers).
+// This combines domain and infrastructure configuration.
 type AgentOptions struct {
-	// Domain settings (affect business logic and Claude behavior)
-	AllowedTools             []BuiltinTool
-	DisallowedTools          []BuiltinTool
-	Model                    *string
-	MaxTurns                 *int
-	SystemPrompt             SystemPromptConfig
-	PermissionMode           *PermissionMode
-	PermissionPromptToolName *string
-	Agents                   map[string]AgentDefinition
+	// === Domain Settings (affect business logic) ===
 
-	// Session management (domain concern)
-	ContinueConversation   bool
-	Resume                 *string
-	ForkSession            bool
+	// AllowedTools lists tools the agent can use
+	AllowedTools []BuiltinTool
+
+	// DisallowedTools lists tools the agent cannot use
+	DisallowedTools []BuiltinTool
+
+	// Model specifies the AI model (optional)
+	Model *string
+
+	// MaxTurns limits conversation turns (optional)
+	MaxTurns *int
+
+	// SystemPrompt configures the system prompt
+	SystemPrompt SystemPromptConfig
+
+	// PermissionMode sets permission handling mode
+	PermissionMode *PermissionMode
+
+	// PermissionPromptToolName customizes permission prompts (optional)
+	PermissionPromptToolName *string
+
+	// Agents defines subagent configurations
+	Agents map[string]AgentDefinition
+
+	// === Session Management (domain concern) ===
+
+	// ContinueConversation continues from previous session
+	ContinueConversation bool
+
+	// Resume resumes from a specific session ID (optional)
+	Resume *string
+
+	// ForkSession creates a fork of the current session
+	ForkSession bool
+
+	// IncludePartialMessages includes incomplete messages
 	IncludePartialMessages bool
 
-	// Infrastructure settings (how to connect/execute)
-	Cwd            *string
-	Settings       *string
-	AddDirs        []string
-	Env            map[string]string
-	User           *string
-	SettingSources []SettingSource
-	MaxBufferSize  *int
-	StderrCallback func(string)
-	ExtraArgs      map[string]*string
+	// === Infrastructure Settings (how to connect/execute) ===
 
-	// MCP server configuration (infrastructure)
+	// Cwd sets the working directory (optional)
+	Cwd *string
+
+	// Settings specifies settings file path (optional)
+	Settings *string
+
+	// AddDirs adds additional directories to the context
+	AddDirs []string
+
+	// Env sets environment variables
+	Env map[string]string
+
+	// User specifies the user identifier (optional)
+	User *string
+
+	// SettingSources specifies which setting sources to use
+	SettingSources []SettingSource
+
+	// MaxBufferSize sets the maximum buffer size (optional)
+	MaxBufferSize *int
+
+	// StderrCallback is called with stderr output
+	StderrCallback func(string)
+
+	// ExtraArgs passes additional CLI arguments
+	ExtraArgs map[string]*string
+
+	// MCPServers configures MCP server connections
 	MCPServers map[string]MCPServerConfig
 
-	// Internal flags (set by domain services, not by users)
-	// Private fields use underscore prefix to indicate internal use
-	IsStreaming bool // true for Client, false for Query
+	// === Internal Flags (set by domain services, not by users) ===
+
+	// isStreaming is true for Client, false for Query
+	IsStreaming bool
 }

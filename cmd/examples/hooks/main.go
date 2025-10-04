@@ -1,3 +1,4 @@
+//nolint:revive // Example file with acceptable complexity
 package main
 
 import (
@@ -6,7 +7,6 @@ import (
 	"log"
 
 	"github.com/conneroisu/claude/pkg/claude"
-	"github.com/conneroisu/claude/pkg/claude/hooking"
 	"github.com/conneroisu/claude/pkg/claude/messages"
 	"github.com/conneroisu/claude/pkg/claude/options"
 )
@@ -14,87 +14,113 @@ import (
 func main() {
 	ctx := context.Background()
 
-	hooks := map[hooking.HookEvent][]hooking.HookMatcher{
-		hooking.HookEventPreToolUse: {
+	// Define hooks
+	hooks := createHooks()
+
+	// Configure options
+	maxTurns := 1
+	opts := &options.AgentOptions{
+		MaxTurns: &maxTurns,
+	}
+
+	// Execute query with hooks
+	msgCh, errCh := claude.Query(
+		ctx,
+		"List files in the current directory",
+		opts,
+		hooks,
+	)
+
+	// Process responses
+	if err := processResponses(msgCh, errCh); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// createHooks builds the hook configuration.
+func createHooks() map[claude.HookEvent][]claude.HookMatcher {
+	return map[claude.HookEvent][]claude.HookMatcher{
+		claude.HookEventPreToolUse: {
 			{
 				Matcher: "Bash",
-				Hooks: []hooking.HookCallback{
-					bashSecurityHook(),
-				},
+				Hooks:   []claude.HookCallback{preToolHook},
 			},
 		},
-		hooking.HookEventPostToolUse: {
+		claude.HookEventPostToolUse: {
 			{
-				Matcher: "*",
-				Hooks: []hooking.HookCallback{
-					loggingHook(),
-				},
+				Matcher: "Bash",
+				Hooks:   []claude.HookCallback{postToolHook},
 			},
 		},
 	}
+}
 
-	opts := &options.AgentOptions{
-		MaxTurns: intPtr(3),
-	}
+// preToolHook executes before tool use.
+func preToolHook(
+	input map[string]any,
+	_ *string,
+	_ claude.HookContext,
+) (map[string]any, error) {
+	fmt.Println("=== Pre-Tool Hook ===")
+	fmt.Println("Tool: Bash")
+	fmt.Printf("Input: %v\n", input)
+	fmt.Println("====================")
 
-	query := "List all files and then create a file named test.txt"
-	fmt.Printf("Query: %s\n\n", query)
+	return make(map[string]any), nil
+}
 
-	msgCh, errCh := claude.Query(ctx, query, opts, hooks)
+// postToolHook executes after tool use.
+func postToolHook(
+	input map[string]any,
+	_ *string,
+	_ claude.HookContext,
+) (map[string]any, error) {
+	fmt.Println("=== Post-Tool Hook ===")
+	fmt.Println("Tool: Bash")
+	fmt.Printf("Result: %v\n", input)
+	fmt.Println("======================")
 
+	return make(map[string]any), nil
+}
+
+// processResponses handles incoming messages and errors.
+func processResponses(
+	msgCh <-chan messages.Message,
+	errCh <-chan error,
+) error {
 	for {
 		select {
 		case msg, ok := <-msgCh:
 			if !ok {
-				return
+				return nil
 			}
 
-			switch m := msg.(type) {
-			case *messages.AssistantMessage:
-				fmt.Println("Claude says:")
-				for _, block := range m.Content {
-					if textBlock, ok := block.(messages.TextBlock); ok {
-						fmt.Printf("  %s\n", textBlock.Text)
-					}
-				}
-
-			case *messages.ResultMessageSuccess:
-				fmt.Printf(
-					"\nCompleted in %dms (%d turns)\n",
-					m.DurationMs,
-					m.NumTurns,
-				)
-			}
+			handleMessage(msg)
 
 		case err := <-errCh:
-			if err != nil {
-				log.Fatalf("Error: %v", err)
-			}
-
-			return
+			return err
 		}
 	}
 }
 
-func bashSecurityHook() hooking.HookCallback {
-	forbiddenPatterns := []string{"rm -rf", "sudo", ">"}
-
-	return claude.BlockBashPatternHook(forbiddenPatterns)
-}
-
-func loggingHook() hooking.HookCallback {
-	return func(
-		input map[string]any,
-		toolUseID *string,
-		ctx hooking.HookContext,
-	) (map[string]any, error) {
-		toolName, _ := input["tool_name"].(string)
-		fmt.Printf("[POST-HOOK] Tool %s completed\n", toolName)
-
-		return map[string]any{}, nil
+// handleMessage processes a single message.
+func handleMessage(msg messages.Message) {
+	assistantMsg, ok := msg.(*messages.AssistantMessage)
+	if !ok {
+		return
 	}
+
+	printTextBlocks(assistantMsg.Content)
 }
 
-func intPtr(i int) *int {
-	return &i
+// printTextBlocks prints all text blocks from content.
+func printTextBlocks(content []messages.ContentBlock) {
+	for _, block := range content {
+		textBlock, ok := block.(messages.TextBlock)
+		if !ok {
+			continue
+		}
+
+		fmt.Printf("Claude: %s\n", textBlock.Text)
+	}
 }

@@ -1,3 +1,4 @@
+// Package main demonstrates tool filtering.
 package main
 
 import (
@@ -13,74 +14,83 @@ import (
 func main() {
 	ctx := context.Background()
 
-	opts := &options.AgentOptions{
-		MaxTurns: intPtr(3),
+	// Configure tool access
+	opts := buildOptions()
+
+	// Execute query
+	msgCh, errCh := claude.Query(
+		ctx,
+		"Read the README.md file",
+		opts,
+		nil,
+	)
+
+	// Process responses
+	if err := processResponses(msgCh, errCh); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// buildOptions creates options with allowed tools.
+func buildOptions() *options.AgentOptions {
+	maxTurns := 1
+
+	return &options.AgentOptions{
+		MaxTurns: &maxTurns,
 		AllowedTools: []options.BuiltinTool{
-			options.ToolRead,
-			options.ToolGlob,
-			options.ToolGrep,
-		},
-		DisallowedTools: []options.BuiltinTool{
 			options.ToolBash,
-			options.ToolWrite,
-			options.ToolEdit,
+			options.ToolRead,
 		},
 	}
+}
 
-	query := "Analyze the Go files in pkg/claude directory"
-	fmt.Printf("Query: %s\n", query)
-	fmt.Println("Allowed tools: Read, Glob, Grep")
-	fmt.Println("Blocked tools: Bash, Write, Edit")
-
-	msgCh, errCh := claude.Query(ctx, query, opts, nil)
-
+// processResponses handles incoming messages and errors.
+func processResponses(
+	msgCh <-chan messages.Message,
+	errCh <-chan error,
+) error {
 	for {
 		select {
 		case msg, ok := <-msgCh:
 			if !ok {
-				return
+				return nil
 			}
 
-			switch m := msg.(type) {
-			case *messages.AssistantMessage:
-				fmt.Println("\nClaude says:")
-				for _, block := range m.Content {
-					switch b := block.(type) {
-					case messages.TextBlock:
-						fmt.Printf("  %s\n", b.Text)
-
-					case messages.ToolUseBlock:
-						fmt.Printf(
-							"  [Using tool: %s]\n",
-							b.Name,
-						)
-					}
-				}
-
-			case *messages.ResultMessageSuccess:
-				fmt.Printf(
-					"\nCompleted in %dms (%d turns)\n",
-					m.DurationMs,
-					m.NumTurns,
-				)
-
-			case *messages.ResultMessageError:
-				fmt.Printf(
-					"\nError: %s\n",
-					m.Subtype,
-				)
-			}
+			handleMessage(msg)
 
 		case err := <-errCh:
 			if err != nil {
-				log.Fatalf("Error: %v", err)
+				return err
 			}
 
-			return
+			return nil
 		}
 	}
 }
 
-func intPtr(i int) *int {
-	return &i
+// handleMessage processes a single message.
+func handleMessage(msg messages.Message) {
+	assistantMsg, ok := msg.(*messages.AssistantMessage)
+	if !ok {
+		return
+	}
+
+	printBlocks(assistantMsg.Content)
+}
+
+// printBlocks prints all content blocks.
+func printBlocks(content []messages.ContentBlock) {
+	for _, block := range content {
+		printBlock(block)
+	}
+}
+
+// printBlock prints a single content block.
+func printBlock(block messages.ContentBlock) {
+	switch b := block.(type) {
+	case messages.TextBlock:
+		fmt.Printf("Claude: %s\n", b.Text)
+	case messages.ToolUseBlock:
+		fmt.Printf("Tool used: %s\n", b.Name)
+	}
 }

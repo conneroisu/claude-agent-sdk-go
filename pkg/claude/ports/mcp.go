@@ -1,22 +1,26 @@
-// MCP server port definition.
 package ports
 
 import "context"
 
-// MCPServer defines an interface for an in-process MCP Server.
+// MCPServer defines what the domain needs from an MCP server adapter.
+// This port has TWO implementations:
+//  1. ClientAdapter: Wraps an MCP client that connects TO external servers
+//  2. ServerAdapter: Wraps a user's in-process *mcp.Server to expose
+//     TO Claude CLI
 //
-// It abstracts the underlying implementation, which should be a wrapper
-// around the official MCP Go SDK (github.com/modelcontextprotocol/go-sdk).
-// This allows the agent to route raw MCP messages from the Claude CLI
-// to a user-defined tool server.
+// The domain doesn't care which type - it just routes JSON-RPC messages.
 type MCPServer interface {
-	// Name returns the server name (used for routing).
+	// Name returns the server identifier.
+	// Used for routing control protocol messages.
 	Name() string
 
-	// HandleMessage processes a raw JSON-RPC message and returns response.
-	// This is used to proxy messages between Claude CLI and the server.
+	// HandleMessage routes a raw JSON-RPC message and returns the response.
+	// For ClientAdapter: Forwards to external server via MCP client session
+	// For ServerAdapter: Routes to in-process server via in-memory transport
 	HandleMessage(ctx context.Context, message []byte) ([]byte, error)
 
-	// Close closes the MCP server connection and releases resources.
+	// Close releases resources.
+	// For ClientAdapter: Closes the client session connection
+	// For ServerAdapter: Closes in-memory transport (server is user-managed)
 	Close() error
 }

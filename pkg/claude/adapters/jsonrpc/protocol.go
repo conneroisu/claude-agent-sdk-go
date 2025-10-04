@@ -1,3 +1,6 @@
+// Package jsonrpc implements the JSON-RPC protocol adapter for Claude.
+//
+//nolint:revive // Protocol adapter has comprehensive message handling
 package jsonrpc
 
 import (
@@ -5,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -46,11 +50,14 @@ func (a *Adapter) Initialize(ctx context.Context, config any) (map[string]any, e
 
 // SendControlRequest sends a control request and waits for response
 // This method handles all request ID generation and timeout logic.
-func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
+func (a *Adapter) SendControlRequest(
+	ctx context.Context,
+	req map[string]any,
+) (map[string]any, error) {
 	// Generate unique request ID: req_{counter}_{randomHex}
 	a.mu.Lock()
 	a.requestCounter++
-	requestID := fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(4))
+	requestID := fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(4)) //nolint:revive
 	a.mu.Unlock()
 	// Create result channel for this request
 	resCh := make(chan result, 1)
@@ -105,32 +112,31 @@ func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (m
 func (a *Adapter) HandleControlRequest(
 	ctx context.Context,
 	req map[string]any,
-	perms ports.PermissionService,
-	hooks map[string]ports.HookCallback,
-	mcpServers map[string]ports.MCPServer,
+	deps ports.ControlDependencies,
 ) (map[string]any, error) {
 	request, _ := req["request"].(map[string]any)
 	subtype, _ := request["subtype"].(string)
+	hooks, _ := deps.HookCallbacks.(map[string]ports.HookCallback)
 	switch subtype {
 	case "can_use_tool":
-		return a.handleCanUseTool(ctx, request, perms)
+		return a.handleCanUseTool(ctx, request, deps.PermissionsService)
 	case "hook_callback":
 		return a.handleHookCallback(ctx, request, hooks)
 	case "mcp_message":
-		return a.handleMCPMessage(ctx, request, mcpServers)
+		return a.handleMCPMessage(ctx, request, deps.MCPServers)
 	default:
 		return nil, fmt.Errorf("unsupported control request subtype: %s", subtype)
 	}
 }
 
 // StartMessageRouter continuously reads transport and partitions messages.
+//
+//nolint:revive // Complex router logic requires nested control flow
 func (a *Adapter) StartMessageRouter(
 	ctx context.Context,
 	msgCh chan<- map[string]any,
 	errCh chan<- error,
-	perms ports.PermissionService,
-	hooks map[string]ports.HookCallback,
-	mcpServers map[string]ports.MCPServer,
+	deps ports.ControlDependencies,
 ) error {
 	go func() {
 		transportMsgCh, transportErrCh := a.transport.ReadMessages(ctx)
@@ -149,7 +155,7 @@ func (a *Adapter) StartMessageRouter(
 					a.routeControlResponse(msg)
 				case "control_request":
 					// Handle inbound control request
-					go a.handleControlRequestAsync(ctx, msg, perms, hooks, mcpServers)
+					go a.handleControlRequestAsync(ctx, msg, deps)
 				case "control_cancel_request":
 					// Cancel a pending control request
 					requestID, _ := msg["request_id"].(string)
@@ -214,13 +220,11 @@ func (a *Adapter) routeControlResponse(msg map[string]any) {
 func (a *Adapter) handleControlRequestAsync(
 	ctx context.Context,
 	msg map[string]any,
-	perms ports.PermissionService,
-	hooks map[string]ports.HookCallback,
-	mcpServers map[string]ports.MCPServer,
+	deps ports.ControlDependencies,
 ) {
 	requestID, _ := msg["request_id"].(string)
 	// Handle the request
-	responseData, err := a.HandleControlRequest(ctx, msg, perms, hooks, mcpServers)
+	responseData, err := a.HandleControlRequest(ctx, msg, deps)
 	// Build response
 	var response map[string]any
 	if err != nil {
@@ -244,11 +248,16 @@ func (a *Adapter) handleControlRequestAsync(
 	}
 	// Send response
 	resBytes, _ := json.Marshal(response)
-	a.transport.Write(ctx, string(resBytes)+"\n")
+	_ = a.transport.Write(ctx, string(resBytes)+"\n")
 }
 
 // handleCanUseTool handles can_use_tool control requests.
-func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, perms ports.PermissionService) (map[string]any, error) {
+func (*Adapter) handleCanUseTool(
+	ctx context.Context,
+	request map[string]any,
+	permsService any,
+) (map[string]any, error) {
+	perms, _ := permsService.(*permissions.Service)
 	toolName, _ := request["tool_name"].(string)
 	input, _ := request["input"].(map[string]any)
 
@@ -264,7 +273,7 @@ func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, 
 	}
 
 	if perms == nil {
-		return nil, fmt.Errorf("permissions callback not provided")
+		return nil, errors.New("permissions callback not provided")
 	}
 
 	result, err := perms.CheckToolUse(ctx, toolName, input, suggestions)
@@ -280,7 +289,7 @@ func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, 
 			response["input"] = r.UpdatedInput
 		}
 		// Include updated permissions in response (for "always allow" flow)
-		if r.UpdatedPermissions != nil && len(r.UpdatedPermissions) > 0 {
+		if len(r.UpdatedPermissions) > 0 {
 			response["updated_permissions"] = r.UpdatedPermissions
 		}
 
@@ -291,7 +300,7 @@ func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, 
 			"reason": r.Message,
 		}, nil
 	default:
-		return nil, fmt.Errorf("unknown permission result type")
+		return nil, errors.New("unknown permission result type")
 	}
 }
 
@@ -343,7 +352,11 @@ func parsePermissionUpdate(data map[string]any) permissions.PermissionUpdate {
 }
 
 // handleHookCallback handles hook_callback control requests.
-func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any, hooks map[string]ports.HookCallback) (map[string]any, error) {
+func (*Adapter) handleHookCallback(
+	ctx context.Context,
+	request map[string]any,
+	hooks map[string]ports.HookCallback,
+) (map[string]any, error) {
 	callbackID, _ := request["callback_id"].(string)
 	input, _ := request["input"].(map[string]any)
 	// toolUseID is a string, not *string - JSON decoding produces plain string values
@@ -355,9 +368,10 @@ func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any
 	if !exists {
 		return nil, fmt.Errorf("no hook callback found for ID: %s", callbackID)
 	}
+	// Get event from request
+	event, _ := request["event"].(string)
 	// Execute callback with context for cancellation support
-	// The port interface expects any, so we pass ctx directly
-	result, err := callback(input, toolUseID, ctx)
+	result, err := callback(ctx, event, input, toolUseID)
 	if err != nil {
 		return nil, err
 	}
@@ -367,12 +381,20 @@ func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any
 
 // handleMCPMessage handles mcp_message control requests by proxying
 // the raw message to the appropriate in-process MCPServer.
-func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any, mcpServers map[string]ports.MCPServer) (map[string]any, error) {
+func (a *Adapter) handleMCPMessage(
+	ctx context.Context,
+	request map[string]any,
+	mcpServers map[string]ports.MCPServer,
+) (map[string]any, error) {
 	serverName, _ := request["server_name"].(string)
 	mcpMessage, _ := request["message"].(map[string]any)
 	server, exists := mcpServers[serverName]
 	if !exists {
-		return a.mcpErrorResponse(mcpMessage, -32601, fmt.Sprintf("Server '%s' not found", serverName)), nil
+		return a.mcpErrorResponse(
+			mcpMessage,
+			-32601,
+			fmt.Sprintf("Server '%s' not found", serverName),
+		), nil
 	}
 	// Marshal the message to be sent to the server wrapper.
 	mcpMessageBytes, err := json.Marshal(mcpMessage)
@@ -412,7 +434,7 @@ func (a *Adapter) mcpErrorResponse(message map[string]any, code int, msg string)
 // randomHex generates a random hex string of n bytes.
 func randomHex(n int) string {
 	b := make([]byte, n)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 
 	return hex.EncodeToString(b)
 }

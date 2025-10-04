@@ -1,28 +1,26 @@
 # Claude Agent SDK for Go
 
-A Go SDK for interacting with the Claude Code CLI, providing a clean, idiomatic Go interface for building AI agents.
+[![Go Version](https://img.shields.io/github/go-mod/go-version/conneroisu/claude-agent-sdk-go)](go.mod)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Go SDK for building AI agents with Claude. This SDK provides a clean, type-safe interface to Claude's agent capabilities including tool use, hooks, MCP servers, and streaming conversations.
 
 ## Features
 
-- **Clean API**: Simple Query and Client interfaces for both one-shot and streaming interactions
-- **Type Safety**: Strongly typed message and content block structures
-- **Hexagonal Architecture**: Domain logic isolated from infrastructure concerns
-- **Lifecycle Hooks**: Pre/post tool use, session events, and custom hooks
-- **Permission System**: Fine-grained control over tool usage with custom callbacks
-- **MCP Integration**: Build and integrate Model Context Protocol servers
-- **Channel-Based**: Idiomatic Go patterns using channels and context
+- 🎯 **Type-safe API** - Full Go type safety with discriminated unions
+- 🔌 **Hexagonal Architecture** - Clean separation of concerns
+- 🪝 **Lifecycle Hooks** - Intercept and modify tool calls
+- 🔧 **Tool Support** - Built-in and custom tools
+- 🌐 **MCP Integration** - Connect to Model Context Protocol servers
+- 🔐 **Permission System** - Fine-grained control over tool usage
+- 📡 **Streaming** - Bidirectional streaming conversations
+- ⚡ **Context-aware** - Full context.Context support
 
 ## Installation
 
 ```bash
-go get github.com/conneroisu/claude
+go get github.com/conneroisu/claude-agent-sdk-go
 ```
-
-### Prerequisites
-
-- Go 1.21 or higher
-- Claude Code CLI installed: `npm install -g @anthropic-ai/claude-code`
-- Anthropic API key configured
 
 ## Quick Start
 
@@ -30,367 +28,194 @@ go get github.com/conneroisu/claude
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
+    "context"
+    "fmt"
+    "log"
 
-	"github.com/conneroisu/claude/pkg/claude"
-	"github.com/conneroisu/claude/pkg/claude/messages"
-	"github.com/conneroisu/claude/pkg/claude/options"
+    "github.com/conneroisu/claude/pkg/claude"
+    "github.com/conneroisu/claude/pkg/claude/messages"
+    "github.com/conneroisu/claude/pkg/claude/options"
 )
 
 func main() {
-	ctx := context.Background()
+    ctx := context.Background()
 
-	opts := &options.AgentOptions{
-		MaxTurns: intPtr(1),
-	}
+    // Simple one-shot query
+    maxTurns := 1
+    msgCh, errCh := claude.Query(
+        ctx,
+        "What is 2 + 2?",
+        &options.AgentOptions{MaxTurns: &maxTurns},
+        nil,
+    )
 
-	msgCh, errCh := claude.Query(ctx, "What is 2 + 2?", opts, nil)
+    // Process responses
+    for {
+        select {
+        case msg := <-msgCh:
+            if msg == nil {
+                return
+            }
+            if assistantMsg, ok := msg.(*messages.AssistantMessage); ok {
+                for _, block := range assistantMsg.Content {
+                    if textBlock, ok := block.(messages.TextBlock); ok {
+                        fmt.Printf("Claude: %s\n", textBlock.Text)
+                    }
+                }
+            }
+        case err := <-errCh:
+            if err != nil {
+                log.Fatal(err)
+            }
+            return
+        }
+    }
+}
+```
 
-	for {
-		select {
-		case msg, ok := <-msgCh:
-			if !ok {
-				return
-			}
+## Usage Examples
 
-			switch m := msg.(type) {
-			case *messages.AssistantMessage:
-				for _, block := range m.Content {
-					if textBlock, ok := block.(messages.TextBlock); ok {
-						fmt.Printf("Claude: %s\n", textBlock.Text)
-					}
-				}
+### Streaming Conversation
 
-			case *messages.ResultMessageSuccess:
-				fmt.Printf("Completed in %dms\n", m.DurationMs)
-			}
+```go
+client, _ := claude.NewClient(&options.AgentOptions{})
+client.Connect(ctx, nil)
+defer client.Close()
 
-		case err := <-errCh:
-			if err != nil {
-				log.Fatal(err)
-			}
-			return
-		}
-	}
+// Send messages
+client.SendMessage(ctx, "Hello!")
+
+// Receive responses
+msgCh, errCh := client.ReceiveMessages(ctx)
+for msg := range msgCh {
+    // Process messages
+}
+```
+
+### Hooks
+
+Intercept tool calls before and after execution:
+
+```go
+hooks := map[claude.HookEvent][]claude.HookMatcher{
+    claude.HookEventPreToolUse: {
+        {
+            Matcher: "Bash",
+            Hooks: []claude.HookCallback{
+                func(input map[string]any, toolUseID *string, ctx claude.HookContext) (map[string]any, error) {
+                    fmt.Printf("About to run: %v\n", input)
+                    return map[string]any{}, nil
+                },
+            },
+        },
+    },
 }
 
-func intPtr(i int) *int { return &i }
+msgCh, errCh := claude.Query(ctx, "List files", opts, hooks)
+```
+
+### Tool Filtering
+
+Control which tools Claude can use:
+
+```go
+opts := &options.AgentOptions{
+    AllowedTools: []options.BuiltinTool{
+        options.ToolBash,
+        options.ToolRead,
+    },
+}
+```
+
+### Custom Permissions
+
+Implement custom permission logic:
+
+```go
+permsConfig := &permissions.Config{
+    Mode: options.PermissionModeAsk,
+    CanUseTool: func(ctx context.Context, toolName string, input map[string]any, permCtx permissions.ToolPermissionContext) (permissions.PermissionResult, error) {
+        // Custom permission logic
+        return &permissions.PermissionResultAllow{}, nil
+    },
+}
 ```
 
 ## Architecture
 
-The SDK follows hexagonal (ports and adapters) architecture:
+This SDK follows hexagonal (ports and adapters) architecture:
 
 ```
-┌─────────────────────────────────────────────┐
-│           Public API (pkg/claude)           │
-│  Query() | NewClient() | NewMCPServer()    │
-└─────────────────────────────────────────────┘
-                      │
-┌─────────────────────────────────────────────┐
-│              Domain Services                │
-│  Querying | Hooking | Permissions          │
-└─────────────────────────────────────────────┘
-                      │
-┌─────────────────────────────────────────────┐
-│              Ports (Interfaces)             │
-│  Transport | ProtocolHandler | Parser      │
-└─────────────────────────────────────────────┘
-                      │
-┌─────────────────────────────────────────────┐
-│               Adapters                      │
-│  CLI Transport | JSON-RPC Protocol | Parse │
-└─────────────────────────────────────────────┘
+pkg/claude/
+├── messages/      # Domain models (messages, content blocks)
+├── options/       # Configuration and options
+├── ports/         # Interface definitions
+├── adapters/      # Infrastructure implementations
+│   ├── cli/       # Claude CLI transport
+│   ├── jsonrpc/   # JSON-RPC protocol
+│   ├── mcp/       # MCP client/server
+│   └── parse/     # Message parsing
+├── hooking/       # Hook management service
+├── permissions/   # Permission checking service
+├── querying/      # One-shot query service
+└── streaming/     # Streaming conversation service
 ```
 
-### Benefits
+### Key Concepts
 
-- **Testability**: Mock ports for unit testing without external dependencies
-- **Flexibility**: Swap implementations (e.g., HTTP transport instead of CLI)
-- **Maintainability**: Clear boundaries between domain logic and infrastructure
+- **Ports**: Interfaces defining contracts (Transport, ProtocolHandler, MessageParser)
+- **Adapters**: Concrete implementations of ports
+- **Domain Services**: Business logic (querying, streaming, hooking, permissions)
+- **Public API**: Facade layer in `pkg/claude/client.go`
 
-## Usage
+## Code Quality
 
-### Streaming Conversations
+This codebase enforces strict quality standards:
 
-For multi-turn conversations:
-
-```go
-client := claude.NewClient(&options.AgentOptions{
-	MaxTurns: intPtr(10),
-})
-
-if err := client.Connect(ctx, nil); err != nil {
-	log.Fatal(err)
-}
-defer client.Close()
-
-if err := client.SendMessage(ctx, "Hello"); err != nil {
-	log.Fatal(err)
-}
-
-msgCh, errCh := client.ReceiveMessages(ctx)
-// Handle messages...
-```
-
-See [examples/streaming](../cmd/examples/streaming) for a complete example.
-
-### Lifecycle Hooks
-
-Execute custom logic before/after tool use:
-
-```go
-hookCfg := &options.HookConfig{
-	PreToolUse: []options.HookMatcher{
-		{
-			Matcher: "Bash",
-			Hooks: []options.HookCallback{
-				claude.BlockBashPatternHook([]string{"rm -rf", "sudo"}),
-			},
-		},
-	},
-}
-
-opts := &options.AgentOptions{
-	Hooks: hookCfg,
-}
-```
-
-See [examples/hooks](../cmd/examples/hooks) for a complete example.
-
-### Permission Callbacks
-
-Control tool usage with custom permission logic:
-
-```go
-permCfg := &permissions.PermissionsConfig{
-	Mode: options.PermissionModeDefault,
-	CanUseTool: func(
-		ctx context.Context,
-		toolName string,
-		input map[string]any,
-		permCtx permissions.ToolPermissionContext,
-	) (permissions.PermissionResult, error) {
-		if toolName == "Bash" {
-			if cmd, ok := input["command"].(string); ok {
-				if strings.Contains(cmd, "rm") {
-					return &permissions.PermissionResultDeny{
-						Message: "rm not allowed",
-					}, nil
-				}
-			}
-		}
-		return &permissions.PermissionResultAllow{}, nil
-	},
-}
-
-opts := &options.AgentOptions{
-	Permissions: permCfg,
-}
-```
-
-See [examples/permissions](../cmd/examples/permissions) for a complete example.
-
-### MCP Servers
-
-Create and integrate MCP servers:
-
-```go
-server := claude.NewMCPServer("weather-tools", "1.0.0")
-
-weatherTool := &mcpsdk.Tool{
-	Name:        "get_weather",
-	Description: "Get weather for a city",
-	InputSchema: mcpsdk.ToolInputSchema{
-		Type: "object",
-		Properties: map[string]mcpsdk.Property{
-			"city": {
-				Type:        "string",
-				Description: "City name",
-			},
-		},
-		Required: []string{"city"},
-	},
-}
-
-claude.AddTool(server, weatherTool, handleWeather)
-
-opts := &options.AgentOptions{
-	MCPServers: map[string]options.MCPServerAdapter{
-		"weather": server.HandleMessage,
-	},
-}
-```
-
-See [examples/mcp](../cmd/examples/mcp) for a complete example.
-
-### Tool Filtering
-
-Restrict which tools Claude can use:
-
-```go
-opts := &options.AgentOptions{
-	AllowedTools: []string{"Read", "Glob", "Grep"},
-	BlockedTools: []string{"Bash", "Write", "Edit"},
-}
-```
-
-See [examples/tools](../cmd/examples/tools) for a complete example.
-
-## Message Types
-
-### Assistant Messages
-
-```go
-type AssistantMessage struct {
-	Model   string
-	Content []ContentBlock
-}
-```
-
-### Content Blocks
-
-- `TextBlock` - Text content from Claude
-- `ToolUseBlock` - Tool invocation
-- `ToolResultBlock` - Tool execution result
-- `ThinkingBlock` - Extended thinking content
-
-### Result Messages
-
-```go
-type ResultMessageSuccess struct {
-	DurationMs int
-	NumTurns   int
-	SessionID  string
-}
-
-type ResultMessageError struct {
-	Subtype    string
-	DurationMs int
-	NumTurns   int
-	SessionID  string
-	Error      ErrorDetails
-}
-```
-
-## Configuration
-
-### Agent Options
-
-```go
-type AgentOptions struct {
-	Model              *string
-	MaxTurns           *int
-	MaxTokens          *int
-	ThinkingEnabled    *bool
-	ThinkingBudget     *int
-	OutputFormat       *string
-	AllowedTools       []string
-	BlockedTools       []string
-	Hooks              *HookConfig
-	Permissions        *PermissionsConfig
-	MCPServers         map[string]MCPServerAdapter
-}
-```
-
-### Hook Events
-
-- `PreToolUse` - Before tool execution
-- `PostToolUse` - After tool execution
-- `UserPromptSubmit` - When user submits a prompt
-- `Stop` - When session stops
-- `SubagentStop` - When subagent stops
-- `PreCompact` - Before message compaction
-- `Notification` - For notifications
-- `SessionStart` - When session starts
-- `SessionEnd` - When session ends
-
-### Permission Modes
-
-- `PermissionModeDefault` - Use callback or default to allow
-- `PermissionModeBypassPermissions` - Skip all permission checks
-- `PermissionModeAsk` - Prompt user for each tool use
-- `PermissionModeAcceptEdits` - Auto-accept edit operations
-- `PermissionModePlan` - Planning mode
-
-## Examples
-
-All examples are in [cmd/examples](../cmd/examples):
-
-- **quickstart** - Basic query
-- **streaming** - Multi-turn conversation
-- **hooks** - Custom lifecycle hooks
-- **mcp** - MCP server integration
-- **permissions** - Permission callbacks
-- **tools** - Tool filtering
+- Maximum 175 lines per file
+- Maximum 25 lines per function
+- Maximum 80 characters per line
+- Maximum cognitive complexity 20
+- Maximum nesting depth 3
+- Minimum 15% comment density
+- 100% golangci-lint compliance
 
 ## Testing
 
-### Unit Tests
-
 ```bash
-go test -v ./pkg/claude/...
-go test -race ./pkg/claude/...
+# Run all tests
+go test ./pkg/claude/...
+
+# Run with coverage
 go test -cover ./pkg/claude/...
+
+# Run integration tests (requires Claude CLI)
+go test -tags=integration ./tests/integration/...
 ```
 
-### Integration Tests
+## Examples
 
-Requires Claude CLI to be installed:
+See [cmd/examples/](../cmd/examples/) for complete examples:
 
-```bash
-go test -tags=integration -v ./tests/integration/...
-```
-
-## Development
-
-### Project Structure
-
-```
-.
-├── pkg/claude/
-│   ├── client.go           # Public API
-│   ├── query.go            # One-shot queries
-│   ├── hooks.go            # Hook helpers
-│   ├── mcp.go              # MCP helpers
-│   ├── messages/           # Message types
-│   ├── options/            # Configuration
-│   ├── ports/              # Interfaces
-│   ├── querying/           # Query service
-│   ├── hooking/            # Hook service
-│   ├── permissions/        # Permission service
-│   └── adapters/           # Implementations
-│       ├── cli/            # CLI transport
-│       ├── jsonrpc/        # JSON-RPC protocol
-│       └── parse/          # Message parser
-├── cmd/examples/           # Examples
-└── tests/integration/      # Integration tests
-```
-
-### Code Quality
-
-- Files: Max 175 lines
-- Functions: Max 25 lines
-- Line length: Max 80 characters
-- All functions have return type declarations
-- Comprehensive error handling
-
-## License
-
-MIT
+- [quickstart](../cmd/examples/quickstart/) - Basic query
+- [streaming](../cmd/examples/streaming/) - Bidirectional conversation
+- [hooks](../cmd/examples/hooks/) - Tool use hooks
+- [tools](../cmd/examples/tools/) - Tool filtering
 
 ## Contributing
 
 Contributions welcome! Please ensure:
 
-1. All tests pass: `go test ./...`
-2. Code is formatted: `go fmt ./...`
-3. Linter passes: `golangci-lint run`
-4. Follow existing code style and architecture
+1. All tests pass (`go test ./...`)
+2. Code is formatted (`nix fmt` or `gofmt`)
+3. Linting passes (`golangci-lint run`)
+4. Files respect size limits (175 lines)
+5. Functions respect complexity limits (25 lines, complexity 20)
 
-## Support
+## License
 
-- GitHub Issues: https://github.com/conneroisu/claude/issues
-- Documentation: https://pkg.go.dev/github.com/conneroisu/claude
+MIT License - see [LICENSE](../LICENSE) for details
+
+## Acknowledgments
+
+Built with reference to the [TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript)

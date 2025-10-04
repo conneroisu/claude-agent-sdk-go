@@ -1,22 +1,16 @@
-// Package helpers provides convenience utilities for common
-// operations with Claude.
+// Package helpers provides utility functions for SDK users.
 package helpers
 
-import "strings"
+import "github.com/conneroisu/claude/pkg/claude/options"
 
-// BuildSystemPrompt combines multiple prompt parts.
-func BuildSystemPrompt(parts ...string) string {
-	return strings.Join(parts, "\n\n")
+// StringPrompt creates a simple string system prompt.
+func StringPrompt(text string) options.SystemPromptConfig {
+	return options.StringSystemPrompt(text)
 }
 
-// AppendSystemPrompt creates an append-style system prompt config.
-func AppendSystemPrompt(base, appendStr string) string {
-	if base == "" {
-		return appendStr
-	}
-	if appendStr == "" {
-		return base
-	}
-
-	return base + "\n\n" + appendStr
+// PresetPrompt creates a preset system prompt with optional append.
+//
+//nolint:revive // Parameter name matches Claude API naming convention
+func PresetPrompt(append *string) options.SystemPromptConfig {
+	return options.PresetSystemPrompt{Append: append}
 }

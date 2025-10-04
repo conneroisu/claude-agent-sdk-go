@@ -1,3 +1,4 @@
+// Package testutil provides test utilities and mocks.
 package testutil
 
 import (
@@ -17,6 +18,7 @@ type MockTransport struct {
 	IsReadyFunc      func() bool
 }
 
+// Connect calls the mock function.
 func (m *MockTransport) Connect(ctx context.Context) error {
 	if m.ConnectFunc != nil {
 		return m.ConnectFunc(ctx)
@@ -25,6 +27,7 @@ func (m *MockTransport) Connect(ctx context.Context) error {
 	return nil
 }
 
+// Write calls the mock function.
 func (m *MockTransport) Write(ctx context.Context, data string) error {
 	if m.WriteFunc != nil {
 		return m.WriteFunc(ctx, data)
@@ -33,10 +36,14 @@ func (m *MockTransport) Write(ctx context.Context, data string) error {
 	return nil
 }
 
-func (m *MockTransport) ReadMessages(ctx context.Context) (<-chan map[string]any, <-chan error) {
+// ReadMessages calls the mock function.
+func (m *MockTransport) ReadMessages(
+	ctx context.Context,
+) (<-chan map[string]any, <-chan error) {
 	if m.ReadMessagesFunc != nil {
 		return m.ReadMessagesFunc(ctx)
 	}
+
 	msgCh := make(chan map[string]any)
 	errCh := make(chan error)
 	close(msgCh)
@@ -45,6 +52,7 @@ func (m *MockTransport) ReadMessages(ctx context.Context) (<-chan map[string]any
 	return msgCh, errCh
 }
 
+// EndInput calls the mock function.
 func (m *MockTransport) EndInput() error {
 	if m.EndInputFunc != nil {
 		return m.EndInputFunc()
@@ -53,6 +61,7 @@ func (m *MockTransport) EndInput() error {
 	return nil
 }
 
+// Close calls the mock function.
 func (m *MockTransport) Close() error {
 	if m.CloseFunc != nil {
 		return m.CloseFunc()
@@ -61,6 +70,7 @@ func (m *MockTransport) Close() error {
 	return nil
 }
 
+// IsReady calls the mock function.
 func (m *MockTransport) IsReady() bool {
 	if m.IsReadyFunc != nil {
 		return m.IsReadyFunc()
@@ -69,17 +79,34 @@ func (m *MockTransport) IsReady() bool {
 	return true
 }
 
+// Verify interface compliance.
 var _ ports.Transport = (*MockTransport)(nil)
 
-// MockProtocolHandler implements ports.ProtocolHandler for testing.
-type MockProtocolHandler struct {
-	InitializeFunc           func(context.Context, any) (map[string]any, error)
-	SendControlRequestFunc   func(context.Context, map[string]any) (map[string]any, error)
-	HandleControlRequestFunc func(context.Context, map[string]any, ports.PermissionService, map[string]ports.HookCallback, map[string]ports.MCPServer) (map[string]any, error)
-	StartMessageRouterFunc   func(context.Context, chan<- map[string]any, chan<- error, ports.PermissionService, map[string]ports.HookCallback, map[string]ports.MCPServer) error
+// MockProtocol implements ports.ProtocolHandler for testing.
+type MockProtocol struct {
+	InitializeFunc     func(context.Context, any) (map[string]any, error)
+	SendControlReqFunc func(
+		context.Context,
+		map[string]any,
+	) (map[string]any, error)
+	HandleControlReqFunc func(
+		context.Context,
+		map[string]any,
+		ports.ControlDependencies,
+	) (map[string]any, error)
+	StartMessageRouterFunc func(
+		context.Context,
+		chan<- map[string]any,
+		chan<- error,
+		ports.ControlDependencies,
+	) error
 }
 
-func (m *MockProtocolHandler) Initialize(ctx context.Context, config any) (map[string]any, error) {
+// Initialize calls the mock function.
+func (m *MockProtocol) Initialize(
+	ctx context.Context,
+	config any,
+) (map[string]any, error) {
 	if m.InitializeFunc != nil {
 		return m.InitializeFunc(ctx, config)
 	}
@@ -87,109 +114,63 @@ func (m *MockProtocolHandler) Initialize(ctx context.Context, config any) (map[s
 	return nil, nil
 }
 
-func (m *MockProtocolHandler) SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
-	if m.SendControlRequestFunc != nil {
-		return m.SendControlRequestFunc(ctx, req)
-	}
-
-	return nil, nil
-}
-
-func (m *MockProtocolHandler) HandleControlRequest(
+// SendControlRequest calls the mock function.
+func (m *MockProtocol) SendControlRequest(
 	ctx context.Context,
 	req map[string]any,
-	perms ports.PermissionService,
-	hooks map[string]ports.HookCallback,
-	mcpServers map[string]ports.MCPServer,
 ) (map[string]any, error) {
-	if m.HandleControlRequestFunc != nil {
-		return m.HandleControlRequestFunc(ctx, req, perms, hooks, mcpServers)
+	if m.SendControlReqFunc != nil {
+		return m.SendControlReqFunc(ctx, req)
 	}
 
 	return nil, nil
 }
 
-func (m *MockProtocolHandler) StartMessageRouter(
+// HandleControlRequest calls the mock function.
+func (m *MockProtocol) HandleControlRequest(
+	ctx context.Context,
+	req map[string]any,
+	deps ports.ControlDependencies,
+) (map[string]any, error) {
+	if m.HandleControlReqFunc != nil {
+		return m.HandleControlReqFunc(ctx, req, deps)
+	}
+
+	return nil, nil
+}
+
+// StartMessageRouter calls the mock function.
+func (m *MockProtocol) StartMessageRouter(
 	ctx context.Context,
 	msgCh chan<- map[string]any,
 	errCh chan<- error,
-	perms ports.PermissionService,
-	hooks map[string]ports.HookCallback,
-	mcpServers map[string]ports.MCPServer,
+	deps ports.ControlDependencies,
 ) error {
 	if m.StartMessageRouterFunc != nil {
-		return m.StartMessageRouterFunc(ctx, msgCh, errCh, perms, hooks, mcpServers)
+		return m.StartMessageRouterFunc(ctx, msgCh, errCh, deps)
 	}
 
 	return nil
 }
 
-var _ ports.ProtocolHandler = (*MockProtocolHandler)(nil)
+// Verify interface compliance.
+var _ ports.ProtocolHandler = (*MockProtocol)(nil)
 
-// MockMessageParser implements ports.MessageParser for testing.
-type MockMessageParser struct {
+// MockParser implements ports.MessageParser for testing.
+type MockParser struct {
 	ParseFunc func(map[string]any) (messages.Message, error)
 }
 
-func (m *MockMessageParser) Parse(raw map[string]any) (messages.Message, error) {
+// Parse calls the mock function.
+func (m *MockParser) Parse(
+	data map[string]any,
+) (messages.Message, error) {
 	if m.ParseFunc != nil {
-		return m.ParseFunc(raw)
+		return m.ParseFunc(data)
 	}
 
 	return nil, nil
 }
 
-var _ ports.MessageParser = (*MockMessageParser)(nil)
-
-// MockMCPServer implements ports.MCPServer for testing.
-type MockMCPServer struct {
-	NameFunc          func() string
-	HandleMessageFunc func(context.Context, []byte) ([]byte, error)
-	CloseFunc         func() error
-}
-
-func (m *MockMCPServer) Name() string {
-	if m.NameFunc != nil {
-		return m.NameFunc()
-	}
-
-	return "mock-server"
-}
-
-func (m *MockMCPServer) HandleMessage(ctx context.Context, msg []byte) ([]byte, error) {
-	if m.HandleMessageFunc != nil {
-		return m.HandleMessageFunc(ctx, msg)
-	}
-
-	return []byte(`{}`), nil
-}
-
-func (m *MockMCPServer) Close() error {
-	if m.CloseFunc != nil {
-		return m.CloseFunc()
-	}
-
-	return nil
-}
-
-var _ ports.MCPServer = (*MockMCPServer)(nil)
-
-// MockPermissionService implements ports.PermissionService for testing.
-type MockPermissionService struct {
-	CheckToolUseFunc func(context.Context, string, map[string]any, any) (any, error)
-}
-
-func (m *MockPermissionService) CheckToolUse(
-	ctx context.Context,
-	toolName string,
-	input map[string]any,
-	suggestions any,
-) (any, error) {
-	if m.CheckToolUseFunc != nil {
-		return m.CheckToolUseFunc(ctx, toolName, input, suggestions)
-	}
-
-	return nil, nil
-}
-
-var _ ports.PermissionService = (*MockPermissionService)(nil)
+// Verify interface compliance.
+var _ ports.MessageParser = (*MockParser)(nil)

@@ -1,73 +1,82 @@
-// Package options provides configuration types for Claude Agent.
-//
-// This package defines domain and infrastructure configuration options
-// used throughout the SDK. Options are separated into:
-//   - Pure domain configuration (PermissionMode, AgentDefinition, etc.)
-//   - Infrastructure configuration (transport, MCP servers)
-//   - Built-in tool type definitions (BuiltinTool constants)
+// Package options provides configuration types for the Claude Agent SDK.
+// This package defines domain options (affecting business logic) and
+// infrastructure options (affecting connection/execution).
 package options
 
 // PermissionMode defines how permissions are handled.
-//
-// This is a domain concept that affects business logic and Claude's
-// behavior when requesting tool use.
+// This is a domain concept that affects business logic.
 type PermissionMode string
 
 const (
-	// PermissionModeDefault uses default permission handling.
+	// PermissionModeDefault uses standard permission handling.
 	PermissionModeDefault PermissionMode = "default"
-	// PermissionModeAcceptEdits auto-accepts file edit operations.
+
+	// PermissionModeAcceptEdits auto-accepts file edits.
 	PermissionModeAcceptEdits PermissionMode = "acceptEdits"
-	// PermissionModePlan enables planning mode with review step.
+
+	// PermissionModePlan enables plan mode.
 	PermissionModePlan PermissionMode = "plan"
-	// PermissionModeBypassPermissions bypasses all permission checks.
+
+	// PermissionModeBypassPermissions skips all permission checks.
 	PermissionModeBypassPermissions PermissionMode = "bypassPermissions"
-	// PermissionModeAsk prompts for permission on every tool use.
+
+	// PermissionModeAsk always prompts for permission.
 	PermissionModeAsk PermissionMode = "ask"
 )
 
 // SettingSource specifies where settings come from.
-//
-// Used to determine configuration precedence and override behavior.
 type SettingSource string
 
 const (
-	// SettingSourceUser indicates user-level settings (~/.claude).
+	// SettingSourceUser indicates user-level settings.
 	SettingSourceUser SettingSource = "user"
-	// SettingSourceProject indicates project-level settings (.claude/).
+
+	// SettingSourceProject indicates project-level settings.
 	SettingSourceProject SettingSource = "project"
-	// SettingSourceLocal indicates local overrides.
+
+	// SettingSourceLocal indicates local-level settings.
 	SettingSourceLocal SettingSource = "local"
 )
 
 // AgentDefinition defines a subagent configuration.
-//
-// Subagents are specialized Claude instances with specific tools,
-// prompts, and models. Used via the Task tool to delegate work.
+// Subagents are specialized agents with specific tools and prompts.
 type AgentDefinition struct {
-	Name         string
-	Description  string
+	// Name identifies the subagent
+	Name string
+
+	// Description explains what the subagent does
+	Description string
+
+	// SystemPrompt is the agent's system prompt (optional)
 	SystemPrompt *string
+
+	// AllowedTools lists which tools this agent can use
 	AllowedTools []BuiltinTool
-	Model        *string
+
+	// Model specifies which AI model to use (optional)
+	Model *string
 }
 
 // SystemPromptConfig is configuration for system prompts.
-//
-// Can be either a simple string or a preset with optional append.
 type SystemPromptConfig interface {
 	systemPromptConfig()
 }
 
-// StringSystemPrompt is a simple string system prompt.
+// StringSystemPrompt is a plain string system prompt.
 type StringSystemPrompt string
 
-// PresetSystemPrompt uses a named preset with optional append.
+func (StringSystemPrompt) systemPromptConfig() {}
+
+// PresetSystemPrompt uses a predefined prompt with optional append.
 type PresetSystemPrompt struct {
-	Type   string
+	// Type indicates this is a preset
+	Type string
+
+	// Preset is the name of the preset to use
 	Preset string
+
+	// Append is text to append to the preset (optional)
 	Append *string
 }
 
-func (StringSystemPrompt) systemPromptConfig()  {}
 func (PresetSystemPrompt) systemPromptConfig() {}

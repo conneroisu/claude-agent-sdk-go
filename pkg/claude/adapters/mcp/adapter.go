@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/conneroisu/claude/pkg/claude/ports"
@@ -47,7 +48,7 @@ func (a *Adapter) HandleMessage(
 
 	method, ok := rawMsg["method"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing method field")
+		return nil, errors.New("missing method field")
 	}
 
 	// Route to appropriate handler
@@ -107,7 +108,7 @@ func (a *Adapter) handleMethod(
 }
 
 // unmarshalParams converts raw params to typed struct.
-func unmarshalParams(raw any, target any) error {
+func unmarshalParams(raw, target any) error {
 	if raw == nil {
 		return nil
 	}
@@ -123,9 +124,8 @@ func unmarshalParams(raw any, target any) error {
 }
 
 // successResponse creates a JSON-RPC success response.
-func (a *Adapter) successResponse(
-	id any,
-	result any,
+func (*Adapter) successResponse(
+	id, result any,
 ) ([]byte, error) {
 	resp := map[string]any{
 		"jsonrpc": "2.0",
@@ -137,7 +137,7 @@ func (a *Adapter) successResponse(
 }
 
 // errorResponse creates a JSON-RPC error response.
-func (a *Adapter) errorResponse(
+func (*Adapter) errorResponse(
 	id any,
 	code int,
 	message string,

@@ -1,14 +1,13 @@
-// User message types for Claude Agent.
 package messages
 
 // UserMessage represents a message from the user to Claude.
-//
-// Contains user input in the form of text and/or content blocks.
-// Can be linked to a parent tool use via ParentToolUseID for
-// hierarchical tool execution (e.g., subagent results).
+// User messages can contain text, tool results, or other content types.
 type UserMessage struct {
-	Content         MessageContent `json:"content"`
-	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
+	// Content can be a string or a list of ContentBlocks
+	Content MessageContent `json:"content"`
+
+	// ParentToolUseID links this message to a tool use if applicable
+	ParentToolUseID *string `json:"parent_tool_use_id,omitempty"`
 }
 
 func (UserMessage) message() {}

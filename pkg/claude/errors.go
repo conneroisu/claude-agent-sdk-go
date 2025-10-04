@@ -1,6 +1,4 @@
-// Package claude provides the public API for Claude Agent SDK.
-//
-// This file defines error types used throughout the SDK.
+// Package claude provides the public API for the Claude Agent SDK.
 package claude
 
 import (
@@ -13,10 +11,10 @@ var (
 	// ErrNotConnected indicates the client is not connected to Claude CLI.
 	ErrNotConnected = errors.New("claude: not connected")
 
-	// ErrCLINotFound indicates the Claude CLI executable was not found.
+	// ErrCLINotFound indicates Claude CLI executable was not found.
 	ErrCLINotFound = errors.New("claude: CLI not found")
 
-	// ErrCLIConnection indicates connection to the CLI failed.
+	// ErrCLIConnection indicates connection to Claude CLI failed.
 	ErrCLIConnection = errors.New("claude: connection failed")
 
 	// ErrProcessFailed indicates the CLI process failed.
@@ -28,15 +26,16 @@ var (
 	// ErrMessageParse indicates message parsing failed.
 	ErrMessageParse = errors.New("claude: message parse failed")
 
-	// ErrControlTimeout indicates a control request timed out.
+	// ErrControlTimeout indicates control request timeout.
 	ErrControlTimeout = errors.New("claude: control request timeout")
 
-	// ErrInvalidInput indicates invalid user input.
+	// ErrInvalidInput indicates invalid input was provided.
 	ErrInvalidInput = errors.New("claude: invalid input")
 )
 
-// CLINotFoundError indicates the Claude CLI was not found at the path.
+// CLINotFoundError indicates Claude Code CLI was not found at expected path.
 type CLINotFoundError struct {
+	// Path is the path that was searched
 	Path string
 }
 
@@ -46,8 +45,11 @@ func (e *CLINotFoundError) Error() string {
 
 // ProcessError indicates the CLI process failed with an exit code.
 type ProcessError struct {
+	// ExitCode is the process exit code
 	ExitCode int
-	Stderr   string
+
+	// Stderr contains error output from the process
+	Stderr string
 }
 
 func (e *ProcessError) Error() string {
@@ -58,10 +60,13 @@ func (e *ProcessError) Error() string {
 	)
 }
 
-// JSONDecodeError indicates JSON decoding failed on a specific line.
+// JSONDecodeError indicates JSON decoding failed.
 type JSONDecodeError struct {
+	// Line is the raw input line that failed to decode
 	Line string
-	Err  error
+
+	// Err is the underlying error
+	Err error
 }
 
 func (e *JSONDecodeError) Error() string {

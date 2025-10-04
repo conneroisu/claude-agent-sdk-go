@@ -5,97 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2025-10-03
+## [Unreleased]
 
 ### Added
 
-#### Core API
-- `Query()` function for one-shot queries
-- `NewClient()` function for streaming conversations
-- Channel-based message handling for idiomatic Go patterns
-- Context-aware API with proper cancellation support
+- Initial implementation of Claude Agent SDK for Go
+- Hexagonal architecture with ports and adapters pattern
+- Core domain models (messages, content blocks, options)
+- Transport layer (CLI adapter)
+- Protocol layer (JSON-RPC adapter)
+- Message parsing adapter
+- MCP client/server adapters
+- Domain services:
+  - Querying service for one-shot queries
+  - Streaming service for bidirectional conversations
+  - Hooking service for lifecycle hooks
+  - Permissions service for tool access control
+- Public API facade with convenience functions
+- Comprehensive test suite:
+  - Parser tests (5 tests)
+  - Hooking service tests (3 tests)
+  - Permissions service tests (3 tests)
+  - Querying service tests (2 tests)
+  - Streaming service tests (3 tests)
+- Test utilities and mocks in `internal/testutil`
+- Four example programs:
+  - quickstart - Simple one-shot query
+  - streaming - Bidirectional conversation
+  - hooks - Pre/post tool use hooks
+  - tools - Tool filtering
+- Documentation:
+  - README.md with usage examples
+  - ARCHITECTURE.md explaining design
+  - CONTRIBUTING.md with guidelines
+  - This CHANGELOG.md
 
-#### Message Types
-- `AssistantMessage` with typed content blocks
-- `UserMessage` for user input
-- `SystemMessage` for system events
-- `ResultMessageSuccess` and `ResultMessageError` for query results
-- Content blocks: `TextBlock`, `ToolUseBlock`, `ToolResultBlock`, `ThinkingBlock`
+### Code Quality
 
-#### Configuration
-- `AgentOptions` for comprehensive query configuration
-- Support for model selection, max turns, max tokens
-- Thinking budget and output format configuration
-- Tool filtering via `AllowedTools` and `BlockedTools`
+- Maximum 175 lines per file enforced
+- Maximum 25 lines per function enforced
+- Maximum 80 characters per line
+- Maximum cognitive complexity 20
+- Maximum nesting depth 3
+- Minimum 15% comment density
+- 100% golangci-lint compliance
+- All tests passing
 
-#### Lifecycle Hooks
-- 9 hook events: PreToolUse, PostToolUse, UserPromptSubmit, Stop, SubagentStop, PreCompact, Notification, SessionStart, SessionEnd
-- Pattern matching for selective hook execution
-- `BlockBashPatternHook` helper for security patterns
-- Hook aggregation and result merging
+## [0.1.0] - TBD
 
-#### Permission System
-- `PermissionsConfig` with customizable callbacks
-- 5 permission modes: Default, BypassPermissions, Ask, AcceptEdits, Plan
-- `CanUseTool` callback for fine-grained control
-- Permission results: Allow, Deny, Ask with optional input modification
+### Added
 
-#### MCP Integration
-- `NewMCPServer()` helper for server creation
-- `AddTool()` generic wrapper for type-safe tool registration
-- Support for custom MCP server adapters
-- Integration with Model Context Protocol Go SDK
+- Initial release
 
-#### Architecture
-- Hexagonal (ports and adapters) architecture
-- Domain services: Querying, Hooking, Permissions
-- Port interfaces: Transport, ProtocolHandler, MessageParser, PermissionService, MCPServer
-- Adapters: CLI Transport, JSON-RPC Protocol, Message Parser
-
-#### Testing
-- Comprehensive unit tests for all domain services
-- Mock implementations of all port interfaces
-- Test fixtures for common message types
-- Integration tests with Claude CLI
-- Table-driven test patterns
-
-#### Examples
-- `quickstart` - Basic query usage
-- `streaming` - Multi-turn conversations
-- `hooks` - Custom lifecycle hooks
-- `mcp` - MCP server integration
-- `permissions` - Permission callbacks
-- `tools` - Tool filtering
-
-#### Documentation
-- Comprehensive README with architecture diagrams
-- API documentation with godoc comments
-- Hook development guide
-- MCP integration guide
-- Example programs for all major features
-
-### Changed
-
-Nothing (initial release)
-
-### Fixed
-
-Nothing (initial release)
-
-### Security
-
-- Built-in hook system for blocking dangerous bash commands
-- Permission system for tool usage control
-- No direct execution of user input
-
-## [Unreleased]
-
-### Planned Features
-
-- HTTP transport adapter for remote Claude instances
-- WebSocket support for real-time streaming
-- Token usage tracking and budgeting
-- Conversation history management
-- Rate limiting and retry logic
-- Prometheus metrics integration
-- OpenTelemetry tracing support
+[Unreleased]: https://github.com/conneroisu/claude-agent-sdk-go/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/conneroisu/claude-agent-sdk-go/releases/tag/v0.1.0

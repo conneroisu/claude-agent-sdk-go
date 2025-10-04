@@ -1,59 +1,77 @@
-// MCP server configuration for Claude Agent.
 package options
 
-// MCPServerConfig is configuration for MCP servers.
-//
-// These are infrastructure configurations for connecting to MCP servers.
-// Not to be confused with runtime MCP server instances (see ports.MCPServer).
+import (
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// MCPServerConfig represents configuration for MCP servers.
+// There are two distinct types:
+// 1. Client Configs (Stdio, SSE, HTTP): SDK connects TO external servers
+// 2. SDK Config: SDK wraps user's in-process server to EXPOSE to Claude CLI.
 type MCPServerConfig interface {
 	mcpServerConfig()
 }
 
-// StdioServerConfig configures an MCP server using stdio transport.
-//
-// The CLI will spawn the specified command as a subprocess and
-// communicate via stdin/stdout.
+// StdioServerConfig configures connection to external MCP server via stdio.
+// The SDK will start the command and communicate over stdin/stdout.
 type StdioServerConfig struct {
-	Type    string // "stdio"
+	// Type is "stdio" (optional for backwards compatibility)
+	Type string
+
+	// Command is the executable to run
 	Command string
-	Args    []string
-	Env     map[string]string
+
+	// Args are command-line arguments
+	Args []string
+
+	// Env sets environment variables for the subprocess
+	Env map[string]string
 }
 
 func (StdioServerConfig) mcpServerConfig() {}
 
-// SSEServerConfig configures an MCP server using Server-Sent Events.
-//
-// The CLI will connect to the specified URL and receive events
-// via SSE (one-way communication from server to client).
+// SSEServerConfig configures connection to external MCP server via SSE.
+// The SDK will connect to the URL using Server-Sent Events transport.
 type SSEServerConfig struct {
-	Type    string // "sse"
-	URL     string
+	// Type is "sse"
+	Type string
+
+	// URL is the SSE endpoint
+	URL string
+
+	// Headers are HTTP headers to send
 	Headers map[string]string
 }
 
 func (SSEServerConfig) mcpServerConfig() {}
 
-// HTTPServerConfig configures an MCP server using HTTP transport.
-//
-// The CLI will make HTTP requests to the specified URL.
+// HTTPServerConfig configures connection to external MCP server via HTTP.
+// The SDK will make HTTP requests to the URL.
 type HTTPServerConfig struct {
-	Type    string // "http"
-	URL     string
+	// Type is "http"
+	Type string
+
+	// URL is the HTTP endpoint
+	URL string
+
+	// Headers are HTTP headers to send
 	Headers map[string]string
 }
 
 func (HTTPServerConfig) mcpServerConfig() {}
 
-// SDKServerConfig is a marker for SDK-managed MCP servers.
-//
-// This ONLY contains configuration, NOT the server instance itself.
-// The actual server instance is managed separately by the MCP adapter
-// to avoid circular dependencies.
+// SDKServerConfig wraps a user-created in-process MCP server.
+// The Instance field contains the actual *mcp.Server created by the user.
+// The SDK wraps this server and exposes it to Claude CLI via control protocol.
 type SDKServerConfig struct {
-	Type string // "sdk"
+	// Type is "sdk"
+	Type string
+
+	// Name is the server identifier
 	Name string
-	// Instance is NOT stored here - managed by MCP adapter
+
+	// Instance is the user's MCP server (created with mcp.NewServer)
+	Instance *mcpsdk.Server
 }
 
 func (SDKServerConfig) mcpServerConfig() {}
