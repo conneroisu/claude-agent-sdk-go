@@ -2,30 +2,100 @@
 
 The public API acts as a facade over the domain services, hiding the complexity of ports and adapters.
 
-### Overview: Helper Functions
+### Overview: Complete Specification of Helper Functions
 
-This phase introduces several critical helper functions that wire up the SDK:
+This phase introduces several critical helper functions that wire up the SDK with full implementation details:
 
-**MCP Server Initialization (`mcp_init.go`):**
-- `initializeMCPServers(ctx, configs)` - Initializes all MCP server connections from configuration map
-- `initializeMCPServer(ctx, name, cfg)` - Creates a single MCP client/SDK server adapter based on config type
-- `mapToEnvSlice(m)` - Converts environment variable map to KEY=VALUE slice for stdio transports
+#### MCP Server Initialization (`mcp_init.go`)
 
-These helpers handle the complex initialization logic for:
-- **Stdio servers:** Spawn subprocess with command/args/env, create CommandTransport
-- **HTTP/SSE servers:** Create StreamableClientTransport with endpoint and headers
-- **SDK servers:** Wrap user's `*mcp.Server` in SDKServerAdapter with in-memory transport
-- **Error handling:** Clean up partial connections on initialization failure
+**Function Specifications:**
 
-**Options Configuration (`options/` package):**
-The options package defines all configuration types used by the public API:
-- `AgentOptions` - Main configuration struct (tools, permissions, MCP servers, CLI path, etc.)
-- `MCPServerConfig` - Discriminated union interface for MCP server types
-- `StdioServerConfig`, `HTTPServerConfig`, `SSEServerConfig`, `SDKServerConfig` - Concrete MCP config types
-- `PermissionsConfig` - Permission mode and callback configuration
-- `BuiltinTool` - Enum of 18 built-in tool types with matcher support
+1. **`initializeMCPServers(ctx context.Context, configs map[string]options.MCPServerConfig) (map[string]ports.MCPServer, error)`**
+   - **Purpose:** Batch initialization of all configured MCP servers
+   - **Implementation:** Iterates through configs, calls `initializeMCPServer` for each
+   - **Error handling:** On any failure, closes all previously initialized servers and returns error
+   - **Returns:** Map of server name to connected adapter, or nil + error
 
-These configuration types eliminate the need for TODO placeholders - all wiring is explicit and type-safe.
+2. **`initializeMCPServer(ctx context.Context, name string, cfg options.MCPServerConfig) (ports.MCPServer, error)`**
+   - **Purpose:** Creates a single MCP connection based on config type
+   - **Type switching logic:**
+     - `StdioServerConfig`: Creates `exec.CommandContext`, sets env vars, wraps in `CommandTransport`, connects via MCP SDK client
+     - `HTTPServerConfig`: Creates `StreamableClientTransport` with URL/headers, connects via MCP SDK client
+     - `SSEServerConfig`: Same as HTTP (uses StreamableClientTransport)
+     - `SDKServerConfig`: Calls `mcp.NewSDKServerAdapter(name, config.Instance)`, then `adapter.Connect(ctx)`
+   - **Returns:** `ports.MCPServer` implementation (ClientAdapter or SDKServerAdapter)
+
+3. **`mapToEnvSlice(m map[string]string) []string`**
+   - **Purpose:** Converts env var map to `KEY=VALUE` slice for subprocess
+   - **Implementation:** Iterates map, formats each entry as `fmt.Sprintf("%s=%s", k, v)`
+   - **Returns:** Slice of environment variable strings
+
+#### Permissions Initialization
+
+**Permissions Service Construction:**
+```go
+// In Query() and Client.Connect()
+var permissionsService *permissions.Service
+if opts.PermissionsConfig != nil {
+    permissionsService = permissions.NewService(opts.PermissionsConfig)
+}
+```
+
+**PermissionsConfig Structure (defined in `options/permissions.go`):**
+```go
+type PermissionsConfig struct {
+    Mode     PermissionMode                    // "allow_all", "deny_all", "prompt"
+    Callback func(tool string, args any) bool  // Custom approval logic
+    Overrides map[string]PermissionMode        // Per-tool overrides
+}
+```
+
+**Service Creation (defined in `permissions/service.go`):**
+- `NewService(cfg *PermissionsConfig) *Service` - Stores config, initializes decision cache
+- `CheckPermission(ctx, tool, args) (bool, error)` - Implements decision logic per mode
+- Mode resolution order: Overrides → Callback → Default mode
+
+#### Options Configuration (`options/` package)
+
+**Complete Type Definitions:**
+
+1. **`AgentOptions`** - Main configuration struct
+   ```go
+   type AgentOptions struct {
+       CLIPath          string                    // Path to Claude CLI binary
+       AllowedTools     []BuiltinTool            // Enabled tools
+       DeniedTools      []BuiltinTool            // Disabled tools
+       MCPServers       map[string]MCPServerConfig
+       PermissionsConfig *PermissionsConfig
+       SystemPrompt     string
+       // ... additional fields
+   }
+   ```
+
+2. **`MCPServerConfig`** - Discriminated union interface
+   ```go
+   type MCPServerConfig interface {
+       mcpServerConfig() // Private marker method
+   }
+   ```
+
+3. **Concrete MCP Config Types:**
+   - `StdioServerConfig`: Command, Args, Env map
+   - `HTTPServerConfig`: URL, Headers map
+   - `SSEServerConfig`: URL, Headers map
+   - `SDKServerConfig`: Instance *mcp.Server
+
+4. **`PermissionsConfig`** - Permission mode and callback (see above)
+
+5. **`BuiltinTool`** - String enum with matcher support
+   ```go
+   type BuiltinTool string
+   func (t BuiltinTool) WithMatcher(pattern string) string {
+       return fmt.Sprintf("%s(%s)", t, pattern)
+   }
+   ```
+
+**Key Architectural Benefit:** All wiring is explicit and type-safe - no TODO placeholders or runtime string parsing for core initialization logic.
 
 ### 4.1 Query Function (query.go)
 Priority: Critical

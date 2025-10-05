@@ -72,116 +72,83 @@ func BlockBashPatternHook(patterns []string) HookCallback {
 
 ---
 
-## Hook Callback Implementation
+## Hook Lifecycle: Sequencing and Critical Edge Cases
 
-### Control Protocol Integration
+### Execution Sequence
 
-Hooks are registered during the `initialize` control request and invoked via `hook_callback` control requests from the CLI.
+**Phase 1: Registration (SDK Initialization)**
+1. User provides hooks map → `Query()` or `Client.Connect()`
+2. Hook service generates sequential callback IDs: `hook_1`, `hook_2`, etc.
+3. Internal storage: `callbackID → user function` (for execution)
+4. CLI mapping: `callbackID → hook event name` (sent in initialize request)
+5. Initialize request transmitted with `HookCallbacks` field
 
-#### Registration Flow (During Initialization)
+**Phase 2: CLI Triggers Hook (Runtime)**
+1. CLI detects hook event (e.g., before tool use)
+2. Matches event to registered callback ID via mapping
+3. Sends `hook_callback` control request with callback ID + input data
 
-When the SDK initializes, it registers hook callback IDs with the CLI:
+**Phase 3: SDK Executes Callback**
+1. Protocol handler receives `hook_callback` request
+2. Extracts `callback_id`, looks up user function
+3. Builds `HookContext` from current conversation state
+4. Invokes user callback with timeout protection (goroutine + select)
+5. Returns hook output or error to CLI
 
-```go
-// 1. User provides hooks via QueryOptions
-opts := &QueryOptions{
-    Hooks: map[HookEvent]HookCallback{
-        HookEventPreToolUse:  userPreToolUseCallback,
-        HookEventPostToolUse: userPostToolUseCallback,
-    },
-}
+**Phase 4: CLI Acts on Response**
+- If hook returns `decision: "block"` → Tool execution prevented
+- If hook returns modified data → CLI uses modified values
+- If hook errors → CLI may retry or abort based on policy
 
-// 2. SDK generates callback IDs and stores mapping
-hookCallbackCounter := 0
-hookCallbacks := make(map[string]HookCallback)  // callback_id → user function
-hookCallbacksMap := make(map[string]string)     // callback_id → hook_name
+### Critical Edge Cases
 
-for hookEvent, callback := range opts.Hooks {
-    hookCallbackCounter++
-    callbackID := fmt.Sprintf("hook_%d", hookCallbackCounter)
+**1. Hook Registration Race Conditions**
+- **Problem:** Multiple goroutines calling `RegisterHooks` concurrently
+- **Mitigation:** Mutex protection around callback counter and storage
+- **Implementation:** `sync.RWMutex` in `Service` struct, lock during registration
 
-    // Store user callback for later invocation
-    hookCallbacks[callbackID] = callback
+**2. Callback Timeout Protection**
+- **Problem:** User callback blocks indefinitely
+- **Mitigation:** Execute in goroutine with context timeout (default 30s)
+- **Implementation:**
+  ```go
+  ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+  defer cancel()
 
-    // Map callback ID to hook name for CLI
-    hookCallbacksMap[callbackID] = string(hookEvent)
-}
+  select {
+  case result := <-resultCh:
+      return result.output, result.err
+  case <-ctx.Done():
+      return nil, fmt.Errorf("hook execution timeout")
+  }
+  ```
 
-// 3. Send initialize request with callback IDs
-initRequest := &InitializeRequest{
-    Subtype:       "initialize",
-    Version:       "1.0.0",
-    HookCallbacks: hookCallbacksMap,  // {"hook_1": "PreToolUse", "hook_2": "PostToolUse"}
-    // ... other fields
-}
-```
+**3. Unknown Callback ID**
+- **Problem:** CLI sends callback ID not in registry (shouldn't happen, but defensive)
+- **Mitigation:** Return structured error response, don't panic
+- **Response:** `ControlError{Code: "unknown_callback", Message: "..."}`
 
-**Key Details:**
-- Hook callback IDs follow format: `hook_{counter}` (e.g., `hook_1`, `hook_2`)
-- Counter increments for each hook registered
-- SDK maintains internal map of `callbackID → userCallback` for invocation
-- CLI receives map of `callbackID → hookName` to know when to call
+**4. Hook Panic Recovery**
+- **Problem:** User callback panics
+- **Mitigation:** Recover in execution goroutine, convert to error
+- **Implementation:**
+  ```go
+  defer func() {
+      if r := recover(); r != nil {
+          resultCh <- hookResult{err: fmt.Errorf("hook panicked: %v", r)}
+      }
+  }()
+  ```
 
-#### Invocation Flow (During Execution)
+**5. Nil Hook Context Fields**
+- **Problem:** Context fields may be nil during initialization or edge states
+- **Mitigation:** Explicitly document which fields are optional, provide zero values
+- **Convention:** Use pointers for optional fields, document in `HookContext` godoc
 
-When the CLI needs to execute a hook, it sends a `hook_callback` control request:
-
-```go
-// 1. CLI sends hook_callback request
-type HookCallbackRequest struct {
-    Subtype    string         `json:"subtype"`     // "hook_callback"
-    CallbackID string         `json:"callback_id"` // "hook_1"
-    Input      map[string]any `json:"input"`       // Hook-specific input
-    ToolUseID  *string        `json:"tool_use_id,omitempty"`
-}
-
-// Example incoming request:
-{
-    "type": "control_request",
-    "request_id": "req_5_a3f2",
-    "request": {
-        "subtype": "hook_callback",
-        "callback_id": "hook_1",
-        "input": {
-            "tool_name": "Bash",
-            "tool_input": {"command": "rm -rf /"}
-        }
-    }
-}
-
-// 2. SDK looks up user callback by ID
-callback, exists := hookCallbacks[request.CallbackID]
-if !exists {
-    return errors.New("unknown callback ID")
-}
-
-// 3. Build HookContext
-ctx := HookContext{
-    ConversationID: currentConversationID,
-    // ... other context fields
-}
-
-// 4. Invoke user's callback function
-output, err := callback(request.Input, request.ToolUseID, ctx)
-if err != nil {
-    // Return error response
-    return &ControlResponse{
-        Type:      "control_response",
-        RequestID: request.RequestID,
-        Error: &ControlError{
-            Code:    "hook_execution_error",
-            Message: err.Error(),
-        },
-    }
-}
-
-// 5. Send success response
-return &ControlResponse{
-    Type:      "control_response",
-    RequestID: request.RequestID,
-    Result:    output,  // Hook output (decision, systemMessage, etc.)
-}
-```
+**6. Hook Output Validation**
+- **Problem:** Hook returns invalid output structure
+- **Mitigation:** Validate output schema before sending to CLI
+- **Implementation:** Check for required fields based on hook type, return error if invalid
 
 ### Hook Execution Architecture
 
