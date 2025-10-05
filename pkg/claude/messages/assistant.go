@@ -7,7 +7,8 @@ type AssistantMessage struct {
 	// Content is a list of content blocks in the response
 	Content []ContentBlock
 
-	// StopReason indicates why generation stopped (e.g., "end_turn", "max_tokens")
+	// StopReason indicates why generation stopped
+	// (e.g., "end_turn", "max_tokens")
 	StopReason *string
 
 	// Model is the identifier of the model that generated this response

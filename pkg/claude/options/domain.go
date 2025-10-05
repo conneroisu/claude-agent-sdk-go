@@ -8,19 +8,19 @@ package options
 type PermissionMode string
 
 const (
-	// PermissionModeDefault uses standard permission checking
+	// PermissionModeDefault uses standard permission checking.
 	PermissionModeDefault PermissionMode = "default"
 
-	// PermissionModeAcceptEdits automatically accepts file edits
+	// PermissionModeAcceptEdits automatically accepts file edits.
 	PermissionModeAcceptEdits PermissionMode = "accept_edits"
 
-	// PermissionModePlan enables planning mode with restricted tools
+	// PermissionModePlan enables planning mode with restricted tools.
 	PermissionModePlan PermissionMode = "plan"
 
-	// PermissionModeAllow allows all tool uses without prompting
+	// PermissionModeAllow allows all tool uses without prompting.
 	PermissionModeAllow PermissionMode = "allow"
 
-	// PermissionModeDeny denies all tool uses
+	// PermissionModeDeny denies all tool uses.
 	PermissionModeDeny PermissionMode = "deny"
 )
 
@@ -29,13 +29,13 @@ const (
 type SettingSource string
 
 const (
-	// SettingSourceUser indicates a user-level setting
+	// SettingSourceUser indicates a user-level setting.
 	SettingSourceUser SettingSource = "user"
 
-	// SettingSourceProject indicates a project-level setting
+	// SettingSourceProject indicates a project-level setting.
 	SettingSourceProject SettingSource = "project"
 
-	// SettingSourceLocal indicates a local override setting
+	// SettingSourceLocal indicates a local override setting.
 	SettingSourceLocal SettingSource = "local"
 )
 

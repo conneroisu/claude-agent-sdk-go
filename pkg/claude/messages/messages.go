@@ -49,8 +49,8 @@ type BlocksContent []ContentBlock
 
 func (BlocksContent) messageContent() {}
 
-// ToolResultContent is a union of string or content block list for tool results.
-// Tool results can return either simple text or structured content blocks.
+// ToolResultContent is a union of string or block list for tool results.
+// Tool results can return either simple text or structured blocks.
 type ToolResultContent interface {
 	toolResultContent()
 }
@@ -64,3 +64,16 @@ func (ToolResultString) toolResultContent() {}
 type ToolResultBlocks []ContentBlock
 
 func (ToolResultBlocks) toolResultContent() {}
+
+// UnknownMessage represents an unrecognized message type.
+// This enables forward compatibility when the API adds new message types
+// that the SDK hasn't been updated to handle yet.
+type UnknownMessage struct {
+	// Type contains the message type identifier
+	Type string
+
+	// RawData contains the unparsed message data
+	RawData map[string]any
+}
+
+func (*UnknownMessage) message() {}

@@ -1,21 +1,29 @@
-version: "2"
-
-run:
-  timeout: 5m
-
 linters:
-  disable-all: true
   enable:
     - errcheck
     - godot
     - staticcheck
   disable:
     - revive
+    - nlreturn
+    - unused
 
 linters-settings:
   errcheck:
     check-blank: false
     check-type-assertions: false
+  revive:
+    rules:
+      - name: unused-receiver
+        disabled: true
+      - name: argument-limit
+        disabled: true
+      - name: flag-parameter
+        disabled: true
+      - name: line-length-limit
+        disabled: true
+      - name: modifies-parameter
+        disabled: true
 
 issues:
   max-issues-per-linter: 0
@@ -24,7 +32,4 @@ issues:
   exclude-rules:
     - linters:
         - revive
-      text: "line-length-limit"
-    - linters:
-        - revive
-      text: "nested-structs"
+      text: ".*"

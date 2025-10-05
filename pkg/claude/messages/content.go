@@ -57,3 +57,16 @@ type ToolResultBlock struct {
 }
 
 func (*ToolResultBlock) contentBlock() {}
+
+// UnknownContentBlock represents an unrecognized content block type.
+// This enables forward compatibility when the API adds new block types
+// that the SDK hasn't been updated to handle yet.
+type UnknownContentBlock struct {
+	// Type contains the block type identifier
+	Type string
+
+	// RawData contains the unparsed block data
+	RawData map[string]any
+}
+
+func (*UnknownContentBlock) contentBlock() {}

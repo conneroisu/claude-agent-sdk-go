@@ -33,9 +33,10 @@ type SetModelRequest struct {
 
 // InitializeRequest sends hook configurations.
 type InitializeRequest struct {
-	Subtype       string            `json:"subtype"`        // "initialize"
-	Version       string            `json:"version"`        // SDK version
-	HookCallbacks map[string]string `json:"hook_callbacks"` // callback_id -> hook_name
+	Subtype string `json:"subtype"` // "initialize"
+	Version string `json:"version"` // SDK version
+	// HookCallbacks maps callback IDs to hook names
+	HookCallbacks map[string]string `json:"hook_callbacks"`
 }
 
 // InboundControlRequest wraps CLI to SDK control requests.
@@ -52,11 +53,12 @@ type InboundControlRequest struct {
 
 // CanUseToolRequest requests permission to use a tool.
 type CanUseToolRequest struct {
-	Subtype               string              `json:"subtype"` // "can_use_tool"
-	ToolName              string              `json:"tool_name"`
-	Input                 map[string]any      `json:"input"`
-	PermissionSuggestions []PermissionUpdate  `json:"permission_suggestions,omitempty"`
-	BlockedPath           *string             `json:"blocked_path,omitempty"`
+	Subtype  string         `json:"subtype"` // "can_use_tool"
+	ToolName string         `json:"tool_name"`
+	Input    map[string]any `json:"input"`
+	// Suggestions are optional permission rule suggestions
+	Suggestions []PermissionUpdate `json:"permission_suggestions,omitempty"`
+	BlockedPath *string            `json:"blocked_path,omitempty"`
 }
 
 // HookCallbackRequest executes a registered hook.
@@ -129,13 +131,13 @@ type PermissionRuleValue struct {
 type PermissionBehavior string
 
 const (
-	// PermissionAllow always allows the tool
+	// PermissionAllow always allows the tool.
 	PermissionAllow PermissionBehavior = "allow"
 
-	// PermissionDeny always denies the tool
+	// PermissionDeny always denies the tool.
 	PermissionDeny PermissionBehavior = "deny"
 
-	// PermissionAsk prompts for permission
+	// PermissionAsk prompts for permission.
 	PermissionAsk PermissionBehavior = "ask"
 )
 
