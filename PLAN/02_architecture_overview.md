@@ -7,7 +7,7 @@
 - Concurrency: Use goroutines and channels for async operations
 - Error Handling: Explicit error returns following Go best practices
 - Context Support: Full context.Context integration for cancellation and timeouts
-- Zero Dependencies: Minimize external dependencies where possible
+- Minimal Dependencies: Limited to essential MCP SDK packages for protocol support
 - Hexagonal Architecture: Strict separation between domain logic and infrastructure
 
 Dependencies:
@@ -298,19 +298,13 @@ When the CLI needs to execute a hook, it sends a `hook_callback` control request
 
 #### Timeout Protection
 
-All outbound control requests include 60-second timeout protection:
+The protocol adapter (not domain services) implements 60-second timeout protection for all outbound control requests to prevent hanging if the CLI becomes unresponsive. This follows hexagonal architecture by keeping infrastructure concerns (timeouts, request IDs) in the adapter layer.
 
-```go
-ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
-defer cancel()
+**Implementation Location:** `adapters/jsonrpc/protocol.go`
 
-response, err := protocol.SendControlRequest(ctx, request)
-if err != nil {
-    // Handle timeout or other errors
-}
-```
+The adapter internally applies timeouts to all `SendControlRequest` operations, wrapping the provided context with a 60-second deadline. Domain services simply call the protocol handler interface without knowledge of timeout mechanics - they only pass their context for cancellation signals.
 
-This prevents the SDK from hanging indefinitely if the CLI becomes unresponsive.
+Request ID generation (`req_{counter}_{randomHex}`) also lives in the adapter, not in domain services, maintaining clear separation between business logic and protocol infrastructure.
 
 ### SDK MCP Server Integration Architecture
 
@@ -405,24 +399,31 @@ User creates MCP servers in the same process as their application:
 1. User creates `*mcp.Server` with `claude.NewMCPServer()`
 2. User registers tools with `claude.AddTool()`
 3. User passes server instance via `options.SDKServerConfig{Instance: server}`
-4. SDK creates in-memory transport pair (channels)
-5. SDK connects user's server to in-memory transport
-6. SDKServerAdapter wraps server implementing `ports.MCPServer`
-7. Control protocol routes `mcp_message` requests to SDKServerAdapter
-8. SDKServerAdapter sends/receives JSON-RPC via in-memory channels
-9. User's tool handlers execute in same process (no IPC overhead)
+4. SDKServerAdapter wraps server implementing `ports.MCPServer`
+5. Control protocol routes `mcp_message` requests to SDKServerAdapter
+6. SDKServerAdapter **manually dispatches JSON-RPC methods** to server handlers (no transport abstraction)
+7. User's tool handlers execute in same process (no IPC overhead)
+
+**Critical Implementation Detail:** Neither the Go nor Python MCP SDKs currently provide in-memory transport abstractions. The Python reference implementation at `claude-agent-sdk-python/src/claude_agent_sdk/_internal/query.py:3123` manually routes `initialize`, `tools/list`, `tools/call`, and `notifications/initialized` methods directly to server request handlers, bypassing the transport layer entirely. The Go SDK must adopt the same approach until the MCP SDK provides a proper Transport interface (similar to TypeScript's `server.connect(transport)` pattern). This means:
+
+- Parse incoming JSON-RPC `method` field
+- Match against known MCP methods (`initialize`, `tools/list`, `tools/call`, etc.)
+- Manually invoke the corresponding server request handler
+- Serialize handler results back to JSON-RPC response format
+- Return to control protocol for delivery to CLI
 
 **Key Differences:**
 
 | Aspect | External Servers | SDK Servers |
 |--------|------------------|-------------|
 | **Process** | Separate process | Same process as app |
-| **Transport** | stdio/HTTP/SSE | In-memory channels |
+| **Transport** | stdio/HTTP/SSE via MCP SDK | Manual method dispatch (no transport) |
 | **Adapter** | ClientAdapter | SDKServerAdapter |
 | **User Creates** | Config (command/URL) | `*mcp.Server` instance |
 | **Performance** | IPC overhead | Zero IPC overhead |
 | **Deployment** | Multiple processes | Single process |
 | **State Access** | No direct access | Direct access to app state |
+| **MCP Integration** | Full MCP SDK transport layer | Direct handler invocation workaround |
 
 **MCP Configuration Types:**
 
@@ -443,7 +444,7 @@ type SDKServerConfig struct {
 }
 ```
 
-This differs from external configs which only store connection details. The SDK needs the instance to create in-memory transport and connect the server.
+This differs from external configs which only store connection details. The SDK needs the instance to manually route JSON-RPC messages to the server's request handlers (since no transport abstraction exists).
 
 **Unified Port Interface:**
 

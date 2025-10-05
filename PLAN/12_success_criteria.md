@@ -10,10 +10,10 @@ This document defines measurable success criteria with explicit verification met
 - ✅ Cross-reference checklist comparing Python SDK features to Go SDK implementation
   - Query API (`query()` function exists and works)
   - Streaming Client (`Client` class with `connect/send/receive` methods)
-  - Hooks support (all 9 hook events: PreToolUse, PostToolUse, UserPromptSubmit, Notification, SessionStart, SessionEnd, Stop, SubagentStop, PreCompact)
-  - Permissions (can_use_tool callback, set_permission_mode, suggestions)
-  - MCP integration (stdio, HTTP, SSE client connections + SDK server wrapping)
-  - All 18 builtin tools supported
+  - Hooks support (all 6 hook events matching Python SDK: PreToolUse, PostToolUse, UserPromptSubmit, Stop, SubagentStop, PreCompact)
+  - Permissions (`can_use_tool` callback, `set_permission_mode`, permission suggestions)
+  - MCP integration (stdio, HTTP, SSE client connections + SDK server wrapping via `create_sdk_mcp_server`)
+  - Builtin tools (Bash, Read, Write, Edit, Glob, Grep, etc. - provided by CLI, SDK enables permission callbacks)
 
 - ✅ Integration test suite that validates:
   - One-shot query completes successfully
@@ -63,11 +63,22 @@ This document defines measurable success criteria with explicit verification met
   - Benchmarks show constant memory usage over time
   - `defer Close()` used correctly for resource cleanup
 
-- ✅ Performance benchmarks:
+- ✅ Performance benchmarks with instrumentation:
   - Control protocol round-trip <100ms for local subprocess
+    - Instrumentation: `go test -bench=BenchmarkControlProtocolRoundTrip -benchtime=10s`
+    - Task: `internal/protocol/protocol_bench_test.go` measuring SendRequest→ReceiveResponse latency
+    - Target: p50 <50ms, p95 <100ms, p99 <200ms
   - Message parsing throughput >10,000 messages/sec
+    - Instrumentation: `go test -bench=BenchmarkMessageParsing -benchtime=100000x`
+    - Task: `internal/messages/parser_bench_test.go` parsing realistic message batches
+    - Target: >10,000 ops/sec sustained over 100k iterations
   - Subprocess cleanup completes within 5 seconds
+    - Instrumentation: `go test -run=TestTransportCleanup -timeout=10s`
+    - Task: `internal/transport/subprocess_test.go` measuring Close() to process termination
+    - Target: cleanup completes <5s even under load
   - No blocking operations in hot paths
+    - Instrumentation: `go test -race -run=TestStreamingFlow`
+    - Task: Verify all channel operations have timeout/context cancellation
 
 - ✅ Resource cleanup validation:
   - All examples properly close client connections

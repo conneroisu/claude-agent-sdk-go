@@ -763,13 +763,390 @@ golangci-lint run --out-format=html > lint-report.html
 
 ---
 
+## Lint Exception Handling
+
+### When Exceptions Are Justified
+
+**Approved Exception Categories:**
+
+1. **Generated Code**
+   - Protobuf/gRPC generated files
+   - Code generation tools (e.g., stringer, mockgen)
+   - **Exception**: Exclude from all linters via `//nolint:all // generated`
+
+2. **Test Fixtures & Test Data**
+   - Large JSON/YAML test payloads embedded as strings
+   - Table-driven test datasets with 50+ cases
+   - **Exception**: File-length-limit only, keep other rules enabled
+   - **Alternative**: Extract to separate `testdata/` files (preferred)
+
+3. **MCP Protocol Schemas**
+   - JSON-RPC message type definitions from MCP spec
+   - Auto-generated type discriminators
+   - **Exception**: Line-length-limit for long type URLs
+   - **Alternative**: Use type aliases to shorten names (preferred)
+
+4. **Legacy/Third-Party Integration Code**
+   - Vendored dependencies requiring modification
+   - Compatibility shims for older MCP SDK versions
+   - **Exception**: Revive rules only, keep staticcheck/govet
+   - **Must**: Document in `docs/exceptions.md` with removal plan
+
+### When Exceptions Are NOT Justified
+
+**Refactor Instead:**
+
+1. **"Complex business logic"** → Extract helper functions
+2. **"This function just needs to be long"** → Apply Pattern A/B from decomposition section
+3. **"Too many parameters make sense here"** → Use config struct or options pattern
+4. **"Deep nesting is clearer"** → Use early returns and extract logic
+5. **"Table test is too big to split"** → Extract fixtures to shared file
+6. **"Import cycle prevents splitting"** → Violates hexagonal architecture, redesign packages
+
+### Exception Request & Approval Process
+
+#### Step 1: Attempt Standard Solutions
+
+Before requesting exception, developer must document:
+- [ ] Which decomposition pattern(s) were attempted (ref: Patterns A-C above)
+- [ ] Why file splitting is not feasible
+- [ ] Why function extraction increases complexity
+- [ ] Why config struct/options pattern doesn't apply
+
+#### Step 2: Submit Exception Request
+
+Create GitHub issue with template:
+
+```markdown
+## Lint Exception Request
+
+**File:** `pkg/example/file.go`
+**Rule:** `revive:file-length-limit` (currently 250 lines, limit 175)
+**Justification:** [Specific reason why standard solutions don't apply]
+
+**Attempted Solutions:**
+1. Pattern A (split by responsibility) → [Why it failed]
+2. Pattern B (split by domain) → [Why it failed]
+3. Config struct for parameters → [Why it doesn't apply]
+
+**Impact Assessment:**
+- Readability: [Better/Worse/Same]
+- Maintainability: [Better/Worse/Same]
+- Test Coverage: [Current %]
+
+**Proposed Mitigation:**
+- Add `//nolint:revive:file-length-limit // [Reason]`
+- Document in `docs/exceptions.md`
+- Create follow-up issue #XXX to refactor in Phase X
+```
+
+#### Step 3: Review & Approval Criteria
+
+**Approvers:** Lead architect + 1 senior developer
+
+**Approval Criteria:**
+- ✅ Standard solutions genuinely don't apply (not just "harder")
+- ✅ Exception is temporary with removal plan
+- ✅ Impact on readability/maintainability is neutral or positive
+- ✅ Alternative approaches would violate architecture principles
+- ✅ Exception is narrowly scoped (single file, single rule)
+
+**Rejection Criteria:**
+- ❌ "It's too hard to refactor" without specific technical blocker
+- ❌ Exception would cascade to multiple files
+- ❌ Violates hexagonal architecture boundaries
+- ❌ No removal plan or removal plan is >6 months out
+
+#### Step 4: Document Approved Exceptions
+
+**File:** `docs/exceptions.md`
+
+```markdown
+## Approved Linting Exceptions
+
+### pkg/adapters/cli/command.go
+- **Rule:** `revive:file-length-limit` (220 lines, limit 175)
+- **Reason:** CLI argument matrix requires inline validation for 15 flag combinations
+- **Approved:** 2024-01-15 by @architect, @senior-dev
+- **Removal Plan:** Issue #234 (Phase 8) - Extract flag builder pattern
+- **Review Date:** 2024-06-01
+```
+
+### Exception Monitoring & Removal
+
+**Quarterly Review Process:**
+
+1. **Automated Detection**
+   ```bash
+   # Find all nolint directives
+   rg "//nolint" --type go > nolint_report.txt
+   ```
+
+2. **Exception Audit Checklist**
+   - [ ] Exception still required? (Has dependency been removed/updated?)
+   - [ ] Removal plan on track? (Check linked issue status)
+   - [ ] Can be narrowed further? (Disable fewer rules, smaller scope)
+   - [ ] New solutions available? (Language features, stdlib updates)
+
+3. **Escalation for Stale Exceptions**
+   - **>6 months old** → Mandatory review by lead architect
+   - **>12 months old** → Escalate to engineering management
+   - **Removal plan missed** → Block new feature work until addressed
+
+---
+
+## Staged Lint Adoption Roadmap
+
+### Phase 1: Foundation (Weeks 1-2) - Core Rules Only
+
+**Enabled Linters:**
+- `gofmt`, `goimports` - Formatting (auto-fixable)
+- `govet` - Official Go checks
+- `errcheck` - Error handling
+- `staticcheck` (subset) - Critical bugs only
+
+**Disabled (Not Yet Enforced):**
+- File/function length limits (design not finalized)
+- Complexity metrics (patterns not established)
+- Comment density (documentation comes later)
+
+**Rationale:** Focus on correctness and basic style during rapid prototyping.
+
+**Phase 1 Checkpoints:**
+- Week 1, Day 3: Zero govet/errcheck violations
+- Week 1, Day 5: Formatting CI enforced
+
+### Phase 2: Domain Services (Weeks 3-5) - Add Structural Rules
+
+**Newly Enabled:**
+- `revive:argument-limit` (4 params) - Enforce config structs early
+- `revive:return-limit` (3 returns) - Establish result struct pattern
+- `revive:var-naming`, `error-naming` - Naming conventions
+- `staticcheck` (full) - All SA/ST checks
+
+**Still Disabled:**
+- File/function length (services still evolving)
+- Complexity metrics (refactoring not complete)
+- Comment density (defer to Phase 6)
+
+**Rationale:** Lock in parameter/return patterns before building on them.
+
+**Phase 2 Checkpoints:**
+- Week 3, Day 5: All services use config structs (≤4 params)
+- Week 4, Day 3: Result struct pattern established
+
+### Phase 3: Adapters (Weeks 4-7) - Add Complexity Rules
+
+**Newly Enabled:**
+- `revive:cyclomatic` (≤15) - Control adapter complexity
+- `revive:cognitive-complexity` (≤20)
+- `revive:max-control-nesting` (≤3) - Force early returns
+- `gocritic` - Code improvement suggestions
+
+**Still Disabled:**
+- File/function length (adapters are largest files)
+- Comment density (wait for stabilization)
+
+**Rationale:** Adapters handle complex I/O, need complexity constraints early.
+
+**Phase 3 Checkpoints:**
+- Week 5, Day 2: CLI adapter complexity ≤15
+- Week 6, Day 1: JSON-RPC handler nesting ≤3
+
+### Phase 4: Public API (Week 8) - Add Length Limits
+
+**Newly Enabled:**
+- `revive:function-length` (≤25 lines) - **Critical for API clarity**
+- `revive:file-length-limit` (≤175 lines) - Force decomposition
+- `depguard` - Prevent import violations
+
+**Still Disabled:**
+- Comment density (defer to Phase 6 documentation push)
+
+**Rationale:** Public API must be exemplary; length limits now have full pattern library.
+
+**Phase 4 Checkpoints:**
+- Day 2: Query() function ≤25 lines (extraction complete)
+- Day 4: All API files ≤175 lines
+
+### Phase 5: Advanced Features (Weeks 9-10) - Add Documentation Rules
+
+**Newly Enabled:**
+- `revive:exported` - All exports documented
+- `godot` - Comment formatting
+- `misspell` - Spelling errors
+
+**Still Disabled:**
+- Comment density (Phase 6)
+
+**Rationale:** Advanced features need documentation from the start.
+
+**Phase 5 Checkpoints:**
+- Week 9, Day 3: All hook types documented
+- Week 10, Day 1: Permission API godoc complete
+
+### Phase 6: Testing & Docs (Weeks 10-11) - Full Enforcement
+
+**Newly Enabled (All Remaining):**
+- `revive:comments-density` (≥15%) - **Final requirement**
+- `revive:line-length-limit` (≤80 chars)
+- All remaining revive rules (see full list above)
+
+**Rationale:** Documentation phase is when all code stabilizes and can be commented.
+
+**Phase 6 Checkpoints:**
+- Week 10, Day 3: All packages ≥15% comment density
+- Week 11, Day 1: Zero lint violations (full suite)
+
+### Phase 7: CI/CD (Week 12) - Lock It Down
+
+**Full Enforcement in CI:**
+- All 30+ linters enabled
+- PR merge blocked on any violation
+- No exceptions without approval process
+
+**Ongoing:**
+- Quarterly exception review
+- New code inherits full suite from day 1
+
+---
+
+## Lint Rule to Phase Mapping
+
+### Quick Reference Table
+
+| Rule Category | Rules | Enabled In | Rationale |
+|---------------|-------|------------|-----------|
+| **Formatting** | gofmt, goimports | Phase 1 | Auto-fixable, no design impact |
+| **Correctness** | govet, errcheck, staticcheck | Phase 1-2 | Catch bugs early |
+| **Parameters** | argument-limit, return-limit | Phase 2 | Lock patterns before building on them |
+| **Complexity** | cyclomatic, cognitive, nesting | Phase 3 | Adapters most complex, need early control |
+| **Length** | function-length, file-length | Phase 4 | Requires full pattern library first |
+| **Documentation** | exported, godot, misspell | Phase 5-6 | Code must stabilize before documenting |
+| **Density** | comments-density | Phase 6 | Final polish, requires stable code |
+
+### Rule Enablement by Week
+
+```
+Week 1-2 (Phase 1):   ████░░░░░░░░░░  (25% of rules) - Core only
+Week 3-5 (Phase 2):   ███████░░░░░░░  (45% of rules) - +Structural
+Week 4-7 (Phase 3):   ██████████░░░░  (65% of rules) - +Complexity
+Week 8 (Phase 4):     ████████████░░  (80% of rules) - +Length
+Week 9-10 (Phase 5):  ██████████████░  (90% of rules) - +Docs
+Week 10-11 (Phase 6): ███████████████ (100% of rules) - Full suite
+Week 12 (Phase 7):    ███████████████ (100% + CI enforcement)
+```
+
+---
+
+## Practical Decision Framework
+
+### "Should I Request an Exception?" Decision Tree
+
+```
+┌─ Does standard pattern solve it?
+│  ├─ YES → Use pattern, no exception
+│  └─ NO ↓
+│
+├─ Is it generated/vendored code?
+│  ├─ YES → Blanket //nolint:all, document in exceptions.md
+│  └─ NO ↓
+│
+├─ Is it temporary (will be refactored in <3 months)?
+│  ├─ YES → Request exception with removal plan
+│  └─ NO ↓
+│
+├─ Would refactoring violate architecture principles?
+│  ├─ YES → Request exception, document architectural conflict
+│  └─ NO ↓
+│
+└─ You must refactor. No exception.
+   Options:
+   - Re-read decomposition patterns (Patterns A-C above)
+   - Consult lead architect for design alternatives
+   - File architecture question issue for guidance
+```
+
+### Exception vs. Refactor Examples
+
+#### Example 1: Large Table Test ❌ → ✅
+
+**Initial Approach (Request Exception):**
+```go
+// test.go - 300 lines
+func TestParser(t *testing.T) {
+    tests := []struct{
+        // 50 fields
+    }{
+        // 100 test cases inline
+    }
+}
+```
+
+**Better Approach (Refactor):**
+```go
+// test.go - 80 lines
+func TestParser(t *testing.T) {
+    tests := fixtures.ParserTestCases // External file
+    for _, tt := range tests { ... }
+}
+
+// testdata/fixtures/parser_cases.go - 250 lines (test data, exempt)
+var ParserTestCases = []TestCase{ ... }
+```
+
+#### Example 2: Complex Initialization ❌ → ✅
+
+**Initial Approach (Request Exception for 6 params):**
+```go
+func NewService(t Transport, p Protocol, log Logger,
+                timeout time.Duration, retries int, cache Cache) *Service
+```
+
+**Better Approach (Config Struct):**
+```go
+type ServiceConfig struct {
+    Transport Transport
+    Protocol  Protocol
+    Options   ServiceOptions // Grouped timeout/retries/cache
+}
+
+func NewService(cfg ServiceConfig) *Service
+```
+
+#### Example 3: MCP Schema Constants ✅ Exception Justified
+
+**Case:**
+```go
+// mcp/types.go - 220 lines
+// MCP JSON-RPC type constants from spec (cannot be shortened)
+const (
+    TypeListToolsRequest = "mcp.protocol.tools.list.request.v1.schema.json"
+    TypeListToolsResponse = "mcp.protocol.tools.list.response.v1.schema.json"
+    // ... 50 more type URLs from MCP spec
+)
+```
+
+**Exception Request:**
+- **Rule:** file-length-limit (220 lines, limit 175)
+- **Why Refactor Doesn't Work:**
+  - Splitting by prefix breaks discoverability
+  - Type URLs must match MCP spec exactly (cannot alias)
+  - Single source of truth for protocol types is critical
+- **Mitigation:** Add godoc grouping, comprehensive search tags
+- **Approval:** ✅ Temporary until MCP SDK provides type constants
+
+---
+
 ## Success Criteria
 
-✅ **Zero linting violations** in CI
-✅ **All files** under 175 lines
-✅ **All functions** under 25 lines
-✅ **All packages** have ≥15% comments
-✅ **Test coverage** ≥80%
-✅ **No complexity violations**
+✅ **Zero linting violations** in CI (by Phase 6, Week 11)
+✅ **All files** under 175 lines (or documented exception)
+✅ **All functions** under 25 lines (no exceptions)
+✅ **All packages** have ≥15% comments (by Phase 6)
+✅ **Test coverage** ≥80% (by Phase 6)
+✅ **No complexity violations** (cyclomatic ≤15, cognitive ≤20)
+✅ **Exception count** ≤5 total (across entire codebase)
+✅ **All exceptions** reviewed quarterly with removal plan
 
-The linting rules are **non-negotiable** - they enforce the quality bar for this SDK.
+The linting rules are **non-negotiable by default** - exceptions require architectural justification and approval. The staged rollout ensures rules are introduced when patterns are established, not before.

@@ -39,13 +39,25 @@ const (
 	HookEventPreCompact       = hooking.HookEventPreCompact
 )
 
+// HookJSONOutput represents the output from a hook callback.
+// This aligns with the Python SDK HookJSONOutput contract:
+// - decision: "block" to prevent the action
+// - systemMessage: Optional message saved in transcript (not visible to Claude)
+// - hookSpecificOutput: Hook-specific data (see individual hook documentation)
+//
+// Reference: claude-agent-sdk-python/src/claude_agent_sdk/types.py:118
 type HookJSONOutput struct {
-	Decision           *string        `json:"decision,omitempty"`           // "block"
-	SystemMessage      *string        `json:"systemMessage,omitempty"`
-	HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitempty"`
+	Decision           *string        `json:"decision,omitempty"`           // "block" to prevent action
+	SystemMessage      *string        `json:"systemMessage,omitempty"`      // Message saved in transcript
+	HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitempty"` // Hook-specific data
 }
 
+// Note: The following helper is provided as an example but depends on types
+// not yet defined in earlier phases. Consider this a reference implementation
+// for future use once all domain types are established.
+//
 // BlockBashPatternHook returns a hook callback that blocks bash commands containing forbidden patterns
+// This example demonstrates the HookJSONOutput structure and hook callback pattern.
 func BlockBashPatternHook(patterns []string) HookCallback {
 	return func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error) {
 		toolName, _ := input["tool_name"].(string)
@@ -109,17 +121,31 @@ func BlockBashPatternHook(patterns []string) HookCallback {
 
 **2. Callback Timeout Protection**
 - **Problem:** User callback blocks indefinitely
-- **Mitigation:** Execute in goroutine with context timeout (default 30s)
+- **Default Limit:** 30 seconds (configurable via context)
+- **User Override:** Pass custom timeout via parent context
+- **Mitigation:** Execute in goroutine with context timeout
 - **Implementation:**
   ```go
-  ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
-  defer cancel()
+  // Default timeout is 30 seconds, but users can override by passing a context
+  // with a custom deadline/timeout when calling Query() or Client methods.
+  // Example user override:
+  //   ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+  //   defer cancel()
+  //   client.Query(ctx, "prompt", options)
+
+  // Internal implementation applies default if no deadline set:
+  hookCtx := ctx
+  if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+      var cancel context.CancelFunc
+      hookCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+      defer cancel()
+  }
 
   select {
   case result := <-resultCh:
       return result.output, result.err
-  case <-ctx.Done():
-      return nil, fmt.Errorf("hook execution timeout")
+  case <-hookCtx.Done():
+      return nil, fmt.Errorf("hook execution timeout: %w", hookCtx.Err())
   }
   ```
 
@@ -130,12 +156,25 @@ func BlockBashPatternHook(patterns []string) HookCallback {
 
 **4. Hook Panic Recovery**
 - **Problem:** User callback panics
+- **Recovery Behavior:**
+  - Panic is caught via defer/recover in execution goroutine
+  - Converted to a structured error returned to CLI
+  - Stack trace is logged for debugging (if logger available)
+  - Hook is marked as failed, but execution continues for other hooks
 - **Mitigation:** Recover in execution goroutine, convert to error
 - **Implementation:**
   ```go
   defer func() {
       if r := recover(); r != nil {
-          resultCh <- hookResult{err: fmt.Errorf("hook panicked: %v", r)}
+          // Log stack trace for debugging
+          stack := debug.Stack()
+          if logger != nil {
+              logger.Error("hook panicked", "panic", r, "stack", string(stack))
+          }
+          // Return structured error to caller
+          resultCh <- hookResult{
+              err: fmt.Errorf("hook panicked: %v (see logs for stack trace)", r),
+          }
       }
   }()
   ```
@@ -314,12 +353,18 @@ func (p *ProtocolHandler) handleInboundRequest(req *ControlRequest) (*ControlRes
 
 ### Hook-Specific Output Format
 
-Based on the Python SDK implementation, hooks return structured output:
+Based on the Python SDK implementation (claude-agent-sdk-python/src/claude_agent_sdk/types.py:118),
+hooks return structured output matching the HookJSONOutput contract:
 
 ```go
-type HookOutput struct {
-    Decision           *string        `json:"decision,omitempty"`           // "block", "allow"
-    SystemMessage      *string        `json:"systemMessage,omitempty"`      // Message to show user
+// HookJSONOutput aligns with Python SDK contract:
+// class HookJSONOutput(TypedDict):
+//     decision: NotRequired[Literal["block"]]
+//     systemMessage: NotRequired[str]
+//     hookSpecificOutput: NotRequired[Any]
+type HookJSONOutput struct {
+    Decision           *string        `json:"decision,omitempty"`           // "block" to prevent action
+    SystemMessage      *string        `json:"systemMessage,omitempty"`      // Transcript message (not shown to Claude)
     HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitempty"` // Hook-specific data
 }
 
@@ -332,14 +377,84 @@ type HookOutput struct {
     }
 }
 
-// Example PostToolUse hook output (modifying result):
+// Example PostToolUse hook output (adding context):
 {
     "hookSpecificOutput": {
-        "hookEventName":  "PostToolUse",
-        "modifiedResult": "...",
+        "hookEventName":      "PostToolUse",
+        "additionalContext":  "Tool execution completed successfully",
+    }
+}
+
+// Example UserPromptSubmit hook output (adding custom instructions):
+{
+    "hookSpecificOutput": {
+        "hookEventName":      "UserPromptSubmit",
+        "additionalContext":  "My favorite color is hot pink",
     }
 }
 ```
+
+### Hook Timeout and Streaming Cancellation Interaction
+
+**Context Cancellation Hierarchy:**
+1. **Stream Cancellation**: User cancels the Query/stream → top-level context cancelled
+2. **Hook Timeout**: Individual hook exceeds timeout → hook context cancelled
+3. **Propagation**: Stream cancellation always propagates to active hooks
+
+**Behavior Matrix:**
+
+| Scenario | Hook Timeout | Stream Cancelled | Result |
+|----------|--------------|------------------|--------|
+| Hook completes normally | No | No | Hook output returned to CLI |
+| Hook exceeds timeout | Yes | No | Hook fails with timeout error, CLI receives error |
+| Stream cancelled during hook | No | Yes | Hook context cancelled immediately, cleanup runs |
+| Both timeout and cancel | Yes | Yes | Whichever fires first (usually cancellation) |
+
+**Implementation Notes:**
+```go
+// Hook execution respects both timeouts and cancellation
+func (s *Service) ExecuteCallback(
+    ctx context.Context,  // Inherits stream cancellation
+    callbackID string,
+    input map[string]any,
+    toolUseID *string,
+    hookCtx HookContext,
+) (map[string]any, error) {
+    // Apply hook-specific timeout (default 30s) if no deadline set
+    hookCtx := ctx
+    if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+        var cancel context.CancelFunc
+        hookCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+        defer cancel()
+    }
+
+    // Execute hook in goroutine
+    resultCh := make(chan hookResult, 1)
+    go func() {
+        defer func() {
+            if r := recover(); r != nil {
+                resultCh <- hookResult{err: fmt.Errorf("hook panicked: %v", r)}
+            }
+        }()
+        output, err := callback(input, toolUseID, hookCtx)
+        resultCh <- hookResult{output: output, err: err}
+    }()
+
+    // Wait for completion, timeout, or stream cancellation
+    select {
+    case result := <-resultCh:
+        return result.output, result.err
+    case <-hookCtx.Done():
+        // Could be timeout or parent cancellation
+        return nil, fmt.Errorf("hook execution cancelled: %w", hookCtx.Err())
+    }
+}
+```
+
+**User-Facing Behavior:**
+- When a stream is cancelled (e.g., via `AbortController` in JS, context cancellation in Go), any in-flight hooks are immediately cancelled
+- Hook callbacks should check `ctx.Done()` if performing long operations
+- Timeout errors are distinguishable from cancellation errors via `errors.Is(err, context.DeadlineExceeded)` vs `errors.Is(err, context.Canceled)`
 
 ---
 

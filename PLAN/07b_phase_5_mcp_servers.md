@@ -12,6 +12,31 @@ To support in-process user-defined tools, the SDK provides a public API that wra
 - ✅ Direct access to application state
 - ✅ Type-safe tool definitions using Go generics
 
+### ⚠️ Current Implementation Limitation
+
+**IMPORTANT:** The current implementation uses **manual JSON-RPC method routing** because the Go MCP SDK does NOT provide in-memory transport abstractions.
+
+**What this means:**
+- The adapter manually inspects the `method` field of incoming JSON-RPC messages
+- Routes to appropriate handler based on method name (initialize, tools/list, tools/call)
+- Manually constructs JSON-RPC responses from handler results
+- **NO automatic channel-based transport like the aspirational design**
+
+**Why this approach:**
+- The Go MCP SDK (like Python MCP SDK) lacks the Transport abstraction that TypeScript has
+- TypeScript: `server.connect(transport)` allows pluggable custom transports
+- Go/Python: Servers expect actual I/O streams, not abstract transports
+- This forces manual routing similar to Python SDK (see `query.py:326-440`)
+
+**Future migration path:**
+When the Go MCP SDK adds Transport support (similar to TypeScript), we can:
+1. Replace manual routing with `server.Connect(customTransport)`
+2. Use channel-based in-memory transport for cleaner architecture
+3. Eliminate switch statements and type assertions
+4. Reduce adapter code significantly (~50% reduction)
+
+**This is a pragmatic interim solution following the proven Python SDK approach** until the Go MCP ecosystem matures.
+
 ### SDK MCP Server Integration Flow
 
 ```
@@ -38,10 +63,10 @@ To support in-process user-defined tools, the SDK provides a public API that wra
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ 3. SDK extracts and initializes SDK servers on Connect()            │
-│    - Creates in-memory transport pair for each server               │
-│    - Connects server to its transport                               │
-│    - Wraps in SDKServerAdapter                                      │
+│    - Wraps server in SDKServerAdapter                               │
 │    - Registers in internal server map                               │
+│    - Server instance stored for manual routing                      │
+│    ⚠️  NO automatic transport abstraction yet                       │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -67,10 +92,11 @@ To support in-process user-defined tools, the SDK provides a public API that wra
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│ 6. SDKServerAdapter processes message                               │
-│    - Writes JSON-RPC to in-memory transport                         │
-│    - User's mcp.Server handles via request handlers                 │
-│    - Reads JSON-RPC response from transport                         │
+│ 6. SDKServerAdapter processes message (MANUAL ROUTING)              │
+│    - Inspects JSON-RPC method field (initialize, tools/list, etc.)  │
+│    - Manually routes to appropriate server.request_handlers entry   │
+│    - Constructs JSON-RPC response from handler result               │
+│    ⚠️  No in-memory transport abstraction in current MCP SDKs       │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -212,18 +238,26 @@ Claude CLI ←→ MCP Client Adapter ←→ Subprocess/HTTP ←→ External Serv
 
 **SDK MCP Servers (in-process):**
 ```
-Claude CLI ←→ Control Protocol ←→ SDK Server Adapter ←→ In-Memory Transport ←→ User's mcp.Server
+Claude CLI ←→ Control Protocol ←→ SDK Server Adapter ←→ Manual Router ←→ User's mcp.Server
 ```
 
 **Key components:**
 - User creates `*mcp.Server` using `NewMCPServer()` and `AddTool()`
 - User registers server via `options.SDKServerConfig` with server instance
 - SDK extracts SDK servers during initialization
-- SDK creates in-memory transport pair for each server using `mcp.NewInMemoryTransports()`
-- SDK connects user's server to its transport
 - SDK wraps in `SDKServerAdapter` implementing `ports.MCPSDKServer`
 - Control protocol routes `mcp_message` requests to appropriate adapter
-- Adapter sends/receives JSON-RPC via in-memory transport
+- **Adapter manually inspects JSON-RPC method and routes to handler** (no transport abstraction)
+
+**⚠️ IMPORTANT - Current Limitation:**
+The MCP Go SDK does NOT currently provide in-memory transport abstractions for custom routing. Unlike the TypeScript MCP SDK which supports `server.connect(transport)` with pluggable transports, the Go SDK (like Python) requires **manual method routing**.
+
+This implementation follows the **same pattern as the Python SDK** (see `claude-agent-sdk-python/src/claude_agent_sdk/_internal/query.py:326-440`) where we:
+1. Extract the JSON-RPC `method` field from incoming messages
+2. Manually dispatch to the appropriate `server.request_handlers` entry
+3. Convert handler results back to JSON-RPC responses
+
+When the Go MCP SDK adds proper Transport abstractions, this can be refactored to use channel-based in-memory transports similar to TypeScript's approach.
 
 **Note:** The `options.SDKServerConfig` type (defined in Phase 1) contains BOTH configuration AND the server instance. Unlike external server configs which only have connection params, SDK configs include the actual `*mcp.Server` instance to enable in-process communication.
 
@@ -233,27 +267,25 @@ Claude CLI ←→ Control Protocol ←→ SDK Server Adapter ←→ In-Memory Tr
 
 ### adapters/mcp/sdk_server.go
 
-This adapter wraps a user's `*mcp.Server` instance to integrate with the control protocol:
+This adapter wraps a user's `*mcp.Server` instance to integrate with the control protocol using **manual JSON-RPC method routing** (same approach as Python SDK):
 
 ```go
 package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/conneroisu/claude/pkg/claude/ports"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 
 // SDKServerAdapter wraps a user's *mcp.Server to expose it via control protocol
+// This uses MANUAL routing because the Go MCP SDK lacks Transport abstraction
 type SDKServerAdapter struct {
-	name            string
-	server          *mcpsdk.Server
-	clientTransport *InMemoryClientTransport
-	serverTransport *InMemoryServerTransport
-	session         *mcpsdk.ServerSession
+	name   string
+	server *mcpsdk.Server
 }
 
 // Verify interface compliance
@@ -261,27 +293,22 @@ var _ ports.MCPServer = (*SDKServerAdapter)(nil)
 
 // NewSDKServerAdapter creates an adapter for a user's SDK server
 func NewSDKServerAdapter(name string, server *mcpsdk.Server) (*SDKServerAdapter, error) {
-	// Create in-memory transport pair
-	clientTransport, serverTransport := newInMemoryTransportPair()
+	if server == nil {
+		return nil, fmt.Errorf("server cannot be nil")
+	}
 
 	adapter := &SDKServerAdapter{
-		name:            name,
-		server:          server,
-		clientTransport: clientTransport,
-		serverTransport: serverTransport,
+		name:   name,
+		server: server,
 	}
 
 	return adapter, nil
 }
 
-// Connect initializes the server connection
+// Connect initializes the server (no-op for SDK servers - already initialized)
 func (a *SDKServerAdapter) Connect(ctx context.Context) error {
-	// Connect user's server to its transport
-	session, err := a.server.Connect(ctx, a.serverTransport, nil)
-	if err != nil {
-		return fmt.Errorf("failed to connect SDK server %q: %w", a.name, err)
-	}
-	a.session = session
+	// SDK servers are initialized by the user before registration
+	// No connection needed - we route directly to request handlers
 	return nil
 }
 
@@ -290,137 +317,191 @@ func (a *SDKServerAdapter) Name() string {
 	return a.name
 }
 
-// HandleMessage routes a JSON-RPC message to the SDK server via in-memory transport
+// HandleMessage routes a JSON-RPC message to the SDK server via manual method dispatch
+// This follows the same pattern as Python SDK (query.py:326-440)
 func (a *SDKServerAdapter) HandleMessage(ctx context.Context, messageBytes []byte) ([]byte, error) {
-	// Decode JSON-RPC message
-	msg, err := jsonrpc.DecodeMessage(messageBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode message: %w", err)
+	// Parse JSON-RPC message
+	var msg struct {
+		JSONRPC string                 `json:"jsonrpc"`
+		ID      any                    `json:"id"`
+		Method  string                 `json:"method"`
+		Params  map[string]any         `json:"params,omitempty"`
 	}
 
-	// Write to client side of in-memory transport
-	if err := a.clientTransport.Write(ctx, msg); err != nil {
-		return nil, fmt.Errorf("failed to write to transport: %w", err)
+	if err := json.Unmarshal(messageBytes, &msg); err != nil {
+		return a.errorResponse(nil, -32700, "Parse error", err)
 	}
 
-	// Read response from transport
-	resp, err := a.clientTransport.Read(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
+	// Manual method routing (same as Python SDK)
+	switch msg.Method {
+	case "initialize":
+		return a.handleInitialize(ctx, msg.ID)
 
-	// Encode response back to JSON-RPC
-	return jsonrpc.EncodeMessage(resp)
+	case "tools/list":
+		return a.handleToolsList(ctx, msg.ID)
+
+	case "tools/call":
+		return a.handleToolsCall(ctx, msg.ID, msg.Params)
+
+	case "notifications/initialized":
+		// No-op notification
+		return nil, nil
+
+	default:
+		return a.errorResponse(msg.ID, -32601, "Method not found", nil)
+	}
 }
 
-// Close releases resources
+// handleInitialize returns server capabilities (hardcoded like Python SDK)
+func (a *SDKServerAdapter) handleInitialize(ctx context.Context, id any) ([]byte, error) {
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result": map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities": map[string]any{
+				"tools": map[string]any{}, // Tools capability without listChanged
+			},
+			"serverInfo": map[string]any{
+				"name":    a.server.Name,
+				"version": a.server.Version,
+			},
+		},
+	}
+	return json.Marshal(response)
+}
+
+// handleToolsList calls the server's ListTools handler
+func (a *SDKServerAdapter) handleToolsList(ctx context.Context, id any) ([]byte, error) {
+	// Get handler from server's request_handlers map
+	handler := a.server.RequestHandlers[mcpsdk.ListToolsRequest]
+	if handler == nil {
+		return a.errorResponse(id, -32601, "tools/list handler not registered", nil)
+	}
+
+	// Create request and invoke handler
+	req := &mcpsdk.ListToolsRequest{Method: "tools/list"}
+	result, err := handler(ctx, req)
+	if err != nil {
+		return a.errorResponse(id, -32603, "Handler error", err)
+	}
+
+	// Convert MCP result to JSON-RPC response
+	listResult, ok := result.(*mcpsdk.ListToolsResult)
+	if !ok {
+		return a.errorResponse(id, -32603, "Invalid handler result type", nil)
+	}
+
+	toolsData := make([]map[string]any, len(listResult.Tools))
+	for i, tool := range listResult.Tools {
+		toolsData[i] = map[string]any{
+			"name":        tool.Name,
+			"description": tool.Description,
+			"inputSchema": tool.InputSchema,
+		}
+	}
+
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result": map[string]any{
+			"tools": toolsData,
+		},
+	}
+	return json.Marshal(response)
+}
+
+// handleToolsCall calls the server's CallTool handler
+func (a *SDKServerAdapter) handleToolsCall(ctx context.Context, id any, params map[string]any) ([]byte, error) {
+	// Extract call parameters
+	name, _ := params["name"].(string)
+	arguments, _ := params["arguments"].(map[string]any)
+
+	if name == "" {
+		return a.errorResponse(id, -32602, "Missing tool name", nil)
+	}
+
+	// Get handler from server's request_handlers map
+	handler := a.server.RequestHandlers[mcpsdk.CallToolRequest]
+	if handler == nil {
+		return a.errorResponse(id, -32601, "tools/call handler not registered", nil)
+	}
+
+	// Create request and invoke handler
+	req := &mcpsdk.CallToolRequest{
+		Method: "tools/call",
+		Params: mcpsdk.CallToolParams{
+			Name:      name,
+			Arguments: arguments,
+		},
+	}
+
+	result, err := handler(ctx, req)
+	if err != nil {
+		return a.errorResponse(id, -32603, "Handler error", err)
+	}
+
+	// Convert MCP result to JSON-RPC response
+	callResult, ok := result.(*mcpsdk.CallToolResult)
+	if !ok {
+		return a.errorResponse(id, -32603, "Invalid handler result type", nil)
+	}
+
+	// Convert content blocks to JSON
+	content := make([]map[string]any, len(callResult.Content))
+	for i, block := range callResult.Content {
+		switch b := block.(type) {
+		case *mcpsdk.TextContent:
+			content[i] = map[string]any{
+				"type": "text",
+				"text": b.Text,
+			}
+		case *mcpsdk.ImageContent:
+			content[i] = map[string]any{
+				"type":     "image",
+				"data":     b.Data,
+				"mimeType": b.MimeType,
+			}
+		}
+	}
+
+	responseData := map[string]any{
+		"content": content,
+	}
+	if callResult.IsError {
+		responseData["is_error"] = true
+	}
+
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  responseData,
+	}
+	return json.Marshal(response)
+}
+
+// errorResponse constructs a JSON-RPC error response
+func (a *SDKServerAdapter) errorResponse(id any, code int, message string, err error) ([]byte, error) {
+	errData := map[string]any{
+		"code":    code,
+		"message": message,
+	}
+	if err != nil {
+		errData["data"] = err.Error()
+	}
+
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   errData,
+	}
+	return json.Marshal(response)
+}
+
+// Close releases resources (no-op for SDK servers)
 func (a *SDKServerAdapter) Close() error {
-	// Close both sides of in-memory transport
-	// Note: User's server instance is NOT closed here - it's user-managed
-	var errs []error
-
-	if a.clientTransport != nil {
-		if err := a.clientTransport.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if a.serverTransport != nil {
-		if err := a.serverTransport.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors closing SDK server adapter: %v", errs)
-	}
+	// User's server instance is user-managed - we don't close it
 	return nil
-}
-
-// InMemoryTransport implementation - simplified for in-process communication
-// Uses channels to route messages between client and server sides
-
-type InMemoryClientTransport struct {
-	sendCh chan jsonrpc.Message
-	recvCh chan jsonrpc.Message
-}
-
-type InMemoryServerTransport struct {
-	sendCh chan jsonrpc.Message
-	recvCh chan jsonrpc.Message
-}
-
-func newInMemoryTransportPair() (*InMemoryClientTransport, *InMemoryServerTransport) {
-	clientToServer := make(chan jsonrpc.Message, 10)
-	serverToClient := make(chan jsonrpc.Message, 10)
-
-	client := &InMemoryClientTransport{
-		sendCh: clientToServer,
-		recvCh: serverToClient,
-	}
-
-	server := &InMemoryServerTransport{
-		sendCh: serverToClient,
-		recvCh: clientToServer,
-	}
-
-	return client, server
-}
-
-func (t *InMemoryClientTransport) Write(ctx context.Context, msg jsonrpc.Message) error {
-	select {
-	case t.sendCh <- msg:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (t *InMemoryClientTransport) Read(ctx context.Context) (jsonrpc.Message, error) {
-	select {
-	case msg := <-t.recvCh:
-		return msg, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func (t *InMemoryClientTransport) Close() error {
-	close(t.sendCh)
-	return nil
-}
-
-// Server side implements mcp.Connection interface
-func (t *InMemoryServerTransport) Read(ctx context.Context) (jsonrpc.Message, error) {
-	select {
-	case msg := <-t.recvCh:
-		return msg, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func (t *InMemoryServerTransport) Write(ctx context.Context, msg jsonrpc.Message) error {
-	select {
-	case t.sendCh <- msg:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (t *InMemoryServerTransport) Close() error {
-	close(t.sendCh)
-	return nil
-}
-
-func (t *InMemoryServerTransport) SessionID() string {
-	return "sdk-server-session"
-}
-
-// Implement mcp.Transport interface
-func (t *InMemoryServerTransport) Connect(ctx context.Context) (mcpsdk.Connection, error) {
-	return t, nil
 }
 ```
 
@@ -650,46 +731,230 @@ case "mcp_message":
 
 ---
 
+## Error Handling for Misconfigured Servers
+
+### Common Error Scenarios
+
+1. **Server Not Found**
+   - User references a server name that wasn't registered
+   - Return JSON-RPC error -32601 "Server not found"
+   - Control protocol response includes error details
+
+2. **Missing Handler Registration**
+   - User's server doesn't register required handlers (tools/list, tools/call)
+   - Return JSON-RPC error -32601 "Handler not registered"
+   - Provide clear error message indicating which handler is missing
+
+3. **Invalid Handler Results**
+   - Handler returns wrong result type
+   - Return JSON-RPC error -32603 "Invalid handler result type"
+   - Include type information in error data
+
+4. **Malformed JSON-RPC Messages**
+   - CLI sends invalid JSON or missing required fields
+   - Return JSON-RPC error -32700 "Parse error"
+   - Include parsing error details
+
+5. **Tool Execution Errors**
+   - User's tool handler returns an error
+   - Propagate error through JSON-RPC error response
+   - Include error message and stack trace in error data
+
+### Error Response Format
+
+All errors follow JSON-RPC 2.0 error specification:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 123,
+  "error": {
+    "code": -32601,
+    "message": "tools/list handler not registered",
+    "data": "server 'calculator' did not register a ListToolsRequest handler"
+  }
+}
+```
+
+### Validation Checks
+
+The adapter performs these validation checks before routing:
+
+```go
+// In NewSDKServerAdapter
+if server == nil {
+    return nil, fmt.Errorf("server cannot be nil")
+}
+
+// In HandleMessage
+if msg.Method == "" {
+    return a.errorResponse(msg.ID, -32600, "Invalid Request",
+        fmt.Errorf("missing method field"))
+}
+
+// In handleToolsCall
+if name == "" {
+    return a.errorResponse(id, -32602, "Missing tool name", nil)
+}
+```
+
+---
+
+## Testing Requirements
+
+### Test Coverage for Malformed MCP Responses
+
+The adapter MUST have tests covering these scenarios:
+
+1. **Invalid JSON-RPC Message**
+   ```go
+   func TestSDKServerAdapter_InvalidJSON(t *testing.T) {
+       adapter, _ := NewSDKServerAdapter("test", server)
+       _, err := adapter.HandleMessage(ctx, []byte("{invalid json"))
+       require.Error(t, err)
+       // Verify error response contains parse error
+   }
+   ```
+
+2. **Unknown Method**
+   ```go
+   func TestSDKServerAdapter_UnknownMethod(t *testing.T) {
+       msg := `{"jsonrpc":"2.0","id":1,"method":"unknown/method"}`
+       resp, err := adapter.HandleMessage(ctx, []byte(msg))
+       require.NoError(t, err)
+       // Verify response contains method not found error
+   }
+   ```
+
+3. **Missing Required Parameters**
+   ```go
+   func TestSDKServerAdapter_MissingToolName(t *testing.T) {
+       msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}`
+       resp, err := adapter.HandleMessage(ctx, []byte(msg))
+       // Verify error response for missing tool name
+   }
+   ```
+
+4. **Handler Not Registered**
+   ```go
+   func TestSDKServerAdapter_HandlerNotRegistered(t *testing.T) {
+       emptyServer := mcpsdk.NewServer("test", "1.0")
+       adapter, _ := NewSDKServerAdapter("test", emptyServer)
+       msg := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+       resp, err := adapter.HandleMessage(ctx, []byte(msg))
+       // Verify handler not found error
+   }
+   ```
+
+5. **Server Returns Error**
+   ```go
+   func TestSDKServerAdapter_HandlerReturnsError(t *testing.T) {
+       // Register handler that returns error
+       server.RequestHandlers[CallToolRequest] = func(ctx, req) (any, error) {
+           return nil, errors.New("tool execution failed")
+       }
+       msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test"}}`
+       resp, err := adapter.HandleMessage(ctx, []byte(msg))
+       // Verify error propagated to JSON-RPC response
+   }
+   ```
+
+6. **Malformed Response from Handler**
+   ```go
+   func TestSDKServerAdapter_InvalidHandlerResultType(t *testing.T) {
+       // Register handler that returns wrong type
+       server.RequestHandlers[ListToolsRequest] = func(ctx, req) (any, error) {
+           return "wrong type", nil
+       }
+       msg := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+       resp, err := adapter.HandleMessage(ctx, []byte(msg))
+       // Verify invalid result type error
+   }
+   ```
+
+### Integration Tests
+
+Test complete flow including control protocol:
+
+```go
+func TestSDKServer_EndToEnd(t *testing.T) {
+    // 1. Create SDK server with tool
+    server := claude.NewMCPServer("test", "1.0")
+    claude.AddTool(server, &mcp.Tool{Name: "echo"}, echoHandler)
+
+    // 2. Register server in options
+    opts := &options.AgentOptions{
+        MCPServers: map[string]options.MCPServerConfig{
+            "test": options.SDKServerConfig{
+                Type: "sdk",
+                Name: "test",
+                Instance: server,
+            },
+        },
+    }
+
+    // 3. Execute query that uses the tool
+    msgCh, errCh := claude.Query(ctx, "Use the echo tool", opts, nil)
+
+    // 4. Verify tool was called and returned correct result
+    // ...
+}
+```
+
+---
+
 ## Implementation Notes
 
 ### File Size Requirements
 
 **MCP integration in adapters/mcp/:**
-- ✅ `sdk_server.go` - 175 lines (adapter + in-memory transport)
+- ✅ `sdk_server.go` - ~175 lines (manual routing adapter)
 - ✅ `client.go` - 125 lines (external MCP client adapter)
 
 Both files are under the 175-line limit.
 
 ### Complexity Hotspots
 
-**In-memory transport:**
-- Uses Go channels for message passing
-- No serialization overhead
-- Context-aware with proper cancellation
-- Buffered channels prevent blocking
+**Manual method routing:**
+- No automatic transport abstraction available
+- Must inspect JSON-RPC `method` field and dispatch manually
+- Similar to Python SDK implementation at query.py:326-440
+- Type assertions required for handler results
 
 **Message routing:**
-- JSON-RPC encoding/decoding handled by go-sdk
+- JSON-RPC parsing/encoding handled manually with encoding/json
 - Control protocol wraps messages in `mcp_response` field
 - Error handling propagates from user's tool handlers
+- All JSON-RPC error codes follow RFC specification
+
+**Future improvements when Go MCP SDK adds Transport support:**
+- Replace manual routing with channel-based in-memory transport
+- Use `server.Connect(transport)` pattern similar to TypeScript
+- Eliminate switch statement and type assertions
+- Reduce adapter code by ~50%
 
 **Recommended patterns:**
-- Use `mcp.NewInMemoryTransports()` pattern from go-sdk examples
-- Leverage existing control protocol infrastructure
-- Keep adapter focused on message proxying only
+- Follow Python SDK's manual routing approach (proven in production)
+- Comprehensive error handling for all edge cases
+- Extensive test coverage for malformed messages
+- Document limitation clearly for users
 
 ### Checklist
 
 - [ ] SDK server adapter implements `ports.MCPServer`
-- [ ] In-memory transport pair created with channels
-- [ ] Server connected to transport on initialization
-- [ ] JSON-RPC messages routed correctly
+- [ ] Manual method routing implemented (initialize, tools/list, tools/call)
+- [ ] JSON-RPC messages parsed and routed correctly
 - [ ] Control protocol handles `mcp_message` requests
-- [ ] Error responses properly formatted
+- [ ] Error responses follow JSON-RPC 2.0 specification
+- [ ] All error scenarios tested (server not found, handler missing, malformed JSON)
+- [ ] Test coverage for malformed MCP responses (>90%)
+- [ ] Integration tests verify end-to-end flow
 - [ ] Resources cleaned up in Close()
 - [ ] User's server instance NOT closed by adapter
 - [ ] Adapter file under 175 lines
 - [ ] Complete example in cmd/examples/mcp/
+- [ ] Documentation clearly states manual routing limitation
+- [ ] Migration path documented for when Transport abstraction arrives
 
 ---
 

@@ -1,58 +1,35 @@
 ## Phase 2: Domain Services
 
-### Control Protocol Architecture
+### Overview
 
-Before implementing domain services, it's critical to understand how bidirectional communication works between the SDK and Claude CLI. This understanding shapes how domain services are designed.
+Domain services implement the core business logic for query execution, streaming conversations, hook orchestration, and permission management. They focus exclusively on **WHAT** needs to happen, delegating **HOW** (timeouts, request IDs, protocol routing) to adapter implementations.
 
-#### Overview
+### Key Architectural Boundaries
 
-The SDK uses a JSON-RPC control protocol layered on top of the transport (stdin/stdout). There are **three types of messages**:
+**Domain Services Responsibilities:**
+- Orchestrate message flow and conversation lifecycle
+- Coordinate hook execution and permission checks
+- Parse and validate domain messages
+- Manage service state (connected/disconnected)
+
+**Adapter Responsibilities (NOT domain services):**
+- Generate request IDs and callback IDs
+- Track pending control protocol requests
+- Implement timeout mechanisms
+- Route messages by protocol type
+- Handle transport-level concerns
+
+**Critical Design Decision:** All control protocol mechanics (request ID generation, timeout handling, callback tracking) belong in the `jsonrpc` adapter. Domain services interact only through port interfaces.
+
+### Control Protocol Context
+
+The SDK uses a JSON-RPC control protocol with three message types:
 
 1. **SDK Messages** - Regular messages (user, assistant, system, result, stream_event)
 2. **Control Requests** - Bidirectional control messages (`type: "control_request"`)
 3. **Control Responses** - Responses to control requests (`type: "control_response"`)
 
-#### Message Flow Diagram
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ Domain Service Layer                                                  │
-│  - Querying/Streaming services focus on business logic               │
-│  - Delegate control protocol details to protocol adapter             │
-└──────────────────────────────────────────────────────────────────────┘
-                              │ ▲
-                              │ │
-                    SDK Messages + Control Requests/Responses
-                              │ │
-                              ▼ │
-┌──────────────────────────────────────────────────────────────────────┐
-│ Protocol Handler (jsonrpc adapter)                                   │
-│  - Routes messages by type                                           │
-│  - Manages pending requests (map[requestID]chan)                     │
-│  - Tracks callback IDs for hooks                                     │
-│  - Handles 60s timeouts on outbound requests                         │
-│  - Generates request IDs: req_{counter}_{randomHex(4)}               │
-└──────────────────────────────────────────────────────────────────────┘
-                              │ ▲
-                              │ │
-                       JSON lines over stdin/stdout
-                              │ │
-                              ▼ │
-┌──────────────────────────────────────────────────────────────────────┐
-│ Transport Adapter (CLI subprocess)                                    │
-│  - Manages subprocess and pipes                                       │
-│  - Buffers partial JSON until complete                               │
-│  - Handles process lifecycle                                         │
-└──────────────────────────────────────────────────────────────────────┘
-                              │ ▲
-                              │ │
-                              ▼ │
-                      ┌──────────────┐
-                      │  Claude CLI  │
-                      └──────────────┘
-```
-
-#### Control Request Types
+**Control Request Types:**
 
 **SDK → CLI (Outbound):**
 - `interrupt` - Stop current operation
@@ -65,871 +42,387 @@ The SDK uses a JSON-RPC control protocol layered on top of the transport (stdin/
 - `hook_callback` - Execute registered hook
 - `mcp_message` - Proxy message to/from MCP server
 
-#### Request ID Generation
+**Note:** Request ID generation (`req_{counter}_{randomHex}`), callback ID tracking (`hook_{index}`), and 60s timeout enforcement are **adapter concerns**, implemented in Phase 3.
 
-Every control request needs a unique ID for response routing:
+### Concurrency Policy
 
-```go
-// Pattern: req_{counter}_{randomHex}
-requestID := fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(4))
-a.requestCounter++
+**Goroutine Safety Rules:**
+- Domain services MAY launch goroutines for async operations
+- All goroutines MUST respect context cancellation via `select` statements
+- Shared state (maps, counters) belongs in adapters with proper synchronization
+- Domain services use immutable data and channel communication
 
-// Examples:
-// "req_1_a3f2"
-// "req_2_b8c4"
-// "req_3_d1e9"
+**Channel Ownership:**
+- Services that create channels OWN them and MUST close them
+- Receiver-only channels (`<-chan`) are consumed but not closed by domain services
+- Buffered channels MAY be used for error channels (buffer=1) to prevent goroutine leaks
+- Unbuffered channels provide natural backpressure for message flow
 
-func randomHex(n int) string {
-    b := make([]byte, n)
-    rand.Read(b)
-    return hex.EncodeToString(b)
-}
-```
+**Validation Strategy for `map[string]any` Inputs:**
+- Domain services receive `map[string]any` from adapters (preserves protocol flexibility)
+- Services MUST validate required fields before using data
+- Type assertions MUST check success before using values
+- Invalid data returns errors to caller; services do not panic
+- Hook inputs include `hook_event_name` field for type discrimination
 
-#### Hook Callback ID Registration
-
-During streaming initialization, hooks are registered with generated callback IDs:
-
-```go
-// Initialize request structure:
-{
-  "type": "control_request",
-  "request_id": "req_1_a3f2",
-  "request": {
-    "subtype": "initialize",
-    "hooks": {
-      "PreToolUse": [
-        {
-          "matcher": "Bash",
-          "hookCallbackIds": ["hook_0", "hook_1"]  // Generated IDs
-        }
-      ],
-      "PostToolUse": [
-        {
-          "matcher": "*",
-          "hookCallbackIds": ["hook_2"]
-        }
-      ]
-    }
-  }
-}
-```
-
-**Hook ID Generation Pattern:**
-
-```go
-// During initialization, generate IDs for all hook callbacks
-callbackID := fmt.Sprintf("hook_%d", nextCallbackID)
-nextCallbackID++
-hookCallbacksMap[callbackID] = userCallback
-
-// When CLI sends hook_callback request:
-// {
-//   "subtype": "hook_callback",
-//   "callback_id": "hook_0",  // <-- References our generated ID
-//   "input": {...},
-//   "tool_use_id": "toolu_xxx"
-// }
-//
-// SDK looks up hookCallbacksMap["hook_0"] and invokes it
-```
-
-#### Permission Flow with Suggestions
-
-When CLI requests permission, it includes suggestions for "always allow" workflows:
-
-```go
-// Inbound permission request from CLI:
-{
-  "subtype": "can_use_tool",
-  "tool_name": "Bash",
-  "input": {"command": "git status"},
-  "permission_suggestions": [
-    {
-      "type": "addRules",
-      "rules": [{"toolName": "Bash", "ruleContent": "git:*"}],
-      "behavior": "allow",
-      "destination": "userSettings"
-    }
-  ],
-  "blocked_path": "/home/user/project"
-}
-
-// SDK calls user's can_use_tool callback, passing suggestions
-permCtx := ToolPermissionContext{
-    Suggestions: request.PermissionSuggestions,
-}
-result, err := canUseTool(ctx, toolName, input, permCtx)
-
-// If user accepts with "always allow":
-return &PermissionResultAllow{
-    UpdatedPermissions: permCtx.Suggestions,  // Return CLI's suggestions
-}
-
-// SDK sends response:
-{
-  "allow": true,
-  "updated_permissions": [...]  // CLI's original suggestions
-}
-```
-
-#### Timeouts
-
-All outbound control requests have a **60-second timeout** to prevent deadlocks:
-
-```go
-timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-defer cancel()
-
-select {
-case <-timeoutCtx.Done():
-    return nil, fmt.Errorf("control request timeout: %s", subtype)
-case result := <-resultChan:
-    return result, nil
-}
-```
+**Adapter State vs Domain State:**
+- Request ID counters → Adapter state (protected by mutex)
+- Callback ID maps → Adapter state (protected by mutex)
+- Pending request channels → Adapter state (synchronized via map operations)
+- Service lifecycle (connected/closed) → Domain state (single-threaded or atomic)
 
 ---
 
 ### 2.1 Querying Service (querying/service.go)
 Priority: Critical
-The querying service encapsulates the domain logic for executing one-shot queries.
 
-**Python SDK Parity Check:**
-The Python SDK's `query()` function (`src/claude_agent/client.py`) follows this pattern:
-1. Initialize client session
-2. Send prompt
-3. Stream messages until result message received
-4. Close session automatically
+**Purpose:** Orchestrate one-shot query execution with automatic lifecycle management
 
-The Go implementation mirrors this with channels instead of async generators:
-1. Connect transport (equivalent to Python's session init)
-2. Write prompt to transport
-3. Stream messages via channels (equivalent to Python's `async for message in client`)
-4. Domain service handles cleanup (equivalent to Python's context manager)
+**Responsibilities:**
+1. Coordinate transport connection for query session
+2. Format and send user prompt message
+3. Stream parsed messages to caller via channels
+4. Delegate control protocol handling to protocol adapter
+5. Manage cleanup on completion or error
+
+**Python SDK Parity:**
+- Mirrors Python's `query()` function behavior
+- One-shot execution (connect → prompt → stream → auto-cleanup)
+- Uses channels instead of async generators
+- Equivalent lifecycle management
+
+**Dependencies (Ports Only):**
+- `ports.Transport` - Connection and message I/O
+- `ports.ProtocolHandler` - Control protocol routing
+- `ports.MessageParser` - Raw message parsing
+- `hooking.Service` - Hook orchestration (optional)
+- `permissions.Service` - Permission checks (optional)
+- `map[string]ports.MCPServer` - MCP server routing (optional)
 
 **Concurrency Model:**
-The querying service uses Go's native concurrency primitives:
-- **Goroutines:** Message routing runs in a background goroutine started by the protocol handler
-- **Channels:** `msgCh` and `errCh` provide async message delivery (unbuffered for backpressure)
-- **Context:** Enables cancellation propagation through the entire stack
-- **Select:** Used in the main loop to multiplex between message, error, and cancellation channels
+- Execute() launches background goroutine
+- Returns `(<-chan messages.Message, <-chan error)` immediately
+- Goroutine closes both channels on completion
+- Context cancellation stops execution
+- Protocol adapter manages its own routing goroutine
 
-**Channel Wiring Details:**
-```
-User calls Execute()
-    ↓
-  Launches goroutine
-    ↓
-  Protocol.StartMessageRouter(ctx, routerMsgCh, routerErrCh, ...)
-    ↓ (starts another goroutine)
-  Transport.ReadMessages(ctx) → (transportMsgCh, transportErrCh)
-    ↓ (message routing goroutine)
-  Route messages by type:
-    - control_response → pending request handlers
-    - control_request → inbound request handlers
-    - SDK messages → forward to routerMsgCh
-    ↓
-  Domain goroutine receives from routerMsgCh
-    ↓
-  Parser.Parse(rawMsg) → typed message
-    ↓
-  Send to user's msgCh
-```
+**Key Behaviors:**
+- NO explicit initialization message (differs from streaming)
+- Protocol adapter handles inbound control requests transparently
+- Parser converts `map[string]any` to typed `messages.Message`
+- Error channel buffered (size=1) to prevent goroutine leak on early return
 
-All goroutines respect context cancellation via `select` statements.
+**Implementation Guidance:**
 
-Key Design Decision: Control protocol state management (pending requests, callback IDs, request counters) is handled by the `jsonrpc` adapter, NOT by domain services. The domain only uses the port interface.
+**Package Structure:**
+- `querying/service.go` - Service struct and constructor
+- `querying/execute.go` - Execute implementation
+- `querying/types.go` - Domain types if needed
 
-```go
-package querying
+**Service Struct:**
+- Holds port dependencies (transport, protocol, parser)
+- Holds optional services (hooks, permissions)
+- Holds MCP server map for routing
+- NO stateful fields (counters, maps) - those belong in adapters
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
+**Execute() Flow:**
+1. Create message and error channels (error buffered, size=1)
+2. Launch goroutine with deferred channel closes
+3. Call `transport.Connect(ctx)`
+4. Start protocol router via `protocol.StartMessageRouter()` (pass hooks, permissions, MCP servers)
+5. Marshal and send user prompt message
+6. Loop: select on context, router messages, router errors
+7. Parse messages via `parser.Parse()` and forward to message channel
+8. Return channels immediately to caller
 
-	"github.com/conneroisu/claude/pkg/claude/hooking"
-	"github.com/conneroisu/claude/pkg/claude/messages"
-	"github.com/conneroisu/claude/pkg/claude/options"
-	"github.com/conneroisu/claude/pkg/claude/permissions"
-	"github.com/conneroisu/claude/pkg/claude/ports"
-)
-
-// Service handles query execution
-// This is a DOMAIN service - it contains only business logic,
-// no infrastructure concerns like protocol state management
-type Service struct {
-	transport   ports.Transport
-	protocol    ports.ProtocolHandler
-	parser      ports.MessageParser
-	hooks       *hooking.Service
-	permissions *permissions.Service
-	mcpServers  map[string]ports.MCPServer
-}
-
-func NewService(
-	transport ports.Transport,
-	protocol ports.ProtocolHandler,
-	parser ports.MessageParser,
-	hooks *hooking.Service,
-	perms *permissions.Service,
-	mcpServers map[string]ports.MCPServer,
-) *Service {
-	return &Service{
-		transport:   transport,
-		protocol:    protocol,
-		parser:      parser,
-		hooks:       hooks,
-		permissions: perms,
-		mcpServers:  mcpServers, // Both client and SDK MCP servers (already wrapped as adapters)
-	}
-}
-
-// Note: The mcpServers map contains ports.MCPServer implementations.
-// For SDK servers: These are ServerAdapter instances wrapping user's *mcp.Server
-// For client servers: These are ClientAdapter instances with active MCP client sessions
-// The protocol adapter uses this map to route control protocol mcp_message requests
-
-func (s *Service) Execute(ctx context.Context, prompt string, opts *options.AgentOptions) (<-chan messages.Message, <-chan error) {
-	msgCh := make(chan messages.Message)
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(msgCh)
-		defer close(errCh)
-		// 1. Connect transport
-		if err := s.transport.Connect(ctx); err != nil {
-			errCh <- fmt.Errorf("transport connect: %w", err)
-			return
-		}
-		// 2. Build hook callbacks map (if hooks exist)
-		var hookCallbacks map[string]hooking.HookCallback
-		if s.hooks != nil {
-			hookCallbacks = make(map[string]hooking.HookCallback)
-			hooks := s.hooks.GetHooks()
-			for event, matchers := range hooks {
-				for _, matcher := range matchers {
-					for i, callback := range matcher.Hooks {
-						// Generate callback ID
-						callbackID := fmt.Sprintf("hook_%s_%d", event, i)
-						hookCallbacks[callbackID] = callback
-					}
-				}
-			}
-		}
-		// 3. Start message router (protocol adapter handles control protocol)
-		// For one-shot queries, we don't need explicit initialization
-		// The protocol adapter will handle any necessary control messages
-		routerMsgCh := make(chan map[string]any)
-		routerErrCh := make(chan error, 1)
-		if err := s.protocol.StartMessageRouter(
-			ctx,
-			routerMsgCh,
-			routerErrCh,
-			s.permissions,
-			hookCallbacks,
-			s.mcpServers,
-		); err != nil {
-			errCh <- fmt.Errorf("start message router: %w", err)
-			return
-		}
-		// 4. Send prompt
-		promptMsg := map[string]any{
-			"type":   "user",
-			"prompt": prompt,
-		}
-		promptBytes, err := json.Marshal(promptMsg)
-		if err != nil {
-			errCh <- fmt.Errorf("marshal prompt: %w", err)
-			return
-		}
-		if err := s.transport.Write(ctx, string(promptBytes)+"\n"); err != nil {
-			errCh <- fmt.Errorf("write prompt: %w", err)
-			return
-		}
-		// 5. Stream messages
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-routerMsgCh:
-				if !ok {
-					return
-				}
-				// Parse message using parser port
-				parsedMsg, err := s.parser.Parse(msg)
-				if err != nil {
-					errCh <- fmt.Errorf("parse message: %w", err)
-					return
-				}
-				msgCh <- parsedMsg
-			case err := <-routerErrCh:
-				if err != nil {
-					errCh <- err
-					return
-				}
-			}
-		}
-	}()
-	return msgCh, errCh
-}
-```
+**Test Checkpoints:**
+- [ ] Transport connection failure propagates to error channel
+- [ ] Context cancellation stops goroutine without leak
+- [ ] Protocol router receives hook callbacks and permission service
+- [ ] Prompt message formatted correctly (`type: "user"`, `prompt: "..."`)
+- [ ] Parser errors propagate to error channel
+- [ ] Message channel receives parsed messages in order
+- [ ] Both channels closed on completion
+- [ ] Error channel non-blocking (buffered) when goroutine exits early
+- [ ] Mock transport failures trigger appropriate error handling
+- [ ] Mock parser failures trigger appropriate error handling
 ### 2.2 Streaming Service (streaming/service.go)
 Priority: Critical
-The streaming service handles bidirectional streaming conversations.
-Key Design Decision: Like the querying service, control protocol state management is delegated to the protocol adapter. The domain service focuses purely on conversation flow logic.
-```go
-package streaming
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
+**Purpose:** Manage persistent bidirectional streaming conversations
 
-	"github.com/conneroisu/claude/pkg/claude/hooking"
-	"github.com/conneroisu/claude/pkg/claude/messages"
-	"github.com/conneroisu/claude/pkg/claude/permissions"
-	"github.com/conneroisu/claude/pkg/claude/ports"
-)
+**Responsibilities:**
+1. Establish persistent connection for multi-turn conversation
+2. Send user messages on demand
+3. Stream incoming messages continuously
+4. Manage conversation lifecycle (connect/send/receive/close)
+5. Delegate control protocol handling to protocol adapter
 
-// Service handles streaming conversations
-// This is a DOMAIN service - pure business logic for managing conversations
-type Service struct {
-	transport   ports.Transport
-	protocol    ports.ProtocolHandler
-	parser      ports.MessageParser
-	hooks       *hooking.Service
-	permissions *permissions.Service
-	mcpServers  map[string]ports.MCPServer
-	// Message routing channels (internal to service)
-	msgCh chan map[string]any
-	errCh chan error
-}
+**Python SDK Parity:**
+- Mirrors Python's streaming session behavior
+- Persistent connection (connect → send/receive loop → explicit close)
+- Uses channels for async message delivery
+- Initialization message sent for hook registration (if hooks present)
 
-func NewService(
-	transport ports.Transport,
-	protocol ports.ProtocolHandler,
-	parser ports.MessageParser,
-	hooks *hooking.Service,
-	perms *permissions.Service,
-	mcpServers map[string]ports.MCPServer,
-) *Service {
-	return &Service{
-		transport:   transport,
-		protocol:    protocol,
-		parser:      parser,
-		hooks:       hooks,
-		permissions: perms,
-		mcpServers:  mcpServers, // MCP servers passed to protocol for control request handling
-		msgCh:       make(chan map[string]any),
-		errCh:       make(chan error, 1),
-	}
-}
+**Dependencies (Ports Only):**
+- `ports.Transport` - Connection and message I/O
+- `ports.ProtocolHandler` - Control protocol routing
+- `ports.MessageParser` - Raw message parsing
+- `hooking.Service` - Hook orchestration (optional)
+- `permissions.Service` - Permission checks (optional)
+- `map[string]ports.MCPServer` - MCP server routing (optional)
 
-// Note: MCP servers are initialized by the public API layer before creating this service.
-// The service receives already-connected adapters (both client and SDK types).
-// When control protocol receives mcp_message requests, it uses this map for routing.
+**Concurrency Model:**
+- Connect() establishes session synchronously
+- ReceiveMessages() launches background goroutine for streaming
+- SendMessage() writes synchronously (transport handles concurrency)
+- Close() synchronously closes transport
+- Internal channels owned by service (created in constructor or Connect)
 
-func (s *Service) Connect(ctx context.Context, prompt *string) error {
-	// 1. Connect transport
-	if err := s.transport.Connect(ctx); err != nil {
-		return fmt.Errorf("transport connect: %w", err)
-	}
-	// 2. Build hook callbacks map
-	var hookCallbacks map[string]hooking.HookCallback
-	if s.hooks != nil {
-		hookCallbacks = make(map[string]hooking.HookCallback)
-		hooks := s.hooks.GetHooks()
-		for event, matchers := range hooks {
-			for _, matcher := range matchers {
-				for i, callback := range matcher.Hooks {
-					callbackID := fmt.Sprintf("hook_%s_%d", event, i)
-					hookCallbacks[callbackID] = callback
-				}
-			}
-		}
-	}
-	// 3. Start message router
-	// Protocol adapter handles all control protocol concerns
-	if err := s.protocol.StartMessageRouter(
-		ctx,
-		s.msgCh,
-		s.errCh,
-		s.permissions,
-		hookCallbacks,
-		s.mcpServers,
-	); err != nil {
-		return fmt.Errorf("start message router: %w", err)
-	}
-	// 4. Send initial prompt if provided
-	if prompt != nil {
-		promptMsg := map[string]any{
-			"type":   "user",
-			"prompt": prompt,
-		}
-		promptBytes, err := json.Marshal(promptMsg)
-		if err != nil {
-			return fmt.Errorf("marshal prompt: %w", err)
-		}
-		if err := s.transport.Write(ctx, string(promptBytes)+"\n"); err != nil {
-			return fmt.Errorf("write prompt: %w", err)
-		}
-	}
-	return nil
-}
+**Key Behaviors:**
+- MUST send initialization control request if hooks present (streaming only)
+- Connect() may optionally send initial prompt
+- SendMessage() can be called multiple times
+- ReceiveMessages() returns new channels each call (or cached singleton?)
+- Close() terminates transport and stops message flow
 
-func (s *Service) SendMessage(ctx context.Context, msg string) error {
-	// Format message
-	userMsg := map[string]any{
-		"type":   "user",
-		"prompt": msg,
-	}
-	// Send via transport
-	msgBytes, err := json.Marshal(userMsg)
-	if err != nil {
-		return fmt.Errorf("marshal message: %w", err)
-	}
-	if err := s.transport.Write(ctx, string(msgBytes)+"\n"); err != nil {
-		return fmt.Errorf("write message: %w", err)
-	}
-	return nil
-}
+**Implementation Guidance:**
 
-func (s *Service) ReceiveMessages(ctx context.Context) (<-chan messages.Message, <-chan error) {
-	msgOutCh := make(chan messages.Message)
-	errOutCh := make(chan error, 1)
-	go func() {
-		defer close(msgOutCh)
-		defer close(errOutCh)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-s.msgCh:
-				if !ok {
-					return
-				}
-				// Parse message using parser port
-				parsedMsg, err := s.parser.Parse(msg)
-				if err != nil {
-					errOutCh <- fmt.Errorf("parse message: %w", err)
-					return
-				}
-				msgOutCh <- parsedMsg
-			case err := <-s.errCh:
-				if err != nil {
-					errOutCh <- err
-					return
-				}
-			}
-		}
-	}()
-	return msgOutCh, errOutCh
-}
+**Package Structure:**
+- `streaming/service.go` - Service struct and constructor
+- `streaming/connect.go` - Connect implementation
+- `streaming/send.go` - SendMessage implementation
+- `streaming/receive.go` - ReceiveMessages implementation
+- `streaming/lifecycle.go` - Close and cleanup
 
-func (s *Service) Close() error {
-	// Close transport
-	if s.transport != nil {
-		return s.transport.Close()
-	}
-	return nil
-}
-```
+**Service Struct:**
+- Port dependencies (transport, protocol, parser)
+- Optional services (hooks, permissions)
+- MCP server map
+- Internal routing channels (created in Connect)
+- Connection state (connected bool or atomic)
+
+**Connect() Flow:**
+1. Call `transport.Connect(ctx)`
+2. Create internal routing channels (msgCh, errCh)
+3. Start protocol router via `protocol.StartMessageRouter()`
+4. If hooks exist, send initialization control request via protocol
+5. If initial prompt provided, format and send user message
+6. Return nil on success
+
+**SendMessage() Flow:**
+1. Format user message (`type: "user"`, `prompt: "..."`)
+2. Marshal to JSON
+3. Call `transport.Write(ctx, jsonLine)`
+4. Return error if any
+
+**ReceiveMessages() Flow:**
+1. Create output channels (msgCh, errCh with buffer=1)
+2. Launch goroutine with deferred closes
+3. Loop: select on context, internal msgCh, internal errCh
+4. Parse messages via `parser.Parse()` and forward
+5. Return output channels immediately
+
+**Close() Flow:**
+1. Call `transport.Close()`
+2. Internal channels closed by protocol router
+3. Return transport error if any
+
+**Test Checkpoints:**
+- [ ] Connect() without prompt succeeds without sending message
+- [ ] Connect() with prompt sends formatted user message
+- [ ] Connect() with hooks sends initialization control request
+- [ ] SendMessage() formats and writes user message correctly
+- [ ] ReceiveMessages() streams parsed messages continuously
+- [ ] Context cancellation stops receive goroutine
+- [ ] Close() terminates transport and stops message flow
+- [ ] Multiple SendMessage() calls work correctly
+- [ ] Parser errors in ReceiveMessages() propagate to error channel
+- [ ] Transport write failures in SendMessage() return errors
+- [ ] Hook initialization includes all callback IDs
+- [ ] MCP servers available to protocol router for routing
 ### 2.3 Hooking Service (hooking/service.go)
 Priority: High
-The hooking service manages hook execution and lifecycle.
-```go
-package hooking
 
-import (
-	"context"
-	"fmt"
-)
+**Purpose:** Orchestrate hook callback execution based on event matchers
 
-// HookEvent represents different hook trigger points
-type HookEvent string
+**Responsibilities:**
+1. Store hook configurations (event → matchers → callbacks)
+2. Execute matching hooks for events
+3. Aggregate hook results (later hooks override earlier)
+4. Handle blocking decisions (decision="block" stops execution)
+5. Validate hook inputs and handle errors
 
-const (
-	HookEventPreToolUse       HookEvent = "PreToolUse"
-	HookEventPostToolUse      HookEvent = "PostToolUse"
-	HookEventUserPromptSubmit HookEvent = "UserPromptSubmit"
-	HookEventNotification     HookEvent = "Notification"
-	HookEventSessionStart     HookEvent = "SessionStart"
-	HookEventSessionEnd       HookEvent = "SessionEnd"
-	HookEventStop             HookEvent = "Stop"
-	HookEventSubagentStop     HookEvent = "SubagentStop"
-	HookEventPreCompact       HookEvent = "PreCompact"
-)
-// BaseHookInput contains fields common to all hook inputs
-type BaseHookInput struct {
-	SessionID      string  `json:"session_id"`
-	TranscriptPath string  `json:"transcript_path"`
-	Cwd            string  `json:"cwd"`
-	PermissionMode *string `json:"permission_mode,omitempty"`
-}
+**Python SDK Parity:**
+- Mirrors Python's hook execution model
+- Supports 9 hook events (PreToolUse, PostToolUse, etc.)
+- Pattern matching for tool-specific hooks
+- Aggregated results from multiple hooks
 
-// HookInput is a discriminated union of all hook input types
-// The specific type can be determined by the HookEventName field
-type HookInput interface {
-	hookInput()
-}
+**Hook Events (Constants):**
+- `PreToolUse` - Before tool execution
+- `PostToolUse` - After tool execution
+- `UserPromptSubmit` - User submits prompt
+- `Notification` - CLI notification
+- `SessionStart` - Session begins
+- `SessionEnd` - Session ends
+- `Stop` - User stops operation
+- `SubagentStop` - Subagent stops
+- `PreCompact` - Before transcript compaction
 
-// PreToolUseHookInput is the input for PreToolUse hooks
-type PreToolUseHookInput struct {
-	BaseHookInput
-	HookEventName string `json:"hook_event_name"` // "PreToolUse"
-	ToolName      string `json:"tool_name"`
-	ToolInput     any    `json:"tool_input"` // Intentionally flexible - varies by tool
-}
+**Hook Input Types:**
+- Define types for each hook event (PreToolUseHookInput, etc.)
+- All include BaseHookInput (session_id, transcript_path, cwd, permission_mode)
+- Use `map[string]any` at callback level for flexibility
+- Include `hook_event_name` field for type discrimination
 
-func (PreToolUseHookInput) hookInput() {}
+**Dependencies:**
+- NONE - Pure domain service with no external dependencies
+- Callbacks provided by user at construction time
 
-// PostToolUseHookInput is the input for PostToolUse hooks
-type PostToolUseHookInput struct {
-	BaseHookInput
-	HookEventName string `json:"hook_event_name"` // "PostToolUse"
-	ToolName      string `json:"tool_name"`
-	ToolInput     any    `json:"tool_input"`    // Intentionally flexible - varies by tool
-	ToolResponse  any    `json:"tool_response"` // Intentionally flexible - varies by tool
-}
+**Implementation Guidance:**
 
-func (PostToolUseHookInput) hookInput() {}
+**Package Structure:**
+- `hooking/service.go` - Service struct and core methods
+- `hooking/types.go` - Hook input types and constants
+- `hooking/matching.go` - Pattern matching logic
+- `hooking/execution.go` - Hook execution logic
 
-// NotificationHookInput is the input for Notification hooks
-type NotificationHookInput struct {
-	BaseHookInput
-	HookEventName string  `json:"hook_event_name"` // "Notification"
-	Message       string  `json:"message"`
-	Title         *string `json:"title,omitempty"`
-}
+**Service Struct:**
+- `hooks map[HookEvent][]HookMatcher` - Hook configuration
+- NO other state
 
-func (NotificationHookInput) hookInput() {}
-
-// UserPromptSubmitHookInput is the input for UserPromptSubmit hooks
-type UserPromptSubmitHookInput struct {
-	BaseHookInput
-	HookEventName string `json:"hook_event_name"` // "UserPromptSubmit"
-	Prompt        string `json:"prompt"`
-}
-
-func (UserPromptSubmitHookInput) hookInput() {}
-
-// SessionStartSource represents the source of a session start
-type SessionStartSource string
-
-const (
-	SessionStartSourceStartup SessionStartSource = "startup"
-	SessionStartSourceResume  SessionStartSource = "resume"
-	SessionStartSourceClear   SessionStartSource = "clear"
-	SessionStartSourceCompact SessionStartSource = "compact"
-)
-
-// SessionStartHookInput is the input for SessionStart hooks
-type SessionStartHookInput struct {
-	BaseHookInput
-	HookEventName string `json:"hook_event_name"` // "SessionStart"
-	Source        string `json:"source"`          // "startup" | "resume" | "clear" | "compact"
-}
-
-func (SessionStartHookInput) hookInput() {}
-
-// SessionEndHookInput is the input for SessionEnd hooks
-type SessionEndHookInput struct {
-	BaseHookInput
-	HookEventName string `json:"hook_event_name"` // "SessionEnd"
-	Reason        string `json:"reason"`          // Exit reason
-}
-
-func (SessionEndHookInput) hookInput() {}
-
-// StopHookInput is the input for Stop hooks
-type StopHookInput struct {
-	BaseHookInput
-	HookEventName  string `json:"hook_event_name"` // "Stop"
-	StopHookActive bool   `json:"stop_hook_active"`
-}
-
-func (StopHookInput) hookInput() {}
-
-// SubagentStopHookInput is the input for SubagentStop hooks
-type SubagentStopHookInput struct {
-	BaseHookInput
-	HookEventName  string `json:"hook_event_name"` // "SubagentStop"
-	StopHookActive bool   `json:"stop_hook_active"`
-}
-
-func (SubagentStopHookInput) hookInput() {}
-
-// PreCompactHookInput is the input for PreCompact hooks
-type PreCompactHookInput struct {
-	BaseHookInput
-	HookEventName      string  `json:"hook_event_name"` // "PreCompact"
-	Trigger            string  `json:"trigger"`         // "manual" | "auto"
-	CustomInstructions *string `json:"custom_instructions,omitempty"`
-}
-
-func (PreCompactHookInput) hookInput() {}
-
-// HookContext provides context for hook execution
-type HookContext struct {
-	// Signal provides cancellation and timeout support via context
-	// Hook implementations should check Signal.Done() for cancellation
-	Signal context.Context
-}
-
-// HookCallback is a function that handles hook events
-// Note: The input parameter is intentionally map[string]any at the callback level
-// to allow the protocol adapter to pass raw JSON. Domain services should parse
-// this into the appropriate HookInput type based on hook_event_name field.
-type HookCallback func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error)
-
-// HookMatcher defines when a hook should execute
-type HookMatcher struct {
-	Matcher string         // Pattern to match (e.g., tool name, event type)
-	Hooks   []HookCallback // Callbacks to execute
-}
-
-// Service manages hook execution
-type Service struct {
-	hooks map[HookEvent][]HookMatcher
-}
-
-func NewService(hooks map[HookEvent][]HookMatcher) *Service {
-	return &Service{
-		hooks: hooks,
-	}
-}
-
-// GetHooks returns the hook configuration
-func (s *Service) GetHooks() map[HookEvent][]HookMatcher {
-	if s == nil {
-		return nil
-	}
-	return s.hooks
-}
-
-// Execute runs hooks for a given event
-func (s *Service) Execute(ctx context.Context, event HookEvent, input map[string]any, toolUseID *string) (map[string]any, error) {
-	if s == nil || s.hooks == nil {
-		return nil, nil
-	}
-	// 1. Find matching hooks for event
-	matchers, exists := s.hooks[event]
-	if !exists || len(matchers) == 0 {
-		return nil, nil
-	}
-	// 2. Execute hooks in order and aggregate results
-	aggregatedResult := map[string]any{}
-	hookCtx := HookContext{
-		Signal: ctx, // Pass context for cancellation support
-	}
-
-	for _, matcher := range matchers {
-		// Check if matcher applies to this input
-		if !s.matchesPattern(matcher.Matcher, input) {
-			continue
-		}
-
-		for _, callback := range matcher.Hooks {
-			// Check for cancellation before executing each hook
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
-
-			// 3. Execute hook callback
-			result, err := callback(input, toolUseID, hookCtx)
-			if err != nil {
-				return nil, fmt.Errorf("hook execution failed: %w", err)
-			}
-			if result == nil {
-				continue
-			}
-			// 4. Handle blocking decisions
-			// If hook returns decision="block", stop execution immediately
-			if decision, ok := result["decision"].(string); ok && decision == "block" {
-				return result, nil
-			}
-			// Aggregate results (later hooks can override earlier ones)
-			for k, v := range result {
-				aggregatedResult[k] = v
-			}
-		}
-	}
-	return aggregatedResult, nil
-}
-
-// Register adds a new hook
-func (s *Service) Register(event HookEvent, matcher HookMatcher) {
-	if s.hooks == nil {
-		s.hooks = make(map[HookEvent][]HookMatcher)
-	}
-	s.hooks[event] = append(s.hooks[event], matcher)
-}
-
-// matchesPattern checks if a hook matcher pattern applies to the given input
-func (s *Service) matchesPattern(pattern string, input map[string]any) bool {
-	// Empty matcher matches all events
-	if pattern == "" {
-		return true
-	}
-
-	// Wildcard matches all
-	if pattern == "*" {
-		return true
-	}
-
-	// For PreToolUse/PostToolUse hooks, match against tool_name
-	if toolName, ok := input["tool_name"].(string); ok {
-		// Exact match
-		if pattern == toolName {
-			return true
-		}
-	}
-
-	// Pattern doesn't match
-	return false
-}
+**HookCallback Signature:**
 ```
+func(input map[string]any, toolUseID *string, ctx HookContext) (map[string]any, error)
+```
+
+**Execute() Flow:**
+1. Check if service and hooks are nil (return nil, nil)
+2. Find matchers for event type
+3. For each matcher, check pattern match against input
+4. For each matching callback:
+   - Check context cancellation
+   - Execute callback with input, toolUseID, HookContext
+   - If result contains `decision: "block"`, return immediately
+   - Otherwise aggregate results (merge into map)
+5. Return aggregated result
+
+**Pattern Matching Logic:**
+- Empty pattern or "*" matches all
+- For PreToolUse/PostToolUse: match against `tool_name` field in input
+- Exact string match (no regex in initial version)
+- Failed type assertion on tool_name → no match
+
+**GetHooks() Method:**
+- Returns hook configuration map
+- Used by protocol adapter for initialization
+
+**Register() Method:**
+- Adds new hook matcher to event
+- Initializes map if nil
+
+**Test Checkpoints:**
+- [ ] Nil service returns nil, nil from Execute()
+- [ ] Empty hooks return nil, nil from Execute()
+- [ ] Pattern "*" matches all events
+- [ ] Pattern matching works for tool names (PreToolUse/PostToolUse)
+- [ ] Hook execution respects context cancellation
+- [ ] decision="block" stops execution and returns immediately
+- [ ] Multiple hooks aggregate results correctly
+- [ ] Later hooks override earlier hooks for same keys
+- [ ] Hook errors propagate to caller
+- [ ] Register() adds hooks correctly
+- [ ] GetHooks() returns configuration
+- [ ] Type assertions on input fields handle missing fields gracefully
 ### 2.4 Permissions Service (permissions/service.go)
 Priority: High
-The permissions service handles tool permission checks and updates.
-```go
-package permissions
 
-import (
-	"context"
-	"fmt"
+**Purpose:** Manage tool permission checks and mode updates
 
-	"github.com/conneroisu/claude/pkg/claude/options"
-)
+**Responsibilities:**
+1. Store permission mode and callback configuration
+2. Execute permission checks via user callback
+3. Handle permission mode logic (bypass, default, etc.)
+4. Pass permission suggestions to user callback
+5. Return allow/deny results to protocol adapter
 
-// PermissionResult represents the outcome of a permission check
-type PermissionResult interface {
-	permissionResult()
-}
+**Python SDK Parity:**
+- Mirrors Python's permission checking model
+- Supports permission modes (bypass, default, plan, acceptEdits)
+- Permission suggestions for "always allow" workflows
+- Allow/deny result types
 
-// PermissionResultAllow indicates tool use is allowed
-type PermissionResultAllow struct {
-	UpdatedInput       map[string]any     // Intentionally flexible - tool inputs vary by tool
-	UpdatedPermissions []PermissionUpdate
-}
+**Permission Modes:**
+- `bypass` - Always allow, no checks
+- `default` - Standard permission flow with callback
+- `plan` - Planning mode (callback decides)
+- `acceptEdits` - Accept edits mode (callback decides)
 
-func (PermissionResultAllow) permissionResult() {}
+**Permission Result Types:**
+- `PermissionResultAllow` - Tool allowed, optional input modifications, optional permission updates
+- `PermissionResultDeny` - Tool denied, message, interrupt flag
 
-// PermissionResultDeny indicates tool use is denied
-type PermissionResultDeny struct {
-	Message   string
-	Interrupt bool
-}
+**Permission Update Structure:**
+- Type (e.g., "addRules")
+- Rules (tool name + rule content patterns)
+- Behavior (allow/deny/ask)
+- Mode (optional)
+- Directories (optional)
+- Destination (userSettings/projectSettings/localSettings/session)
 
-func (PermissionResultDeny) permissionResult() {}
+**Dependencies:**
+- NONE - Pure domain service
+- User callback provided at construction time
+- `options.PermissionMode` enum from options package
 
-// PermissionUpdate represents a permission change
-type PermissionUpdate struct {
-	Type        string
-	Rules       []PermissionRuleValue
-	Behavior    *PermissionBehavior
-	Mode        *options.PermissionMode
-	Directories []string
-	Destination *PermissionUpdateDestination
-}
+**Implementation Guidance:**
 
-type PermissionRuleValue struct {
-	ToolName    string
-	RuleContent *string
-}
+**Package Structure:**
+- `permissions/service.go` - Service struct and core methods
+- `permissions/types.go` - Result types, update types, constants
 
-type PermissionBehavior string
+**Service Struct:**
+- `mode options.PermissionMode` - Current permission mode
+- `canUseTool CanUseToolFunc` - User callback (optional)
 
-const (
-	PermissionBehaviorAllow PermissionBehavior = "allow"
-	PermissionBehaviorDeny  PermissionBehavior = "deny"
-	PermissionBehaviorAsk   PermissionBehavior = "ask"
-)
-
-type PermissionUpdateDestination string
-
-const (
-	PermissionDestinationUserSettings    PermissionUpdateDestination = "userSettings"
-	PermissionDestinationProjectSettings PermissionUpdateDestination = "projectSettings"
-	PermissionDestinationLocalSettings   PermissionUpdateDestination = "localSettings"
-	PermissionDestinationSession         PermissionUpdateDestination = "session"
-)
-
-// ToolPermissionContext provides context for permission decisions
-type ToolPermissionContext struct {
-	Suggestions []PermissionUpdate
-}
-
-// CanUseToolFunc is a callback for permission checks
-// input is intentionally map[string]any as tool inputs vary by tool
-type CanUseToolFunc func(ctx context.Context, toolName string, input map[string]any, permCtx ToolPermissionContext) (PermissionResult, error)
-
-// PermissionsConfig holds permission service configuration
-type PermissionsConfig struct {
-	Mode       options.PermissionMode
-	CanUseTool CanUseToolFunc
-}
-
-// Service manages tool permissions
-type Service struct {
-	mode       options.PermissionMode
-	canUseTool CanUseToolFunc
-}
-
-func NewService(config *PermissionsConfig) *Service {
-	if config == nil {
-		return &Service{
-			mode: options.PermissionModeAsk,
-		}
-	}
-	return &Service{
-		mode:       config.Mode,
-		canUseTool: config.CanUseTool,
-	}
-}
-
-// CheckToolUse verifies if a tool can be used
-// suggestions parameter comes from the control protocol's permission_suggestions field
-func (s *Service) CheckToolUse(ctx context.Context, toolName string, input map[string]any, suggestions []PermissionUpdate) (PermissionResult, error) {
-	// 1. Check permission mode
-	switch s.mode {
-	case options.PermissionModeBypassPermissions:
-		// Always allow
-		return &PermissionResultAllow{}, nil
-	case options.PermissionModeDefault, options.PermissionModeAcceptEdits, options.PermissionModePlan:
-		// 2. Call canUseTool callback if set
-		if s.canUseTool != nil {
-			// Pass suggestions from control protocol to callback
-			// These suggestions can be used in "always allow" flow
-			permCtx := ToolPermissionContext{
-				Suggestions: suggestions,
-			}
-			result, err := s.canUseTool(ctx, toolName, input, permCtx)
-			if err != nil {
-				return nil, fmt.Errorf("permission callback failed: %w", err)
-			}
-			return result, nil
-		}
-		// 3. Apply default behavior (ask user via CLI)
-		// In default mode without callback, we allow but this should be handled by CLI
-		return &PermissionResultAllow{}, nil
-	default:
-		// Unknown mode - deny for safety
-		return &PermissionResultDeny{
-			Message:   fmt.Sprintf("unknown permission mode: %s", s.mode),
-			Interrupt: false,
-		}, nil
-	}
-}
-
-// UpdateMode changes the permission mode
-func (s *Service) UpdateMode(mode options.PermissionMode) {
-	s.mode = mode
-}
+**CanUseToolFunc Signature:**
 ```
+func(ctx context.Context, toolName string, input map[string]any, permCtx ToolPermissionContext) (PermissionResult, error)
+```
+
+**CheckToolUse() Flow:**
+1. Switch on permission mode
+2. If `bypass`: return PermissionResultAllow immediately
+3. If other modes:
+   - If callback exists: call with ToolPermissionContext{Suggestions: suggestions}
+   - If no callback: return PermissionResultAllow (CLI handles default behavior)
+4. Handle callback errors
+5. Return result
+
+**ToolPermissionContext:**
+- Contains `Suggestions []PermissionUpdate`
+- Suggestions come from control protocol `permission_suggestions` field
+- User can return these in UpdatedPermissions for "always allow" flow
+
+**UpdateMode() Method:**
+- Updates service mode field
+- Used when CLI sends `set_permission_mode` control request
+- No validation (mode values come from CLI)
+
+**Test Checkpoints:**
+- [ ] Bypass mode always returns allow
+- [ ] Default mode calls user callback if provided
+- [ ] Default mode returns allow if no callback
+- [ ] Callback receives suggestions from protocol
+- [ ] Callback errors propagate to caller
+- [ ] UpdateMode() changes mode correctly
+- [ ] PermissionResultAllow can include updated input
+- [ ] PermissionResultAllow can include permission updates
+- [ ] PermissionResultDeny includes message and interrupt flag
+- [ ] Nil config creates service with default mode
+- [ ] Unknown mode returns deny for safety
+- [ ] Tool input as map[string]any passed to callback unchanged
 
 ---
 
@@ -937,51 +430,71 @@ func (s *Service) UpdateMode(mode options.PermissionMode) {
 
 ### File Size Requirements (175 line limit)
 
-**All services require decomposition:**
+**Package decomposition follows implementation guidance above:**
 
 **querying/ package:**
-- ❌ Single `service.go` (300+ lines planned)
-- ✅ Split into 5 files:
-  - `service.go` - Service struct + constructor (60 lines)
-  - `execute.go` - Execute implementation (80 lines)
-  - `routing.go` - Message routing logic (70 lines)
-  - `errors.go` - Error handling helpers (50 lines)
-  - `state.go` - Execution state management (40 lines)
+- `service.go` - Service struct + constructor (~40 lines)
+- `execute.go` - Execute implementation (~80 lines)
+- `types.go` - Domain types if needed (~30 lines)
 
 **streaming/ package:**
-- ❌ Single `service.go` (350+ lines planned)
-- ✅ Split into 6 files:
-  - `service.go` - Service struct + constructor (50 lines)
-  - `connect.go` - Connection logic (70 lines)
-  - `send.go` - SendMessage implementation (60 lines)
-  - `receive.go` - ReceiveMessages implementation (80 lines)
-  - `lifecycle.go` - Lifecycle methods (50 lines)
-  - `state.go` - State management (40 lines)
+- `service.go` - Service struct + constructor (~40 lines)
+- `connect.go` - Connect implementation (~70 lines)
+- `send.go` - SendMessage implementation (~30 lines)
+- `receive.go` - ReceiveMessages implementation (~60 lines)
+- `lifecycle.go` - Close implementation (~20 lines)
 
-**hooking/ and permissions/ packages:**
-- ✅ Can likely fit in 1-2 files each (under 175 lines)
+**hooking/ package:**
+- `service.go` - Service struct + core methods (~60 lines)
+- `types.go` - Hook input types + constants (~80 lines)
+- `matching.go` - Pattern matching logic (~40 lines)
+- `execution.go` - Hook execution logic (~60 lines)
 
-### Complexity Hotspots (25 line limit, complexity limits)
+**permissions/ package:**
+- `service.go` - Service struct + core methods (~60 lines)
+- `types.go` - Result types + update types + constants (~80 lines)
 
-**Function extraction required for:**
-- Message routing switch statements → Extract handler map pattern
-- Control protocol handling → Extract per-subtype handlers
-- Hook execution logic → Extract hook executor helper
-- Validation logic → Extract dedicated validators
-- Error handling → Extract error wrapper functions
+### Complexity Management (25 line limit, complexity limits)
 
-**Patterns to use:**
-- Early returns to reduce nesting
-- Handler maps instead of large switch statements
-- Extracted validation functions
-- Result structs to limit return values
+**Strategies to meet constraints:**
+- **Early returns:** Reduce nesting depth in permission checks and hook execution
+- **Extracted validation:** Separate functions for map[string]any field extraction
+- **Small helper functions:** Break down Execute() flow into composable steps
+- **Minimal switch statements:** Permission mode switch is simple (3-4 cases)
+- **No complex routing:** Message routing delegated to protocol adapter
+
+**Specific extractions:**
+- Hook pattern matching → `matchesPattern()` helper (~10 lines)
+- Hook aggregation → `aggregateResults()` helper (~15 lines)
+- Permission mode check → `checkMode()` helper (~20 lines)
+- Message formatting → `formatUserMessage()` helper (~10 lines)
+
+### Dependency Verification
+
+**Port dependencies only:**
+- ✅ `ports.Transport` - Interface for I/O
+- ✅ `ports.ProtocolHandler` - Interface for control protocol
+- ✅ `ports.MessageParser` - Interface for parsing
+- ✅ `ports.MCPServer` - Interface for MCP routing
+- ✅ Domain services (hooking, permissions) - Within domain layer
+- ✅ `options` package - Domain configuration types
+
+**No adapter dependencies:**
+- ❌ NO imports from `adapters/` packages
+- ❌ NO direct transport implementations (cli, stdio)
+- ❌ NO direct protocol implementations (jsonrpc)
+- ❌ NO request ID generation logic
+- ❌ NO timeout implementation details
 
 ### Checklist
 
-- [ ] Cyclomatic complexity ≤ 15 per function
-- [ ] Cognitive complexity ≤ 20 per function
+- [ ] All services depend only on port interfaces
+- [ ] No adapter implementation imports in domain services
+- [ ] File sizes ≤ 175 lines
+- [ ] Function complexity ≤ 15 (cyclomatic)
+- [ ] Function complexity ≤ 20 (cognitive)
 - [ ] Max nesting depth ≤ 3 levels
 - [ ] All functions ≤ 25 lines
-- [ ] Use early return pattern
-- [ ] Extract validation to separate functions
-- [ ] Extract complex logic to helpers
+- [ ] Early return pattern used throughout
+- [ ] Validation extracted to separate functions
+- [ ] map[string]any inputs validated before use

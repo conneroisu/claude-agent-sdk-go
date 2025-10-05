@@ -2,651 +2,517 @@
 
 The public API acts as a facade over the domain services, hiding the complexity of ports and adapters.
 
-### Overview: Complete Specification of Helper Functions
+### Overview: Facade Contracts and Behavior Specifications
 
-This phase introduces several critical helper functions that wire up the SDK with full implementation details:
+This phase defines the public-facing API contracts, error semantics, and lifecycle management guarantees. **Focus is on behavioral contracts, not implementation.**
 
-#### MCP Server Initialization (`mcp_init.go`)
+### 4.0 Core Contracts and Error Semantics
 
-**Function Specifications:**
+#### Error Handling Guarantees
 
-1. **`initializeMCPServers(ctx context.Context, configs map[string]options.MCPServerConfig) (map[string]ports.MCPServer, error)`**
-   - **Purpose:** Batch initialization of all configured MCP servers
-   - **Implementation:** Iterates through configs, calls `initializeMCPServer` for each
-   - **Error handling:** On any failure, closes all previously initialized servers and returns error
-   - **Returns:** Map of server name to connected adapter, or nil + error
+**Query() Function:**
+- **Channel Closure on Error:** If initialization fails (e.g., MCP server connection error), both message and error channels MUST be closed before returning
+- **Blocking Behavior:** Initialization is **synchronous and blocking** - function does not return until all MCP servers are connected or initialization fails
+- **Partial Failure Policy:** If ANY MCP server fails to initialize, ALL successfully connected servers MUST be closed before returning error
+- **Error Channel Guarantees:** Error channel receives exactly ONE error on initialization failure, then closes
 
-2. **`initializeMCPServer(ctx context.Context, name string, cfg options.MCPServerConfig) (ports.MCPServer, error)`**
-   - **Purpose:** Creates a single MCP connection based on config type
-   - **Type switching logic:**
-     - `StdioServerConfig`: Creates `exec.CommandContext`, sets env vars, wraps in `CommandTransport`, connects via MCP SDK client
-     - `HTTPServerConfig`: Creates `StreamableClientTransport` with URL/headers, connects via MCP SDK client
-     - `SSEServerConfig`: Same as HTTP (uses StreamableClientTransport)
-     - `SDKServerConfig`: Calls `mcp.NewSDKServerAdapter(name, config.Instance)`, then `adapter.Connect(ctx)`
-   - **Returns:** `ports.MCPServer` implementation (ClientAdapter or SDKServerAdapter)
+**Client Type:**
+- **Connect() Blocking Behavior:** `Connect()` is **synchronous** - blocks until Claude CLI connection established or fails
+- **Resource Cleanup Guarantee:** `Close()` MUST close all resources (streaming service, MCP servers) even if some closures fail
+- **Concurrent Access:** All Client methods are **mutex-protected** - safe for concurrent access from multiple goroutines
+- **State Validity:** Methods requiring connection (SendMessage, ReceiveMessages) return `ErrNotConnected` if called before Connect() succeeds
 
-3. **`mapToEnvSlice(m map[string]string) []string`**
-   - **Purpose:** Converts env var map to `KEY=VALUE` slice for subprocess
-   - **Implementation:** Iterates map, formats each entry as `fmt.Sprintf("%s=%s", k, v)`
-   - **Returns:** Slice of environment variable strings
+**MCP Server Initialization:**
+- **Atomicity:** Initialization of multiple MCP servers is **atomic** - either all succeed or all fail (with cleanup)
+- **Context Cancellation:** If context is cancelled during initialization, all in-progress connections MUST be cleaned up
+- **Transport Lifecycle:** MCP transports are owned by their adapters - callers MUST NOT close transports directly
+- **Connection Verification:** Initialization MUST verify MCP server responds to initial handshake before returning success
 
-#### Permissions Initialization
+#### Channel Lifecycle Semantics
 
-**Permissions Service Construction:**
-```go
-// In Query() and Client.Connect()
-var permissionsService *permissions.Service
-if opts.PermissionsConfig != nil {
-    permissionsService = permissions.NewService(opts.PermissionsConfig)
-}
-```
+**Message Channels (from Query() and Client.ReceiveMessages()):**
+- **Closure Guarantee:** Message channel closes when conversation ends normally OR on unrecoverable error
+- **Error Coordination:** If error channel receives error, message channel MAY still deliver buffered messages before closing
+- **No Sends After Close:** Implementation MUST NOT send on closed channels (panic prevention)
 
-**PermissionsConfig Structure (defined in `options/permissions.go`):**
-```go
-type PermissionsConfig struct {
-    Mode     PermissionMode                    // "allow_all", "deny_all", "prompt"
-    Callback func(tool string, args any) bool  // Custom approval logic
-    Overrides map[string]PermissionMode        // Per-tool overrides
-}
-```
+**Error Channels:**
+- **Buffering:** Error channels MUST be buffered (at least size 1) to prevent goroutine leaks
+- **Multiple Errors:** Error channel MAY receive multiple errors during streaming (one per failed operation)
+- **Final State:** Error channel closes when no more errors possible (conversation ended, connection closed)
 
-**Service Creation (defined in `permissions/service.go`):**
-- `NewService(cfg *PermissionsConfig) *Service` - Stores config, initializes decision cache
-- `CheckPermission(ctx, tool, args) (bool, error)` - Implements decision logic per mode
-- Mode resolution order: Overrides → Callback → Default mode
+#### Open Questions and Design Decisions
 
-#### Options Configuration (`options/` package)
+**Lifecycle Management (To Be Resolved in Implementation):**
+1. **MCP Server Reconnection:** Should ClientAdapter auto-reconnect on transport failure? Or fail fast and require user retry?
+   - **Considerations:** Auto-reconnect adds complexity, fail-fast is more predictable
+   - **Recommendation:** Start with fail-fast, add reconnect in future if needed
 
-**Complete Type Definitions:**
+2. **Hook Execution Timeouts:** What default timeout for hook execution? User-configurable per hook or global?
+   - **Considerations:** Python SDK uses 30s default, but Go users may prefer control
+   - **Recommendation:** 30s default with per-hook override via HookMatcher config
 
-1. **`AgentOptions`** - Main configuration struct
-   ```go
-   type AgentOptions struct {
-       CLIPath          string                    // Path to Claude CLI binary
-       AllowedTools     []BuiltinTool            // Enabled tools
-       DeniedTools      []BuiltinTool            // Disabled tools
-       MCPServers       map[string]MCPServerConfig
-       PermissionsConfig *PermissionsConfig
-       SystemPrompt     string
-       // ... additional fields
-   }
-   ```
+3. **Permissions Callback Blocking:** Should permission callbacks block streaming, or queue decisions?
+   - **Considerations:** Blocking is simpler, queuing allows async UX
+   - **Recommendation:** Blocking (matches Python SDK), document clearly
 
-2. **`MCPServerConfig`** - Discriminated union interface
-   ```go
-   type MCPServerConfig interface {
-       mcpServerConfig() // Private marker method
-   }
-   ```
+4. **Resource Cleanup Order:** In `Client.Close()`, should MCP servers close before or after streaming service?
+   - **Considerations:** Streaming may need MCP servers for final messages
+   - **Recommendation:** Close streaming first (no new requests), then MCP servers
 
-3. **Concrete MCP Config Types:**
-   - `StdioServerConfig`: Command, Args, Env map
-   - `HTTPServerConfig`: URL, Headers map
-   - `SSEServerConfig`: URL, Headers map
-   - `SDKServerConfig`: Instance *mcp.Server
+5. **Context Propagation:** Should individual MCP server calls inherit Query()/Connect() context, or use fresh background context?
+   - **Considerations:** Inherited context enables cascading cancellation, background context prevents premature termination
+   - **Recommendation:** Inherit context (standard Go practice)
 
-4. **`PermissionsConfig`** - Permission mode and callback (see above)
+#### Type Dependencies and References
 
-5. **`BuiltinTool`** - String enum with matcher support
-   ```go
-   type BuiltinTool string
-   func (t BuiltinTool) WithMatcher(pattern string) string {
-       return fmt.Sprintf("%s(%s)", t, pattern)
-   }
-   ```
+**Types Defined in This Phase:**
+- `Client` struct - defined in `client.go`
+- `ErrNotConnected` error - defined in `errors.go`
 
-**Key Architectural Benefit:** All wiring is explicit and type-safe - no TODO placeholders or runtime string parsing for core initialization logic.
+**Types Referenced from Other Phases:**
+- `options.AgentOptions` - **To be defined in Phase 4.2** (options package)
+- `options.MCPServerConfig` interface - **To be defined in Phase 4.2**
+- `options.StdioServerConfig`, `HTTPServerConfig`, `SSEServerConfig`, `SDKServerConfig` - **To be defined in Phase 4.2**
+- `permissions.PermissionsConfig` - **To be defined in Phase 5c** (permissions)
+- `permissions.Service` - **To be defined in Phase 5c**
+- `hooking.HookEvent`, `hooking.HookMatcher` - **To be defined in Phase 5a** (hooks)
+- `ports.MCPServer` - **Defined in Phase 1** (core domain ports)
+- `messages.Message` - **Defined in Phase 1**
+- All adapter types (cli, jsonrpc, parse, mcp) - **Defined in Phase 3**
+- All domain services (querying, streaming) - **Defined in Phase 2**
 
 ### 4.1 Query Function (query.go)
-Priority: Critical
+
+**Priority:** Critical
+
+**Signature:**
 ```go
-package claude
-
-import (
-	"context"
-	"fmt"
-	"github.com/conneroisu/claude/pkg/claude/adapters/cli"
-	"github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
-	"github.com/conneroisu/claude/pkg/claude/adapters/parse"
-	"github.com/conneroisu/claude/pkg/claude/hooking"
-	"github.com/conneroisu/claude/pkg/claude/messages"
-	"github.com/conneroisu/claude/pkg/claude/options"
-	"github.com/conneroisu/claude/pkg/claude/permissions"
-	"github.com/conneroisu/claude/pkg/claude/ports"
-	"github.com/conneroisu/claude/pkg/claude/querying"
-)
-
-// Query performs a one-shot query to Claude
-// This is the main entry point that wires up domain services with adapters
-func Query(ctx context.Context, prompt string, opts *options.AgentOptions, hooks map[hooking.HookEvent][]hooking.HookMatcher) (<-chan messages.Message, <-chan error) {
-	if opts == nil {
-		opts = &options.AgentOptions{}
-	}
-	// Wire up adapters (infrastructure layer)
-	transport := cli.NewAdapter(opts)
-	protocol := jsonrpc.NewAdapter(transport)
-	parser := parse.NewAdapter()
-	// Create domain services
-	var hookingService *hooking.Service
-	if hooks != nil {
-		hookingService = hooking.NewService(hooks)
-	}
-	// Create permissions service from options
-	var permissionsService *permissions.Service
-	if opts.PermissionsConfig != nil {
-		permissionsService = permissions.NewService(opts.PermissionsConfig)
-	}
-	// Initialize MCP servers from configuration
-	mcpServers, err := initializeMCPServers(ctx, opts.MCPServers)
-	if err != nil {
-		msgCh := make(chan messages.Message)
-		errCh := make(chan error, 1)
-		errCh <- fmt.Errorf("failed to initialize MCP servers: %w", err)
-		close(msgCh)
-		close(errCh)
-		return msgCh, errCh
-	}
-	queryService := querying.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
-	// Execute domain logic
-	return queryService.Execute(ctx, prompt, opts)
-}
+func Query(
+    ctx context.Context,
+    prompt string,
+    opts *options.AgentOptions,
+    hooks map[hooking.HookEvent][]hooking.HookMatcher,
+) (<-chan messages.Message, <-chan error)
 ```
-### 4.2 Client (client.go)
-Priority: Critical
+
+**Contract:**
+
+**Purpose:** One-shot query to Claude - wires up all layers and executes query via domain service
+
+**Behavioral Guarantees:**
+1. **Nil Options Handling:** If `opts` is nil, uses default `&options.AgentOptions{}`
+2. **Layer Wiring Order:**
+   - Infrastructure adapters created first (CLI transport, JSON-RPC protocol, parser)
+   - Domain services created second (hooks, permissions)
+   - MCP servers initialized third (may fail)
+   - Query service created last with all dependencies
+3. **Error Fast-Fail:** If MCP server initialization fails:
+   - Creates CLOSED message channel (no messages will be sent)
+   - Creates error channel with single error, then closes
+   - Returns both closed channels immediately
+4. **Success Path:** If initialization succeeds, delegates to `querying.Service.Execute()` and returns its channels
+
+**Channel Contracts:**
+- **Message Channel:** Delivers parsed messages from Claude; closes when conversation ends
+- **Error Channel:** Buffered, delivers errors during streaming; closes when no more errors possible
+- **Error State:** On init failure, both channels closed before return (safe to range over)
+
+**Implementation Requirements:**
+- MUST create all adapters before domain services (dependency order)
+- MUST initialize MCP servers before creating query service
+- MUST close both channels before returning on init error
+- MUST NOT block on channel sends (goroutine leak prevention)
+### 4.2 Client Type (client.go)
+
+**Priority:** Critical
+
+**Type Signature:**
 ```go
-package claude
-
-import (
-	"context"
-	"fmt"
-	"sync"
-
-	"github.com/conneroisu/claude/pkg/claude/adapters/cli"
-	"github.com/conneroisu/claude/pkg/claude/adapters/jsonrpc"
-	"github.com/conneroisu/claude/pkg/claude/adapters/parse"
-	"github.com/conneroisu/claude/pkg/claude/hooking"
-	"github.com/conneroisu/claude/pkg/claude/messages"
-	"github.com/conneroisu/claude/pkg/claude/options"
-	"github.com/conneroisu/claude/pkg/claude/permissions"
-	"github.com/conneroisu/claude/pkg/claude/ports"
-	"github.com/conneroisu/claude/pkg/claude/streaming"
-)
-
-// Client provides bidirectional, interactive conversations with Claude
-// It's a facade that wires domain services with adapters
 type Client struct {
-	opts             *options.AgentOptions
-	hooks            map[hooking.HookEvent][]hooking.HookMatcher
-	permissionsConfig *permissions.PermissionsConfig
-	streamingService *streaming.Service
-	mcpServers       map[string]ports.MCPServer // Track for cleanup
-	mu               sync.Mutex
-}
-
-// NewClient creates a new Claude client
-func NewClient(opts *options.AgentOptions, hooks map[hooking.HookEvent][]hooking.HookMatcher, perms *permissions.PermissionsConfig) *Client {
-	if opts == nil {
-		opts = &options.AgentOptions{}
-	}
-	return &Client{
-		opts:              opts,
-		hooks:             hooks,
-		permissionsConfig: perms,
-	}
-}
-
-// Connect establishes connection to Claude
-func (c *Client) Connect(ctx context.Context, prompt *string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// Wire up adapters (infrastructure)
-	transport := cli.NewAdapter(c.opts)
-	protocol := jsonrpc.NewAdapter(transport)
-	parser := parse.NewAdapter()
-	// Wire up domain services
-	var hookingService *hooking.Service
-	if c.hooks != nil {
-		hookingService = hooking.NewService(c.hooks)
-	}
-	var permissionsService *permissions.Service
-	if c.permissionsConfig != nil {
-		permissionsService = permissions.NewService(c.permissionsConfig)
-	}
-	// Initialize MCP servers from configuration
-	mcpServers, err := initializeMCPServers(ctx, c.opts.MCPServers)
-	if err != nil {
-		return fmt.Errorf("failed to initialize MCP servers: %w", err)
-	}
-	c.mcpServers = mcpServers // Store for cleanup
-	// Create streaming service with dependencies
-	c.streamingService = streaming.NewService(transport, protocol, parser, hookingService, permissionsService, mcpServers)
-	// Execute domain logic
-	return c.streamingService.Connect(ctx, prompt)
-}
-
-// SendMessage sends a message to Claude
-func (c *Client) SendMessage(ctx context.Context, msg string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.streamingService == nil {
-		return ErrNotConnected
-	}
-	return c.streamingService.SendMessage(ctx, msg)
-}
-
-// ReceiveMessages returns a channel of messages from Claude
-func (c *Client) ReceiveMessages(ctx context.Context) (<-chan messages.Message, <-chan error) {
-	if c.streamingService == nil {
-		errCh := make(chan error, 1)
-		errCh <- ErrNotConnected
-		close(errCh)
-		return nil, errCh
-	}
-	return c.streamingService.ReceiveMessages(ctx)
-}
-
-// Close disconnects from Claude and cleans up resources
-func (c *Client) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	var errs []error
-
-	// Close streaming service
-	if c.streamingService != nil {
-		if err := c.streamingService.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing streaming service: %w", err))
-		}
-	}
-
-	// Close all MCP server connections
-	for name, server := range c.mcpServers {
-		if err := server.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing MCP server %q: %w", name, err))
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors during close: %v", errs)
-	}
-	return nil
+    // Private fields (implementation detail)
 }
 ```
+
+**Public API:**
+```go
+func NewClient(
+    opts *options.AgentOptions,
+    hooks map[hooking.HookEvent][]hooking.HookMatcher,
+    perms *permissions.PermissionsConfig,
+) *Client
+
+func (c *Client) Connect(ctx context.Context, prompt *string) error
+func (c *Client) SendMessage(ctx context.Context, msg string) error
+func (c *Client) ReceiveMessages(ctx context.Context) (<-chan messages.Message, <-chan error)
+func (c *Client) Close() error
+```
+
+**Contract:**
+
+**NewClient:**
+- **Purpose:** Creates disconnected client with configuration
+- **Nil Options:** If `opts` is nil, uses default `&options.AgentOptions{}`
+- **No I/O:** Constructor does NOT connect to Claude (fail-fast principle)
+- **Thread-Safety:** Returned client is safe for concurrent method calls
+
+**Connect():**
+- **Purpose:** Establishes Claude CLI connection and initializes all services
+- **Blocking:** Synchronous - returns only after connection established or failure
+- **State Transition:** On success, client transitions to "connected" state
+- **Error Behavior:** On failure, client remains in "disconnected" state, can retry
+- **Idempotency:** Calling Connect() on already-connected client returns error
+- **Wiring Order:** (Same as Query - adapters, services, MCP servers, streaming service)
+- **Resource Tracking:** MCP servers stored internally for cleanup in Close()
+
+**SendMessage():**
+- **Purpose:** Sends user message to Claude in established conversation
+- **Pre-Condition:** MUST call Connect() first, else returns `ErrNotConnected`
+- **Blocking:** Blocks until message sent to CLI transport or error
+- **Thread-Safety:** Mutex-protected, safe for concurrent calls (though not typical usage)
+
+**ReceiveMessages():**
+- **Purpose:** Returns channels for streaming messages and errors from Claude
+- **Pre-Condition:** MUST call Connect() first, else returns nil message channel + error channel with `ErrNotConnected`
+- **Channel Lifecycle:** Channels remain valid until conversation ends or Close() called
+- **Multiple Calls:** Calling multiple times returns SAME channels (not new ones)
+
+**Close():**
+- **Purpose:** Disconnects from Claude and releases all resources
+- **Cleanup Order:**
+  1. Close streaming service first (stops new message processing)
+  2. Close MCP servers second (after no more messages will use them)
+- **Error Collection:** If multiple resources fail to close, collects all errors and returns combined error
+- **Idempotency:** Calling Close() multiple times is safe (no-op after first)
+- **Thread-Safety:** Mutex-protected
+
+**Concurrency Guarantees:**
+- All public methods protected by internal mutex
+- Safe to call SendMessage() from one goroutine while ranging over ReceiveMessages() in another
+- Connect() and Close() should NOT be called concurrently (undefined behavior)
 
 ### 4.3 MCP Server Initialization (mcp_init.go)
-Priority: Critical
 
-This helper initializes MCP client connections from configuration:
+**Priority:** Critical
+
+**Internal Helper Functions (Not Exported):**
 
 ```go
-package claude
-
-import (
-	"context"
-	"fmt"
-	"os/exec"
-
-	"github.com/conneroisu/claude/pkg/claude/adapters/mcp"
-	"github.com/conneroisu/claude/pkg/claude/options"
-	"github.com/conneroisu/claude/pkg/claude/ports"
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-)
-
-// initializeMCPServers creates MCP client connections from configuration
-// Returns a map of server name -> connected MCP client adapter
 func initializeMCPServers(
-	ctx context.Context,
-	configs map[string]options.MCPServerConfig,
-) (map[string]ports.MCPServer, error) {
-	if len(configs) == 0 {
-		return nil, nil
-	}
+    ctx context.Context,
+    configs map[string]options.MCPServerConfig,
+) (map[string]ports.MCPServer, error)
 
-	servers := make(map[string]ports.MCPServer, len(configs))
-
-	for name, cfg := range configs {
-		server, err := initializeMCPServer(ctx, name, cfg)
-		if err != nil {
-			// Clean up already-connected servers
-			for _, s := range servers {
-				_ = s.Close()
-			}
-			return nil, fmt.Errorf("failed to initialize MCP server %q: %w", name, err)
-		}
-		servers[name] = server
-	}
-
-	return servers, nil
-}
-
-// initializeMCPServer creates a single MCP client connection
 func initializeMCPServer(
-	ctx context.Context,
-	name string,
-	cfg options.MCPServerConfig,
-) (ports.MCPServer, error) {
-	var transport mcpsdk.Transport
+    ctx context.Context,
+    name string,
+    cfg options.MCPServerConfig,
+) (ports.MCPServer, error)
 
-	switch config := cfg.(type) {
-	case options.StdioServerConfig:
-		// Create stdio transport using command
-		cmd := exec.CommandContext(ctx, config.Command, config.Args...)
-		if config.Env != nil {
-			cmd.Env = append(cmd.Env, mapToEnvSlice(config.Env)...)
-		}
-		transport = &mcpsdk.CommandTransport{Command: cmd}
-
-	case options.HTTPServerConfig:
-		// Create HTTP streamable transport
-		transport = &mcpsdk.StreamableClientTransport{
-			Endpoint: config.URL,
-			Headers:  config.Headers,
-		}
-
-	case options.SSEServerConfig:
-		// SSE uses same streamable transport as HTTP
-		transport = &mcpsdk.StreamableClientTransport{
-			Endpoint: config.URL,
-			Headers:  config.Headers,
-		}
-
-	case options.SDKServerConfig:
-		// SDK-managed servers use in-memory transport
-		adapter, err := mcp.NewSDKServerAdapter(name, config.Instance)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SDK server adapter: %w", err)
-		}
-		// Connect the adapter (initializes in-memory transport and server session)
-		if err := adapter.Connect(ctx); err != nil {
-			return nil, fmt.Errorf("failed to connect SDK server: %w", err)
-		}
-		return adapter, nil
-
-	default:
-		return nil, fmt.Errorf("unknown MCP server config type: %T", cfg)
-	}
-
-	// Create MCP client using official SDK
-	client := mcpsdk.NewClient(
-		&mcpsdk.Implementation{
-			Name:    "claude-agent-sdk-go",
-			Version: "0.1.0",
-		},
-		nil,
-	)
-
-	// Connect to the MCP server
-	session, err := client.Connect(ctx, transport, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to MCP server: %w", err)
-	}
-
-	// Wrap the session in our client adapter that implements ports.MCPServer
-	return mcp.NewClientAdapter(name, session), nil
-}
-
-// mapToEnvSlice converts map[string]string to []string in KEY=VALUE format
-func mapToEnvSlice(m map[string]string) []string {
-	result := make([]string, 0, len(m))
-	for k, v := range m {
-		result = append(result, fmt.Sprintf("%s=%s", k, v))
-	}
-	return result
-}
+func mapToEnvSlice(m map[string]string) []string
 ```
+
+**Behavioral Specification:**
+
+**initializeMCPServers:**
+- **Purpose:** Batch-initialize all configured MCP servers atomically
+- **Empty Config:** If `configs` is nil or empty, returns `(nil, nil)` - not an error
+- **Atomicity Guarantee:** If ANY server fails to initialize, ALL previously connected servers MUST be closed before returning error
+- **Error Format:** Wraps errors with server name for debugging: `"failed to initialize MCP server %q: %w"`
+- **Success Return:** Map of server name → connected `ports.MCPServer` adapter
+
+**initializeMCPServer:**
+- **Purpose:** Creates single MCP server connection based on config type
+- **Type Dispatch:** Uses type switch on `options.MCPServerConfig` interface:
+  - `StdioServerConfig`: Creates stdio subprocess transport, connects MCP SDK client
+  - `HTTPServerConfig`: Creates HTTP streamable transport, connects MCP SDK client
+  - `SSEServerConfig`: Uses same streamable transport as HTTP (SSE is transport detail)
+  - `SDKServerConfig`: Creates SDK server adapter with in-memory transport (see Phase 5b)
+- **Unknown Type:** Returns error for unrecognized config types (defensive)
+- **Transport Ownership:** Created transports owned by MCP SDK client/session - do NOT close separately
+- **Adapter Wrapping:** For stdio/HTTP/SSE, wraps MCP SDK `ClientSession` in `mcp.ClientAdapter` implementing `ports.MCPServer`
+- **Context Respect:** Uses provided context for subprocess creation and connection timeout
+
+**mapToEnvSlice:**
+- **Purpose:** Converts environment variable map to slice format for `os/exec.Cmd.Env`
+- **Format:** Each entry formatted as `"KEY=VALUE"`
+- **Map Iteration:** Order non-deterministic (map iteration), but acceptable for env vars
+
+**Error Propagation Semantics:**
+- Connection failures (network, subprocess spawn) propagate immediately
+- MCP handshake failures (protocol version mismatch) propagate as connection errors
+- Context cancellation during init triggers cleanup and returns context error
+
+**Dependencies:**
+- MCP SDK types: `mcpsdk.Client`, `mcpsdk.Transport`, `mcpsdk.ClientSession`
+- MCP SDK transports: `CommandTransport` (stdio), `StreamableClientTransport` (HTTP/SSE)
+- Internal adapter: `mcp.ClientAdapter` (wraps external MCP servers)
+- Internal adapter: `mcp.SDKServerAdapter` (wraps SDK-managed servers) - **defined in Phase 5b**
 
 ### 4.4 MCP Client Adapter (adapters/mcp/client.go)
-Priority: Critical
 
-This adapter wraps the MCP SDK's ClientSession to connect TO external MCP servers (stdio/HTTP/SSE):
+**Priority:** Critical
 
+**Purpose:** Adapter wrapping MCP SDK `ClientSession` to connect TO external MCP servers (stdio/HTTP/SSE)
+
+**Type Signature:**
 ```go
-package mcp
-
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-
-	"github.com/conneroisu/claude/pkg/claude/ports"
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-)
-
-// ClientAdapter wraps an MCP ClientSession to implement ports.MCPServer
-// This is used to connect TO external MCP servers via stdio/HTTP/SSE
 type ClientAdapter struct {
-	name    string
-	session *mcpsdk.ClientSession
+    // Private fields
 }
 
-// Verify interface compliance at compile time
-var _ ports.MCPServer = (*ClientAdapter)(nil)
-
-// NewClientAdapter creates a new MCP client adapter wrapping the given session
-func NewClientAdapter(name string, session *mcpsdk.ClientSession) *ClientAdapter {
-	return &ClientAdapter{
-		name:    name,
-		session: session,
-	}
-}
-
-// Name returns the server name
-func (a *ClientAdapter) Name() string {
-	return a.name
-}
-
-// HandleMessage forwards a raw JSON-RPC message to the external MCP server
-// and returns the response. This is used by the domain to proxy
-// messages from Claude CLI to external MCP servers.
-func (a *ClientAdapter) HandleMessage(ctx context.Context, message []byte) ([]byte, error) {
-	// Decode the raw JSON-RPC message
-	msg, err := jsonrpc.DecodeMessage(message)
-	if err != nil {
-		return nil, err
-	}
-
-	// Route the message based on type
-	switch m := msg.(type) {
-	case *jsonrpc.Request:
-		// Forward request to external MCP server via session
-		// The session handles method routing internally
-		result, err := a.handleRequest(ctx, m)
-		if err != nil {
-			// Return JSON-RPC error response
-			errResp := &jsonrpc.Response{
-				ID:    m.ID,
-				Error: &jsonrpc.Error{Code: -32603, Message: err.Error()},
-			}
-			return jsonrpc.EncodeMessage(errResp)
-		}
-		// Return successful response
-		resp := &jsonrpc.Response{
-			ID:     m.ID,
-			Result: result,
-		}
-		return jsonrpc.EncodeMessage(resp)
-
-	case *jsonrpc.Notification:
-		// Handle notifications (no response expected)
-		return nil, a.handleNotification(ctx, m)
-
-	default:
-		return nil, fmt.Errorf("unsupported message type: %T", msg)
-	}
-}
-
-// handleRequest routes JSON-RPC requests to appropriate MCP SDK methods
-func (a *ClientAdapter) handleRequest(ctx context.Context, req *jsonrpc.Request) (any, error) {
-	switch req.Method {
-	case "tools/list":
-		return a.session.ListTools(ctx, nil)
-
-	case "tools/call":
-		var params mcpsdk.CallToolParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return nil, err
-		}
-		return a.session.CallTool(ctx, &params)
-
-	case "resources/list":
-		return a.session.ListResources(ctx, nil)
-
-	case "resources/read":
-		var params mcpsdk.ReadResourceParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return nil, err
-		}
-		return a.session.ReadResource(ctx, &params)
-
-	case "prompts/list":
-		return a.session.ListPrompts(ctx, nil)
-
-	case "prompts/get":
-		var params mcpsdk.GetPromptParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return nil, err
-		}
-		return a.session.GetPrompt(ctx, &params)
-
-	default:
-		return nil, fmt.Errorf("unsupported method: %s", req.Method)
-	}
-}
-
-// handleNotification routes JSON-RPC notifications
-func (a *ClientAdapter) handleNotification(ctx context.Context, notif *jsonrpc.Notification) error {
-	// MCP notifications are typically one-way, no response needed
-	// Could implement logging/monitoring here
-	return nil
-}
-
-// Close closes the MCP client session
-func (a *ClientAdapter) Close() error {
-	return a.session.Close()
-}
+func NewClientAdapter(name string, session *mcpsdk.ClientSession) *ClientAdapter
 ```
 
-**Note:** This client adapter is for EXTERNAL MCP servers. For SDK MCP servers (user-defined tools), see Phase 5b which defines `SDKServerAdapter` in `adapters/mcp/sdk_server.go`.
+**Interface Compliance:**
+- MUST implement `ports.MCPServer` interface
+- Compile-time verification: `var _ ports.MCPServer = (*ClientAdapter)(nil)`
 
-### 4.4 Helper Utilities (helpers/ package)
+**Behavioral Contract:**
 
-Priority: High
-Convenience utilities for common operations, inspired by TypeScript SDK's `lib/` directory.
+**Name():**
+- Returns server name provided at construction
+- Used for logging and error messages
 
-helpers/tools.go - Tool Selection Helpers:
+**HandleMessage(ctx, message []byte):**
+- **Purpose:** Proxies raw JSON-RPC messages from Claude CLI to external MCP server
+- **Message Flow:** Claude CLI → Domain → ClientAdapter → MCP SDK ClientSession → External Server
+- **Protocol:** Decodes JSON-RPC message, routes to appropriate MCP SDK method, encodes response
+- **Request Handling:**
+  - Supported methods: `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`
+  - Deserializes params into MCP SDK param types
+  - Calls corresponding `session.ListTools()`, `session.CallTool()`, etc.
+  - Wraps result in JSON-RPC response
+- **Error Handling:**
+  - Invalid JSON → returns error
+  - Unsupported method → returns JSON-RPC error response (code -32603)
+  - MCP SDK call fails → returns JSON-RPC error response with error message
+- **Notification Handling:** One-way notifications processed but no response sent (per JSON-RPC spec)
+- **Context Propagation:** Passes context to all MCP SDK calls (enables timeout/cancellation)
 
+**Close():**
+- Delegates to `session.Close()` - closes underlying transport
+- MUST be idempotent (safe to call multiple times)
+- Returns error if session close fails (e.g., subprocess kill error)
+
+**Implementation Notes:**
+- This adapter is for EXTERNAL MCP servers (user connects TO them)
+- For SDK MCP servers (user HOSTS tools), see `SDKServerAdapter` in **Phase 5b**
+- Adapter does NOT own session lifecycle - session created by `initializeMCPServer()`
+
+**Error Semantics:**
+- Decode errors → return Go error (caller handles)
+- MCP method errors → return JSON-RPC error response (protocol-compliant)
+- Transport errors → propagate from session methods (network failures, subprocess exit)
+
+### 4.5 Helper Utilities (helpers/ package)
+
+**Priority:** High
+
+**Purpose:** Convenience utilities for common SDK operations (tool selection, prompt building)
+
+**Package Structure:**
+- `helpers/tools.go` - Tool selection helpers
+- `helpers/prompts.go` - System prompt builders
+
+#### Tool Selection Helpers (helpers/tools.go)
+
+**Function Signatures:**
 ```go
-package helpers
-
-import (
-	"strings"
-	"github.com/conneroisu/claude/pkg/claude/options"
-)
-
-// ToolsToString converts a slice of BuiltinTools to CLI format
-// Example: [ToolRead, ToolWrite] -> "Read,Write"
-func ToolsToString(tools []options.BuiltinTool) string {
-	strs := make([]string, len(tools))
-	for i, t := range tools {
-		strs[i] = string(t)
-	}
-	return strings.Join(strs, ",")
-}
-
-// AllowTools creates an allowed tools specification for CLI
-// Supports both simple names and matcher patterns
-func AllowTools(specs ...string) string {
-	return strings.Join(specs, ",")
-}
-
-// DenyTools creates a denied tools specification for CLI
-func DenyTools(specs ...string) string {
-	return AllowTools(specs...)
-}
-
-// AllToolsExcept returns all builtin tools except the specified ones
-func AllToolsExcept(exclude ...options.BuiltinTool) []options.BuiltinTool {
-	excludeMap := make(map[options.BuiltinTool]bool)
-	for _, t := range exclude {
-		excludeMap[t] = true
-	}
-
-	allTools := []options.BuiltinTool{
-		options.ToolBash, options.ToolBashOutput, options.ToolKillShell,
-		options.ToolRead, options.ToolWrite, options.ToolEdit,
-		options.ToolGlob, options.ToolGrep,
-		options.ToolTask, options.ToolExitPlanMode,
-		options.ToolWebFetch, options.ToolWebSearch,
-		options.ToolListMcpResources, options.ToolReadMcpResource, options.ToolMcp,
-		options.ToolNotebookEdit, options.ToolTodoWrite, options.ToolSlashCommand,
-	}
-
-	result := make([]options.BuiltinTool, 0, len(allTools))
-	for _, t := range allTools {
-		if !excludeMap[t] {
-			result = append(result, t)
-		}
-	}
-	return result
-}
+func ToolsToString(tools []options.BuiltinTool) string
+func AllowTools(specs ...string) string
+func DenyTools(specs ...string) string
+func AllToolsExcept(exclude ...options.BuiltinTool) []options.BuiltinTool
 ```
 
-helpers/prompts.go - System Prompt Builders:
+**Behavioral Contracts:**
 
+**ToolsToString:**
+- Converts slice of `BuiltinTool` to comma-separated string for CLI flags
+- Example: `[ToolRead, ToolWrite]` → `"Read,Write"`
+- Empty slice → empty string
+
+**AllowTools / DenyTools:**
+- Joins tool specs (names or patterns) into comma-separated string
+- Supports matcher patterns: `"Bash(git:*)"`, `"Read"`, etc.
+- `DenyTools` is alias for `AllowTools` (semantic naming for clarity)
+
+**AllToolsExcept:**
+- Returns all 18 builtin tools EXCEPT specified exclusions
+- **Complete Tool List:** Bash, BashOutput, KillShell, Read, Write, Edit, Glob, Grep, Task, ExitPlanMode, WebFetch, WebSearch, ListMcpResources, ReadMcpResource, Mcp, NotebookEdit, TodoWrite, SlashCommand
+- Uses map for O(1) exclusion lookup
+- Order non-deterministic (map iteration) - acceptable for tool lists
+
+**Design Rationale:**
+- Simplifies tool configuration (avoid manually listing 18 tools)
+- Follows "allow by default, deny explicitly" pattern
+- Enables concise deny-list UX: `AllToolsExcept(ToolBash, ToolWebFetch)`
+
+#### System Prompt Helpers (helpers/prompts.go)
+
+**Function Signatures:**
 ```go
-package helpers
-
-import "strings"
-
-// BuildSystemPrompt combines multiple prompt parts
-func BuildSystemPrompt(parts ...string) string {
-	return strings.Join(parts, "\n\n")
-}
-
-// AppendSystemPrompt creates an append-style system prompt config
-func AppendSystemPrompt(base, append string) string {
-	if base == "" {
-		return append
-	}
-	if append == "" {
-		return base
-	}
-	return base + "\n\n" + append
-}
+func BuildSystemPrompt(parts ...string) string
+func AppendSystemPrompt(base, append string) string
 ```
 
-**Usage Examples:**
+**Behavioral Contracts:**
 
+**BuildSystemPrompt:**
+- Joins prompt parts with double newlines (`"\n\n"`)
+- Variadic - accepts any number of strings
+- Empty parts included as-is (caller responsible for filtering)
+
+**AppendSystemPrompt:**
+- Safely appends to base prompt with separator
+- **Edge Cases:**
+  - Base empty → returns append only (no leading separator)
+  - Append empty → returns base only (no trailing separator)
+  - Both empty → returns empty string
+- Separator: double newline (`"\n\n"`)
+
+**Design Rationale:**
+- Provides consistent prompt formatting across SDK usage
+- Handles edge cases (nil/empty strings) gracefully
+- Matches common LLM prompt construction patterns
+
+#### Usage Example (from docs):
 ```go
-import (
-	"github.com/conneroisu/claude/pkg/claude/helpers"
-	"github.com/conneroisu/claude/pkg/claude/options"
-)
-
-// Tool selection with helpers
+// Exclude dangerous tools
 opts := &options.AgentOptions{
-	AllowedTools: helpers.AllToolsExcept(
-		options.ToolBash,      // Exclude shell access
-		options.ToolWebFetch,  // Exclude web access
-	),
+    AllowedTools: helpers.AllToolsExcept(
+        options.ToolBash,
+        options.ToolWebFetch,
+    ),
 }
 
-// Using matchers
-allowSpec := helpers.AllowTools(
-	string(options.ToolRead),
-	options.ToolBash.WithMatcher("git:*"),  // Only git commands
-	string(options.ToolGrep),
-)
-// Result: "Read,Bash(git:*),Grep"
-
-// Building system prompts
+// Build multi-part system prompt
 systemPrompt := helpers.BuildSystemPrompt(
-	"You are a code review assistant.",
-	"Focus on security and performance.",
-	"Provide actionable feedback.",
+    "You are a code review assistant.",
+    "Focus on security and performance.",
 )
 ```
+
+### 4.6 Options Configuration Types (options/ package)
+
+**Priority:** Critical
+
+**Purpose:** Type-safe configuration structures for SDK initialization
+
+**Package Structure:**
+- `options/agent.go` - `AgentOptions` main config struct
+- `options/mcp.go` - MCP server config types (discriminated union)
+- `options/tools.go` - `BuiltinTool` enum and constants
+- `options/permissions.go` - `PermissionsConfig` and `PermissionMode` - **Moved to Phase 5c** (permissions package owns this)
+
+#### AgentOptions (options/agent.go)
+
+**Type Definition:**
+```go
+type AgentOptions struct {
+    CLIPath           string
+    AllowedTools      []BuiltinTool
+    DeniedTools       []BuiltinTool
+    MCPServers        map[string]MCPServerConfig
+    PermissionsConfig *permissions.PermissionsConfig  // See Phase 5c
+    SystemPrompt      string
+    // Additional fields TBD during implementation
+}
+```
+
+**Field Semantics:**
+- `CLIPath`: Absolute or relative path to Claude CLI binary; empty → search PATH
+- `AllowedTools`: Explicit allow-list; nil → all tools allowed
+- `DeniedTools`: Explicit deny-list; conflicts with AllowedTools checked at runtime
+- `MCPServers`: Map of server name → config; nil → no MCP servers
+- `PermissionsConfig`: Optional permission control; nil → allow all
+- `SystemPrompt`: Custom system prompt; empty → use CLI default
+
+**Validation Contract:**
+- `AllowedTools` and `DeniedTools` MUST NOT both be non-empty (ambiguous intent)
+- Empty options valid (all defaults)
+
+#### MCP Server Config Types (options/mcp.go)
+
+**Interface:**
+```go
+type MCPServerConfig interface {
+    mcpServerConfig()  // Private marker method prevents external implementations
+}
+```
+
+**Concrete Types:**
+
+```go
+type StdioServerConfig struct {
+    Command string
+    Args    []string
+    Env     map[string]string  // Optional environment variables
+}
+
+type HTTPServerConfig struct {
+    URL     string
+    Headers map[string]string  // Optional HTTP headers
+}
+
+type SSEServerConfig struct {
+    URL     string
+    Headers map[string]string
+}
+
+type SDKServerConfig struct {
+    Instance *mcp.Server  // User-hosted MCP server (Phase 5b)
+}
+```
+
+**Design Rationale:**
+- **Discriminated Union:** Private marker method ensures only these 4 types implement interface
+- **Type Safety:** Config type determines transport type in `initializeMCPServer()`
+- **Future-Proof:** Can add new transport types (WebSocket, gRPC) by adding new concrete types
+
+**Behavioral Semantics:**
+- `StdioServerConfig.Env` nil → inherit parent process env
+- `HTTPServerConfig.Headers` / `SSEServerConfig.Headers` nil → no custom headers
+- `SDKServerConfig.Instance` must be non-nil (validated in init)
+
+#### BuiltinTool Enum (options/tools.go)
+
+**Type Definition:**
+```go
+type BuiltinTool string
+
+const (
+    ToolBash             BuiltinTool = "Bash"
+    ToolBashOutput       BuiltinTool = "BashOutput"
+    ToolKillShell        BuiltinTool = "KillShell"
+    ToolRead             BuiltinTool = "Read"
+    ToolWrite            BuiltinTool = "Write"
+    ToolEdit             BuiltinTool = "Edit"
+    ToolGlob             BuiltinTool = "Glob"
+    ToolGrep             BuiltinTool = "Grep"
+    ToolTask             BuiltinTool = "Task"
+    ToolExitPlanMode     BuiltinTool = "ExitPlanMode"
+    ToolWebFetch         BuiltinTool = "WebFetch"
+    ToolWebSearch        BuiltinTool = "WebSearch"
+    ToolListMcpResources BuiltinTool = "ListMcpResources"
+    ToolReadMcpResource  BuiltinTool = "ReadMcpResource"
+    ToolMcp              BuiltinTool = "Mcp"
+    ToolNotebookEdit     BuiltinTool = "NotebookEdit"
+    ToolTodoWrite        BuiltinTool = "TodoWrite"
+    ToolSlashCommand     BuiltinTool = "SlashCommand"
+)
+
+func (t BuiltinTool) WithMatcher(pattern string) string
+```
+
+**WithMatcher Behavior:**
+- **Purpose:** Creates pattern-based tool spec for CLI flags
+- **Format:** `"ToolName(pattern)"` - e.g., `"Bash(git:*)"`, `"Read(*.go)"`
+- **Return Type:** String (not BuiltinTool) - represents CLI spec, not enum value
+- **Usage:** Combine with `helpers.AllowTools()` for granular control
+
+**Tool Count Verification:**
+- Total: **18 tools** (matches evaluation criteria)
+- Categories: Shell (3), File (3), Search (2), Planning (2), Web (2), MCP (3), Other (3)
 
 ---
 
@@ -692,32 +558,53 @@ func NewClient(
 ) *Client
 ```
 
-### Checklist
+### Implementation Checklist
 
-- [ ] All files under 175 lines
-- [ ] Constructor uses option pattern or config struct (≤4 params)
-- [ ] Public API fully documented with godoc examples
-- [ ] Error types have clear documentation
-- [ ] Builder pattern for complex init if needed
+**Behavioral Contract Verification:**
+- [ ] Query() closes both channels on initialization error (test with failing MCP server)
+- [ ] Query() cleanup on partial MCP failure tested (connect 2 servers, fail 2nd, verify 1st closed)
+- [ ] Client.Connect() is idempotent (calling twice returns error on 2nd call)
+- [ ] Client.ReceiveMessages() returns same channels on multiple calls (pointer equality check)
+- [ ] Client.Close() collects all errors (test with multiple failing MCP servers)
+- [ ] Client.Close() is idempotent (calling twice succeeds, 2nd is no-op)
+
+**Error Semantics Verification:**
+- [ ] Error channels are buffered (no goroutine leaks on unread errors)
+- [ ] Message channels close before error channels on normal termination
+- [ ] Context cancellation during MCP init triggers cleanup (verify with timeout context)
+- [ ] MCP connection failure returns descriptive error with server name
+
+**Lifecycle Management:**
+- [ ] MCP server cleanup order tested: streaming first, then MCP servers
+- [ ] Context propagation verified: parent context cancellation propagates to MCP calls
+- [ ] Resource leak test: Connect() → immediate Close() → no leaked goroutines/file descriptors
+
+**Type System Verification:**
+- [ ] All 18 BuiltinTool constants defined (count verification)
+- [ ] MCPServerConfig private marker method prevents external implementations
+- [ ] AgentOptions validation rejects both AllowedTools AND DeniedTools non-empty
+- [ ] BuiltinTool.WithMatcher() returns string (not BuiltinTool) - compile-time check
 
 **MCP Client Integration (External Servers):**
-- [ ] MCP server initialization handles all config types (stdio, HTTP, SSE, SDK)
-- [ ] ClientAdapter correctly implements ports.MCPServer interface
-- [ ] Proper cleanup on initialization errors (close partial connections)
-- [ ] MCP client sessions properly closed in Client.Close()
-- [ ] Context cancellation properly handled in MCP connections
+- [ ] initializeMCPServer() handles all 4 config types (stdio, HTTP, SSE, SDK)
+- [ ] ClientAdapter implements ports.MCPServer (compile-time check)
+- [ ] ClientAdapter.HandleMessage() supports all 6 MCP methods (tools/list, tools/call, etc.)
+- [ ] ClientAdapter returns JSON-RPC error response on method failure (not Go error)
+- [ ] Unsupported JSON-RPC method returns error code -32603
 
-**SDK MCP Server Integration (In-Process):**
-- [ ] SDKServerAdapter correctly implements ports.MCPServer interface
-- [ ] In-memory transport pair created with channels
-- [ ] SDK server connected to transport on initialization
-- [ ] SDK server cleanup handled in Client.Close()
-- [ ] Public API (NewMCPServer, AddTool) in pkg/claude/mcp.go
-- [ ] Complete example in cmd/examples/mcp/calculator/
+**Helper Utilities:**
+- [ ] AllToolsExcept() with empty exclusions returns all 18 tools
+- [ ] AllToolsExcept() with all tools excluded returns empty slice
+- [ ] AppendSystemPrompt() edge cases tested (both empty, one empty, both non-empty)
+- [ ] BuildSystemPrompt() joins with double newlines (verify separator)
 
-**Tool Helpers:**
-- [ ] All 18 BuiltinTool constants defined in options/tools.go
-- [ ] WithMatcher() method works correctly for pattern matching
-- [ ] Helper utilities tested with unit tests
-- [ ] AllToolsExcept() returns correct subset of tools
-- [ ] Tool helpers properly convert to CLI flag format
+**Documentation Requirements:**
+- [ ] Query() godoc explains channel closure guarantees
+- [ ] Client.Connect() godoc warns about NOT calling concurrently with Close()
+- [ ] initializeMCPServers() documents atomicity guarantee
+- [ ] All 5 open questions documented in package-level comment (for future resolution)
+
+**Code Quality:**
+- [ ] All files under 175 lines (enforcement via linter)
+- [ ] Public constructors ≤4 parameters (Query: 4, NewClient: 3 - compliant)
+- [ ] No full implementations in plan (this doc is contracts only)

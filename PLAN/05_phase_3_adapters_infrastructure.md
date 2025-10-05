@@ -1,1318 +1,924 @@
 ## Phase 3: Adapters (Infrastructure)
-### 3.1 CLI Transport Adapter (adapters/cli/transport.go)
-Priority: Critical
-This adapter implements the Transport port using subprocess CLI.
+
+**Purpose:** Infrastructure adapters connect domain services to external systems. These components handle all operational failure modes, resource management, and production diagnostics.
+
+**Priority:** Critical - These adapters contain the highest operational risk since they interface with external processes, I/O streams, and protocol state.
+
+---
+
+### 3.1 CLI Transport Adapter
+
+**Package:** `adapters/cli/`
+
+**Implements:** `ports.Transport`
+
+**Responsibility:** Manages Claude CLI subprocess lifecycle, I/O streaming, and process health monitoring.
+
+#### 3.1.1 CLI Discovery - Failure Modes & Mitigation
+
+**What Can Go Wrong:**
+
+1. **CLI not in PATH** - User installed via npm/yarn but binary not accessible
+2. **Multiple CLI versions** - Different versions in PATH vs local node_modules
+3. **Windows executable extensions** - Missing `.cmd`, `.bat`, `.exe` handling
+4. **Permission denied** - CLI exists but not executable (common on Unix after npm install)
+5. **Symlink resolution** - CLI is symlink pointing to invalid target
+6. **Non-standard installations** - Custom npm prefix, global installations in unusual locations
+
+**Detection Strategy:**
+
 ```go
-package cli
+// Discovery phase returns detailed diagnostic information
+type CLIDiscoveryResult struct {
+    Path           string
+    Version        string        // Extracted from --version
+    Executable     bool          // Actual execution test passed
+    DiagnosticInfo string        // Human-readable context for errors
+}
 
-import (
-	"bufio"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"sync"
+// Test execution with timeout to detect hanging/broken installs
+func verifyExecutable(path string) error {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
 
-	"github.com/conneroisu/claude/pkg/claude/options"
-	"github.com/conneroisu/claude/pkg/claude/ports"
+    cmd := exec.CommandContext(ctx, path, "--version")
+    output, err := cmd.CombinedOutput()
+    // Log version mismatch warnings if SDK expects specific CLI features
+    return err
+}
+```
+
+**Platform-Specific Fallbacks:**
+
+- **Windows:** Check `.exe`, `.cmd`, `.bat` extensions; handle both forward/backslash paths
+- **macOS:** Check `/usr/local/bin` (Homebrew), `~/.npm-global/bin`
+- **Linux:** Check `~/.local/bin`, `/opt/`, distro-specific package paths
+- **All platforms:** Support `CLAUDE_CLI_PATH` environment variable override for CI/testing
+
+**Observability Hooks:**
+
+- Log all discovery attempts (PATH search, fallback locations)
+- Emit warning if multiple CLI binaries found (version confusion risk)
+- Include full discovery trace in connection errors for user debugging
+
+#### 3.1.2 Process Lifecycle - Failure Modes & Recovery
+
+**What Can Go Wrong:**
+
+1. **Process exits before ready** - CLI crashes immediately (bad config, missing dependencies)
+2. **Zombie processes** - Subprocess orphaned due to parent crash/signal
+3. **Resource leaks** - Pipes not closed, goroutines not stopped on error paths
+4. **Signal handling** - Parent receives SIGTERM but child continues running
+5. **Graceful shutdown timeout** - CLI doesn't respond to stdin close within reasonable time
+
+**Process Health Monitoring:**
+
+```go
+// Track process state for diagnostics
+type ProcessHealth struct {
+    PID            int
+    StartTime      time.Time
+    LastActivity   time.Time  // Updated on each message read/write
+    BytesRead      int64
+    BytesWritten   int64
+    StderrLines    int        // Count for saturation detection
+}
+
+// Detect stuck/hung processes
+func (a *Adapter) monitorHealth(ctx context.Context) {
+    ticker := time.NewTicker(30 * time.Second)
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            if time.Since(a.health.LastActivity) > 2*time.Minute {
+                // Emit warning: process appears hung
+                a.emitHealthWarning("no activity for 2 minutes")
+            }
+        }
+    }
+}
+```
+
+**Graceful Shutdown Strategy:**
+
+1. Close stdin to signal CLI to finish current turn
+2. Wait up to 10s for process to exit naturally
+3. Send SIGTERM if still running after 10s
+4. Send SIGKILL if still running after 15s (last resort)
+5. Close all pipes and channels in defer blocks to prevent goroutine leaks
+
+**Zombie Prevention:**
+
+- Use `exec.CommandContext` with root context to ensure process termination on parent exit
+- Register signal handlers to propagate SIGTERM/SIGINT to child
+- Track subprocess PID and verify termination in Close() method
+
+#### 3.1.3 I/O Streaming - Buffer Saturation & Backpressure
+
+**What Can Go Wrong:**
+
+1. **Stdout buffer saturation** - Claude sends massive response exceeding buffer
+2. **Stderr flood** - CLI emits excessive debug logs, blocking stderr reader
+3. **Stdin write blocking** - Writing to stdin blocks forever if process hung
+4. **Partial JSON lines** - Large messages split across multiple scanner reads
+5. **Invalid UTF-8** - Corrupted output causes scanner/JSON parser errors
+6. **Race between readers** - Stdout/stderr goroutines compete for resources
+
+**Buffer Management:**
+
+```go
+// Configurable buffer limits with overflow detection
+const (
+    DefaultMaxBufferSize = 1 * 1024 * 1024      // 1MB
+    MaxStderrBufferSize  = 256 * 1024           // 256KB
+    DefaultChannelBuffer = 10                   // Buffered channels
 )
 
-// Adapter implements ports.Transport using CLI subprocess
-type Adapter struct {
-	options              *options.AgentOptions
-	cliPath              string
-	cmd                  *exec.Cmd
-	stdin                io.WriteCloser
-	stdout               io.ReadCloser
-	stderr               io.ReadCloser
-	ready                bool
-	exitErr              error
-	closeStdinAfterWrite bool // For one-shot queries
-	mu                   sync.RWMutex
-	maxBufferSize        int
-}
-
-// Verify interface compliance at compile time
-var _ ports.Transport = (*Adapter)(nil)
-
-const defaultMaxBufferSize = 1024 * 1024 // 1MB
-
-func NewAdapter(opts *options.AgentOptions) *Adapter {
-	maxBuf := defaultMaxBufferSize
-	if opts.MaxBufferSize != nil {
-		maxBuf = *opts.MaxBufferSize
-	}
-	return &Adapter{
-		options:       opts,
-		maxBufferSize: maxBuf,
-	}
-}
-
-// findCLI locates the Claude CLI binary
-func (a *Adapter) findCLI() (string, error) {
-	// Check PATH first
-	if path, err := exec.LookPath("claude"); err == nil {
-		return path, nil
-	}
-	// Check common installation locations
-	homeDir, _ := os.UserHomeDir()
-	locations := []string{
-		filepath.Join(homeDir, ".npm-global", "bin", "claude"),
-		"/usr/local/bin/claude",
-		filepath.Join(homeDir, ".local", "bin", "claude"),
-		filepath.Join(homeDir, "node_modules", ".bin", "claude"),
-		filepath.Join(homeDir, ".yarn", "bin", "claude"),
-	}
-	for _, loc := range locations {
-		if _, err := os.Stat(loc); err == nil {
-			return loc, nil
-		}
-	}
-	return "", fmt.Errorf("claude CLI not found in PATH or common locations")
-}
-
-// BuildCommand constructs the CLI command with all options
-// Exported for testing purposes
-func (a *Adapter) BuildCommand() ([]string, error) {
-	cmd := []string{a.cliPath, "--output-format", "stream-json", "--verbose"}
-	// System prompt
-	if a.options.SystemPrompt != nil {
-		switch sp := a.options.SystemPrompt.(type) {
-		case options.StringSystemPrompt:
-			cmd = append(cmd, "--system-prompt", string(sp))
-		case options.PresetSystemPrompt:
-			if sp.Append != nil {
-				cmd = append(cmd, "--append-system-prompt", *sp.Append)
-			}
-		}
-	}
-	// Tools
-	// Note: Use helper function from Phase 4 to convert []BuiltinTool to string
-	// Cannot use strings.Join directly on []BuiltinTool (type mismatch)
-	if len(a.options.AllowedTools) > 0 {
-		toolsStr := make([]string, len(a.options.AllowedTools))
-		for i, t := range a.options.AllowedTools {
-			toolsStr[i] = string(t)
-		}
-		cmd = append(cmd, "--allowedTools", strings.Join(toolsStr, ","))
-	}
-	if len(a.options.DisallowedTools) > 0 {
-		toolsStr := make([]string, len(a.options.DisallowedTools))
-		for i, t := range a.options.DisallowedTools {
-			toolsStr[i] = string(t)
-		}
-		cmd = append(cmd, "--disallowedTools", strings.Join(toolsStr, ","))
-	}
-	// Model and turns
-	if a.options.Model != nil {
-		cmd = append(cmd, "--model", *a.options.Model)
-	}
-	if a.options.MaxTurns != nil {
-		cmd = append(cmd, "--max-turns", fmt.Sprintf("%d", *a.options.MaxTurns))
-	}
-	// Permissions
-	if a.options.PermissionMode != nil {
-		cmd = append(cmd, "--permission-mode", string(*a.options.PermissionMode))
-	}
-	if a.options.PermissionPromptToolName != nil {
-		cmd = append(cmd, "--permission-prompt-tool", *a.options.PermissionPromptToolName)
-	}
-	// Session
-	if a.options.ContinueConversation {
-		cmd = append(cmd, "--continue")
-	}
-	if a.options.Resume != nil {
-		cmd = append(cmd, "--resume", *a.options.Resume)
-	}
-	if a.options.ForkSession {
-		cmd = append(cmd, "--fork-session")
-	}
-	// Settings
-	if a.options.Settings != nil {
-		cmd = append(cmd, "--settings", *a.options.Settings)
-	}
-	if len(a.options.SettingSources) > 0 {
-		sources := make([]string, len(a.options.SettingSources))
-		for i, s := range a.options.SettingSources {
-			sources[i] = string(s)
-		}
-		cmd = append(cmd, "--setting-sources", strings.Join(sources, ","))
-	}
-	// Directories
-	for _, dir := range a.options.AddDirs {
-		cmd = append(cmd, "--add-dir", dir)
-	}
-	// MCP servers (configuration only, instances handled separately)
-	if len(a.options.MCPServers) > 0 {
-		// Convert to JSON config
-		mcpConfig := map[string]any{"mcpServers": a.options.MCPServers}
-		jsonBytes, err := json.Marshal(mcpConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal MCP config: %w", err)
-		}
-		cmd = append(cmd, "--mcp-config", string(jsonBytes))
-	}
-	// Extra arguments
-	for flag, value := range a.options.ExtraArgs {
-		if value == nil {
-			cmd = append(cmd, "--"+flag)
-		} else {
-			cmd = append(cmd, "--"+flag, *value)
-		}
-	}
-	return cmd, nil
-}
-func (a *Adapter) Connect(ctx context.Context) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.ready {
-		return nil
-	}
-	// Find CLI
-	cliPath, err := a.findCLI()
-	if err != nil {
-		return fmt.Errorf("CLI discovery failed: %w", err)
-	}
-	a.cliPath = cliPath
-	// Build command
-	cmdArgs, err := a.BuildCommand()
-	if err != nil {
-		return fmt.Errorf("command construction failed: %w", err)
-	}
-	// Set up environment
-	env := os.Environ()
-	env = append(env, "CLAUDE_CODE_ENTRYPOINT=sdk-go")
-	for k, v := range a.options.Env {
-		env = append(env, k+"="+v)
-	}
-	// Create command
-	a.cmd = exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
-	a.cmd.Env = env
-	if a.options.Cwd != nil {
-		a.cmd.Dir = *a.options.Cwd
-	}
-	// Set up pipes
-	stdin, err := a.cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("stdin pipe failed: %w", err)
-	}
-	a.stdin = stdin
-	stdout, err := a.cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe failed: %w", err)
-	}
-	a.stdout = stdout
-	stderr, err := a.cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("stderr pipe failed: %w", err)
-	}
-	a.stderr = stderr
-	// Start process
-	if err := a.cmd.Start(); err != nil {
-		return fmt.Errorf("process start failed: %w", err)
-	}
-	// Start stderr handler if callback is set
-	// This runs in a goroutine to continuously stream stderr lines
-	// The Python SDK demonstrates this pattern in its subprocess handling
-	if a.options.StderrCallback != nil {
-		go a.handleStderr()
-	}
-	// Note: One-shot vs streaming mode is determined by the domain service
-	// The closeStdinAfterWrite flag is managed internally by the adapter
-	// and set via Write() method behavior, not through options
-	a.ready = true
-	return nil
-}
-
-// handleStderr continuously reads stderr and invokes the callback
-// Runs in a goroutine started by Connect()
-// The Python SDK streams stderr in a similar fashion for logging/debugging
-func (a *Adapter) handleStderr() {
-	scanner := bufio.NewScanner(a.stderr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if a.options.StderrCallback != nil {
-			a.options.StderrCallback(line)
-		}
-	}
-	// Scanner exits when stderr is closed (process terminated)
-	// No error handling needed - this is informational only
-}
-
-func (a *Adapter) Write(ctx context.Context, data string) error {
-	a.mu.RLock()
-	shouldClose := a.closeStdinAfterWrite
-	a.mu.RUnlock()
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !a.ready {
-		return fmt.Errorf("transport not ready")
-	}
-	if a.exitErr != nil {
-		return fmt.Errorf("transport has exited: %w", a.exitErr)
-	}
-	_, err := a.stdin.Write([]byte(data))
-	if err != nil {
-		return err
-	}
-	// Close stdin after write for one-shot queries
-	if shouldClose {
-		a.closeStdinAfterWrite = false
-		a.stdin.Close()
-	}
-	return nil
-}
+// Implement backpressure for large responses
 func (a *Adapter) ReadMessages(ctx context.Context) (<-chan map[string]any, <-chan error) {
-	msgCh := make(chan map[string]any, 10)
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(msgCh)
-		defer close(errCh)
-		scanner := bufio.NewScanner(a.stdout)
-		// Configure scanner buffer to handle large Claude responses
-		// Default is 64KB which is insufficient for large responses
-		scanBuf := make([]byte, 64*1024)
-		scanner.Buffer(scanBuf, a.maxBufferSize)
-		buffer := ""
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
-			default:
-			}
-			line := scanner.Text()
-			buffer += line
-			// Check buffer size
-			if len(buffer) > a.maxBufferSize {
-				errCh <- fmt.Errorf("message buffer exceeded %d bytes", a.maxBufferSize)
-				return
-			}
-			// Try to parse JSON
-			var msg map[string]any
-			if err := json.Unmarshal([]byte(buffer), &msg); err == nil {
-				buffer = ""
-				msgCh <- msg
-			}
-			// Continue buffering if incomplete
-		}
-		if err := scanner.Err(); err != nil {
-			errCh <- err
-		}
-		// Check exit status
-		if a.cmd != nil {
-			if err := a.cmd.Wait(); err != nil {
-				errCh <- fmt.Errorf("process exited with error: %w", err)
-			}
-		}
-	}()
-	return msgCh, errCh
-}
-func (a *Adapter) EndInput() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.stdin != nil {
-		return a.stdin.Close()
-	}
-	return nil
-}
+    // Channel sizing prevents unbounded memory growth
+    msgCh := make(chan map[string]any, DefaultChannelBuffer)
 
-func (a *Adapter) Close() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.ready = false
-	// Close stdin
-	if a.stdin != nil {
-		a.stdin.Close()
-	}
-	// Terminate process
-	if a.cmd != nil && a.cmd.Process != nil {
-		a.cmd.Process.Kill()
-		a.cmd.Wait()
-	}
-	return nil
-}
+    // Scanner with size limit prevents single-message OOM
+    scanner.Buffer(initialBuf, a.maxBufferSize)
 
-func (a *Adapter) IsReady() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.ready
+    // Incremental buffer growth with limit
+    if len(buffer) > a.maxBufferSize {
+        return fmt.Errorf("message exceeded %d bytes - possible CLI corruption", a.maxBufferSize)
+    }
 }
 ```
-### 3.2 JSON-RPC Protocol Adapter (adapters/jsonrpc/protocol.go)
-Priority: High
-Key Design: This adapter implements `ports.ProtocolHandler` and manages all control protocol state (pending requests, request IDs, etc.). The domain services delegate this infrastructure concern to the adapter.
+
+**Stderr Handling:**
+
+- **Non-blocking consumption:** Stderr reader must never block stdout processing
+- **Rate limiting:** If stderr exceeds 100 lines/second, enable sampling (log every 10th line)
+- **Overflow detection:** Track stderr volume; warn if exceeds 10MB total
+- **Callback timeout:** If user stderr callback blocks >1s, skip further invocations and warn
+
+**Partial Message Handling:**
+
 ```go
-package jsonrpc
+// Accumulate multi-line JSON safely
+buffer := ""
+for scanner.Scan() {
+    buffer += scanner.Text()
 
-import (
-	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"sync"
-	"time"
+    // Attempt parse after each line
+    var msg map[string]any
+    if err := json.Unmarshal([]byte(buffer), &msg); err == nil {
+        buffer = "" // Reset on successful parse
+        msgCh <- msg
+    } else if len(buffer) > maxBufferSize {
+        return fmt.Errorf("incomplete message exceeded buffer limit")
+    }
+    // Continue accumulating if JSON incomplete
+}
+```
 
-	"github.com/conneroisu/claude/pkg/claude/hooking"
-	"github.com/conneroisu/claude/pkg/claude/options"
-	"github.com/conneroisu/claude/pkg/claude/permissions"
-	"github.com/conneroisu/claude/pkg/claude/ports"
-)
+#### 3.1.4 Error Propagation & Production Diagnostics
 
-// Adapter implements ports.ProtocolHandler for control protocol
-// This is an INFRASTRUCTURE adapter - it handles protocol state management
-type Adapter struct {
-	transport ports.Transport
-	// Control protocol state (managed by adapter, not domain)
-	pendingReqs    map[string]chan result
-	requestCounter int
-	mu             sync.Mutex
+**Timeout Strategy:**
+
+- **Connection timeout:** 30s for initial process startup + CLI handshake
+- **Write timeout:** 5s per stdin write (detect broken pipe quickly)
+- **Read timeout:** None on ReadMessages (streaming is indefinite), but monitor health
+- **Shutdown timeout:** 10s for graceful close, 15s before SIGKILL
+
+**Error Context Enrichment:**
+
+```go
+// Attach full diagnostic context to all errors
+type CLIError struct {
+    Stage       string                  // "discovery", "connect", "write", "read"
+    Cause       error                   // Underlying error
+    ProcessInfo *ProcessHealth          // PID, runtime stats
+    CLIPath     string
+    Command     []string                // Full command-line for reproduction
+    Environment map[string]string       // Relevant env vars
 }
 
-// Verify interface compliance at compile time
-var _ ports.ProtocolHandler = (*Adapter)(nil)
+func (e *CLIError) Error() string {
+    return fmt.Sprintf("CLI %s failed: %v [pid=%d, runtime=%s, path=%s]",
+        e.Stage, e.Cause, e.ProcessInfo.PID,
+        time.Since(e.ProcessInfo.StartTime), e.CLIPath)
+}
+```
 
-type result struct {
-	data map[string]any
-	err  error
+**Observability Hooks (Logging/Metrics):**
+
+- **Startup:** Log CLI path, version, full command, process PID
+- **I/O activity:** Increment counters for messages sent/received, bytes transferred
+- **Health checks:** Emit gauge for time-since-last-activity
+- **Errors:** Log full CLIError with structured fields for aggregation
+- **Shutdown:** Log process exit code, runtime duration, total message count
+
+**Suggested Instrumentation Points:**
+
+```go
+type TransportMetrics interface {
+    RecordCLIDiscovery(path string, durationMs int64, success bool)
+    RecordProcessStart(pid int)
+    RecordMessageSent(bytes int)
+    RecordMessageReceived(bytes int)
+    RecordError(stage string, err error)
+    RecordProcessExit(exitCode int, runtimeMs int64)
 }
 
-func NewAdapter(transport ports.Transport) *Adapter {
-	return &Adapter{
-		transport:   transport,
-		pendingReqs: make(map[string]chan result),
-	}
+// Adapter optionally accepts metrics interface
+func NewAdapter(opts *options.AgentOptions, metrics TransportMetrics) *Adapter
+```
+
+#### 3.1.5 Command Construction - Edge Cases
+
+**Illustrative Example (not exhaustive):**
+
+```go
+// BuildCommand constructs CLI arguments, handling edge cases
+func (a *Adapter) BuildCommand() ([]string, error) {
+    cmd := []string{a.cliPath, "--output-format", "stream-json"}
+
+    // Handle spaces in arguments (e.g., system prompts with quotes)
+    if a.options.SystemPrompt != nil {
+        // Shell escaping handled by exec.Command, but log for transparency
+        cmd = append(cmd, "--system-prompt", escapeForLogging(systemPrompt))
+    }
+
+    // Validate file paths before passing to CLI
+    if a.options.Cwd != nil {
+        if !filepath.IsAbs(*a.options.Cwd) {
+            return nil, fmt.Errorf("Cwd must be absolute path, got: %s", *a.options.Cwd)
+        }
+    }
+
+    return cmd, nil
+}
+```
+
+**Windows Path Handling:**
+
+- Convert backslashes to forward slashes for `--add-dir` if CLI expects Unix-style
+- Use `filepath.ToSlash()` or `filepath.FromSlash()` as appropriate
+- Test on Windows CI with paths containing spaces and special chars
+
+---
+
+### 3.2 JSON-RPC Protocol Adapter
+
+**Package:** `adapters/jsonrpc/`
+
+**Implements:** `ports.ProtocolHandler`
+
+**Responsibility:** Manages control protocol state, request routing, timeout handling, and concurrent request tracking.
+
+#### 3.2.1 Request State Management - Failure Modes
+
+**What Can Go Wrong:**
+
+1. **Request ID collision** - Duplicate IDs cause response routing to wrong caller
+2. **Memory leak from abandoned requests** - Pending requests never cleaned up if response never arrives
+3. **Response for unknown request** - CLI sends response for request we didn't track
+4. **Concurrent map access** - Race conditions when routing responses vs creating new requests
+5. **Channel blocking** - Result channel full, blocking response handler
+6. **Context cancellation not propagated** - Request cancelled but remains in pending map
+
+**State Tracking Strategy:**
+
+```go
+type ProtocolAdapter struct {
+    transport      ports.Transport
+    pendingReqs    map[string]chan result
+    requestCounter int
+    mu             sync.Mutex
+
+    // Observability
+    metrics        ProtocolMetrics
+    maxPending     int  // Track high-water mark for capacity planning
 }
 
-// Initialize is a no-op - initialization happens implicitly in StartMessageRouter
-func (a *Adapter) Initialize(ctx context.Context, config any) (map[string]any, error) {
-	return nil, nil
+// Cleanup abandoned requests periodically
+func (a *ProtocolAdapter) cleanupAbandonedRequests(ctx context.Context) {
+    ticker := time.NewTicker(1 * time.Minute)
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            a.mu.Lock()
+            // Close channels for requests older than 5 minutes
+            // (60s timeout + 4min grace for hung CLI)
+            orphaned := 0
+            for id, ch := range a.pendingReqs {
+                // Extract timestamp from request ID format
+                if isOlderThan(id, 5*time.Minute) {
+                    close(ch)
+                    delete(a.pendingReqs, id)
+                    orphaned++
+                }
+            }
+            if orphaned > 0 {
+                a.metrics.RecordOrphanedRequests(orphaned)
+            }
+            a.mu.Unlock()
+        }
+    }
+}
+```
+
+**Request ID Generation:**
+
+```go
+// Format: req_{counter}_{timestamp}_{randomHex}
+// Timestamp enables age-based cleanup
+func (a *ProtocolAdapter) generateRequestID() string {
+    a.mu.Lock()
+    a.requestCounter++
+    counter := a.requestCounter
+    a.mu.Unlock()
+
+    timestamp := time.Now().Unix()
+    random := randomHex(4)
+
+    return fmt.Sprintf("req_%d_%d_%s", counter, timestamp, random)
 }
 
-// SendControlRequest sends a control request and waits for response
-// This method handles all request ID generation and timeout logic
-func (a *Adapter) SendControlRequest(ctx context.Context, req map[string]any) (map[string]any, error) {
-	// Generate unique request ID: req_{counter}_{randomHex}
-	a.mu.Lock()
-	a.requestCounter++
-	requestID := fmt.Sprintf("req_%d_%s", a.requestCounter, randomHex(4))
-	a.mu.Unlock()
-	// Create result channel for this request
-	resCh := make(chan result, 1)
-	a.mu.Lock()
-	a.pendingReqs[requestID] = resCh
-	a.mu.Unlock()
-	// Build control request envelope
-	controlReq := map[string]any{
-		"type":       "control_request",
-		"request_id": requestID,
-		"request":    req,
-	}
-	// Send via transport
-	reqBytes, err := json.Marshal(controlReq)
-	if err != nil {
-		a.mu.Lock()
-		delete(a.pendingReqs, requestID)
-		a.mu.Unlock()
-		return nil, fmt.Errorf("marshal control request: %w", err)
-	}
-	if err := a.transport.Write(ctx, string(reqBytes)+"\n"); err != nil {
-		a.mu.Lock()
-		delete(a.pendingReqs, requestID)
-		a.mu.Unlock()
-		return nil, fmt.Errorf("write control request: %w", err)
-	}
-	// Wait for response with 60s timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	select {
-	case <-timeoutCtx.Done():
-		a.mu.Lock()
-		delete(a.pendingReqs, requestID)
-		a.mu.Unlock()
-		if timeoutCtx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("control request timeout: %s", req["subtype"])
-		}
-		return nil, timeoutCtx.Err()
-	case res := <-resCh:
-		if res.err != nil {
-			return nil, res.err
-		}
-		return res.data, nil
-	}
-}
+// Extract timestamp for cleanup logic
+func extractTimestamp(requestID string) (time.Time, error) {
+    parts := strings.Split(requestID, "_")
+    if len(parts) < 3 {
+        return time.Time{}, fmt.Errorf("invalid request ID format")
+    }
 
-// HandleControlRequest routes inbound control requests by subtype
-func (a *Adapter) HandleControlRequest(
-	ctx context.Context,
-	req map[string]any,
-	perms *permissions.Service,
-	hooks map[string]hooking.HookCallback,
-	mcpServers map[string]ports.MCPServer,
+    ts, err := strconv.ParseInt(parts[2], 10, 64)
+    if err != nil {
+        return time.Time{}, err
+    }
+
+    return time.Unix(ts, 0), nil
+}
+```
+
+#### 3.2.2 Timeout Handling - Production Concerns
+
+**Timeout Hierarchy:**
+
+- **Default control request timeout:** 60s (covers hooks, permissions, MCP routing)
+- **Hook execution timeout:** 30s (prevent infinite user code)
+- **Permission prompt timeout:** 120s (user may be slow to respond)
+- **MCP server timeout:** 45s (external server may be slow)
+
+**Timeout Strategy:**
+
+```go
+func (a *ProtocolAdapter) SendControlRequest(
+    ctx context.Context,
+    req map[string]any,
 ) (map[string]any, error) {
-	request, _ := req["request"].(map[string]any)
-	subtype, _ := request["subtype"].(string)
-	switch subtype {
-	case "can_use_tool":
-		return a.handleCanUseTool(ctx, request, perms)
-	case "hook_callback":
-		return a.handleHookCallback(ctx, request, hooks)
-	case "mcp_message":
-		return a.handleMCPMessage(ctx, request, mcpServers)
-	default:
-		return nil, fmt.Errorf("unsupported control request subtype: %s", subtype)
-	}
+    requestID := a.generateRequestID()
+    resCh := make(chan result, 1)  // Buffered to prevent goroutine leak
+
+    a.mu.Lock()
+    a.pendingReqs[requestID] = resCh
+    a.mu.Unlock()
+
+    // Cleanup on all exit paths
+    defer func() {
+        a.mu.Lock()
+        delete(a.pendingReqs, requestID)
+        a.mu.Unlock()
+    }()
+
+    // Send request to transport
+    if err := a.sendRequest(ctx, requestID, req); err != nil {
+        return nil, err
+    }
+
+    // Determine timeout based on request subtype
+    timeout := a.getTimeoutForSubtype(req["subtype"].(string))
+    timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+    defer cancel()
+
+    select {
+    case <-timeoutCtx.Done():
+        if timeoutCtx.Err() == context.DeadlineExceeded {
+            a.metrics.RecordTimeout(req["subtype"].(string))
+            return nil, fmt.Errorf("control request timeout after %s: %s",
+                timeout, req["subtype"])
+        }
+        return nil, timeoutCtx.Err()  // Parent context cancelled
+
+    case res := <-resCh:
+        if res.err != nil {
+            a.metrics.RecordError(req["subtype"].(string))
+            return nil, res.err
+        }
+        a.metrics.RecordSuccess(req["subtype"].(string))
+        return res.data, nil
+    }
 }
 
-// StartMessageRouter continuously reads transport and partitions messages
-func (a *Adapter) StartMessageRouter(
-	ctx context.Context,
-	msgCh chan<- map[string]any,
-	errCh chan<- error,
-	perms *permissions.Service,
-	hooks map[string]hooking.HookCallback,
-	mcpServers map[string]ports.MCPServer,
-) error {
-	go func() {
-		transportMsgCh, transportErrCh := a.transport.ReadMessages(ctx)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-transportMsgCh:
-				if !ok {
-					return
-				}
-				msgType, _ := msg["type"].(string)
-				switch msgType {
-				case "control_response":
-					// Route to pending request
-					a.routeControlResponse(msg)
-				case "control_request":
-					// Handle inbound control request
-					go a.handleControlRequestAsync(ctx, msg, perms, hooks, mcpServers)
-				case "control_cancel_request":
-					// Cancel a pending control request
-					requestID, _ := msg["request_id"].(string)
-					a.mu.Lock()
-					if ch, exists := a.pendingReqs[requestID]; exists {
-						// Send error to indicate cancellation
-						select {
-						case ch <- result{err: fmt.Errorf("request cancelled")}:
-						default:
-						}
-						close(ch)
-						delete(a.pendingReqs, requestID)
-					}
-					a.mu.Unlock()
-					continue
-				default:
-					// Forward SDK messages to public stream
-					select {
-					case msgCh <- msg:
-					case <-ctx.Done():
-						return
-					}
-				}
-			case err := <-transportErrCh:
-				if err != nil {
-					select {
-					case errCh <- err:
-					case <-ctx.Done():
-					}
-					return
-				}
-			}
-		}
-	}()
-	return nil
-}
-
-// routeControlResponse routes control_response messages to pending requests
-func (a *Adapter) routeControlResponse(msg map[string]any) {
-	response, _ := msg["response"].(map[string]any)
-	requestID, _ := response["request_id"].(string)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if ch, exists := a.pendingReqs[requestID]; exists {
-		subtype, _ := response["subtype"].(string)
-		if subtype == "error" {
-			errorMsg, _ := response["error"].(string)
-			ch <- result{err: fmt.Errorf("control error: %s", errorMsg)}
-		} else {
-			responseData, _ := response["response"].(map[string]any)
-			ch <- result{data: responseData}
-		}
-		delete(a.pendingReqs, requestID)
-	}
-}
-
-// handleControlRequestAsync handles inbound control requests asynchronously
-// Dependencies (perms, hooks, mcpServers) must be passed by the domain service that starts the router
-func (a *Adapter) handleControlRequestAsync(
-	ctx context.Context,
-	msg map[string]any,
-	perms *permissions.Service,
-	hooks map[string]hooking.HookCallback,
-	mcpServers map[string]ports.MCPServer,
-) {
-	requestID, _ := msg["request_id"].(string)
-	// Handle the request
-	responseData, err := a.HandleControlRequest(ctx, msg, perms, hooks, mcpServers)
-	// Build response
-	var response map[string]any
-	if err != nil {
-		response = map[string]any{
-			"type": "control_response",
-			"response": map[string]any{
-				"subtype":    "error",
-				"request_id": requestID,
-				"error":      err.Error(),
-			},
-		}
-	} else {
-		response = map[string]any{
-			"type": "control_response",
-			"response": map[string]any{
-				"subtype":    "success",
-				"request_id": requestID,
-				"response":   responseData,
-			},
-		}
-	}
-	// Send response
-	resBytes, _ := json.Marshal(response)
-	a.transport.Write(ctx, string(resBytes)+"\n")
-}
-
-// handleCanUseTool handles can_use_tool control requests
-func (a *Adapter) handleCanUseTool(ctx context.Context, request map[string]any, perms *permissions.Service) (map[string]any, error) {
-	toolName, _ := request["tool_name"].(string)
-	input, _ := request["input"].(map[string]any)
-
-	// Parse permission suggestions from control request
-	var suggestions []permissions.PermissionUpdate
-	if suggestionsData, ok := request["permission_suggestions"].([]any); ok {
-		for _, sugData := range suggestionsData {
-			if sugMap, ok := sugData.(map[string]any); ok {
-				update := parsePermissionUpdate(sugMap)
-				suggestions = append(suggestions, update)
-			}
-		}
-	}
-
-	if perms == nil {
-		return nil, fmt.Errorf("permissions callback not provided")
-	}
-
-	result, err := perms.CheckToolUse(ctx, toolName, input, suggestions)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert PermissionResult to response format
-	switch r := result.(type) {
-	case *permissions.PermissionResultAllow:
-		response := map[string]any{"allow": true}
-		if r.UpdatedInput != nil {
-			response["input"] = r.UpdatedInput
-		}
-		// Include updated permissions in response (for "always allow" flow)
-		if r.UpdatedPermissions != nil && len(r.UpdatedPermissions) > 0 {
-			response["updated_permissions"] = r.UpdatedPermissions
-		}
-		return response, nil
-	case *permissions.PermissionResultDeny:
-		return map[string]any{
-			"allow":  false,
-			"reason": r.Message,
-		}, nil
-	default:
-		return nil, fmt.Errorf("unknown permission result type")
-	}
-}
-
-// parsePermissionUpdate parses a single permission update from raw data
-func parsePermissionUpdate(data map[string]any) permissions.PermissionUpdate {
-	update := permissions.PermissionUpdate{}
-
-	if updateType, ok := data["type"].(string); ok {
-		update.Type = updateType
-	}
-
-	if rulesData, ok := data["rules"].([]any); ok {
-		for _, ruleData := range rulesData {
-			if ruleMap, ok := ruleData.(map[string]any); ok {
-				toolName, _ := ruleMap["toolName"].(string)
-				ruleContent := getStringPtr(ruleMap, "ruleContent")
-				update.Rules = append(update.Rules, permissions.PermissionRuleValue{
-					ToolName:    toolName,
-					RuleContent: ruleContent,
-				})
-			}
-		}
-	}
-
-	if behaviorStr, ok := data["behavior"].(string); ok {
-		behavior := permissions.PermissionBehavior(behaviorStr)
-		update.Behavior = &behavior
-	}
-
-	if modeStr, ok := data["mode"].(string); ok {
-		mode := options.PermissionMode(modeStr)
-		update.Mode = &mode
-	}
-
-	if dirsData, ok := data["directories"].([]any); ok {
-		for _, dirData := range dirsData {
-			if dir, ok := dirData.(string); ok {
-				update.Directories = append(update.Directories, dir)
-			}
-		}
-	}
-
-	if destStr, ok := data["destination"].(string); ok {
-		dest := permissions.PermissionUpdateDestination(destStr)
-		update.Destination = &dest
-	}
-
-	return update
-}
-
-// handleHookCallback handles hook_callback control requests
-func (a *Adapter) handleHookCallback(ctx context.Context, request map[string]any, hooks map[string]hooking.HookCallback) (map[string]any, error) {
-	callbackID, _ := request["callback_id"].(string)
-	input, _ := request["input"].(map[string]any)
-	// toolUseID is a string, not *string - JSON decoding produces plain string values
-	var toolUseID *string
-	if id, ok := request["tool_use_id"].(string); ok {
-		toolUseID = &id
-	}
-	callback, exists := hooks[callbackID]
-	if !exists {
-		return nil, fmt.Errorf("no hook callback found for ID: %s", callbackID)
-	}
-	// Execute callback with context for cancellation support
-	hookCtx := hooking.HookContext{
-		Signal: ctx, // Pass context for cancellation/timeout
-	}
-	result, err := callback(input, toolUseID, hookCtx)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// handleMCPMessage handles mcp_message control requests by proxying
-// the raw message to the appropriate MCP server adapter (client or SDK type).
-// The mcpServers map contains both:
-// - ClientAdapter instances (connected to external MCP servers via stdio/HTTP/SSE)
-// - ServerAdapter instances (wrapping user's in-process *mcp.Server instances)
-func (a *Adapter) handleMCPMessage(ctx context.Context, request map[string]any, mcpServers map[string]ports.MCPServer) (map[string]any, error) {
-	serverName, _ := request["server_name"].(string)
-	mcpMessage, _ := request["message"].(map[string]any)
-
-	// Look up server adapter by name
-	server, exists := mcpServers[serverName]
-	if !exists {
-		return a.mcpErrorResponse(mcpMessage, -32601, fmt.Sprintf("Server '%s' not found", serverName)), nil
-	}
-
-	// Marshal message to JSON-RPC format
-	mcpMessageBytes, err := json.Marshal(mcpMessage)
-	if err != nil {
-		return a.mcpErrorResponse(mcpMessage, -32603, "failed to marshal mcp message"), nil
-	}
-
-	// Forward to adapter (ClientAdapter or ServerAdapter)
-	// The adapter handles routing to either external server or in-process server
-	responseBytes, err := server.HandleMessage(ctx, mcpMessageBytes)
-	if err != nil {
-		return a.mcpErrorResponse(mcpMessage, -32603, err.Error()), nil
-	}
-
-	// Unmarshal response for control protocol
-	var mcpResponse map[string]any
-	if err := json.Unmarshal(responseBytes, &mcpResponse); err != nil {
-		return a.mcpErrorResponse(mcpMessage, -32603, "failed to unmarshal mcp response"), nil
-	}
-
-	return map[string]any{
-		"mcp_response": mcpResponse,
-	}, nil
-}
-
-// mcpErrorResponse creates an MCP JSON-RPC error response
-func (a *Adapter) mcpErrorResponse(message map[string]any, code int, msg string) map[string]any {
-	return map[string]any{
-		"mcp_response": map[string]any{
-			"jsonrpc": "2.0",
-			"id":      message["id"],
-			"error": map[string]any{
-				"code":    code,
-				"message": msg,
-			},
-		},
-	}
-}
-
-// randomHex generates a random hex string of n bytes
-func randomHex(n int) string {
-	b := make([]byte, n)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+func (a *ProtocolAdapter) getTimeoutForSubtype(subtype string) time.Duration {
+    switch subtype {
+    case "hook_callback":
+        return 30 * time.Second
+    case "can_use_tool":
+        return 120 * time.Second  // User permission prompt
+    case "mcp_message":
+        return 45 * time.Second
+    default:
+        return 60 * time.Second
+    }
 }
 ```
-### 3.3 Message Parser Adapter (adapters/parse/parser.go)
-Priority: High
-This adapter implements `ports.MessageParser`, converting raw JSON messages from the transport into typed domain messages.
+
+**Observability for Timeouts:**
+
+- Log timeout events with request details (subtype, input, duration)
+- Track timeout rate per subtype (high timeout rate indicates configuration issue)
+- Include timeout context in error messages for user debugging
+
+#### 3.2.3 Message Routing - Race Conditions & Error Cases
+
+**What Can Go Wrong:**
+
+1. **Response arrives before request registered** - Race between send and router startup
+2. **Multiple responses for same request** - CLI bug or protocol confusion
+3. **Malformed control messages** - Missing required fields cause panic in type assertions
+4. **Router goroutine exits prematurely** - Transport error kills router, requests hang forever
+5. **Channel send blocks** - Sending to msgCh/errCh blocks if consumer slow
+
+**Router Resilience:**
+
 ```go
-package parse
+func (a *ProtocolAdapter) StartMessageRouter(
+    ctx context.Context,
+    msgCh chan<- map[string]any,
+    errCh chan<- error,
+    deps ControlDependencies,
+) error {
+    // Ensure router keeps running despite individual message errors
+    go func() {
+        defer func() {
+            if r := recover(); r != nil {
+                a.metrics.RecordRouterPanic(fmt.Sprintf("%v", r))
+                // Send error to notify caller of router failure
+                select {
+                case errCh <- fmt.Errorf("router panicked: %v", r):
+                default:
+                }
+            }
+        }()
 
-import (
-	"encoding/json"
-	"fmt"
+        transportMsgCh, transportErrCh := a.transport.ReadMessages(ctx)
+        for {
+            select {
+            case <-ctx.Done():
+                a.cleanupAllPendingRequests()
+                return
 
-	"github.com/conneroisu/claude/pkg/claude/messages"
-	"github.com/conneroisu/claude/pkg/claude/ports"
-)
+            case msg, ok := <-transportMsgCh:
+                if !ok {
+                    a.cleanupAllPendingRequests()
+                    return
+                }
 
-// Adapter implements ports.MessageParser
-// This is an INFRASTRUCTURE adapter - handles low-level message parsing
-type Adapter struct{}
+                // Recover from panic in message handling
+                func() {
+                    defer func() {
+                        if r := recover(); r != nil {
+                            a.metrics.RecordMessagePanic(fmt.Sprintf("%v", r))
+                        }
+                    }()
+                    a.routeMessage(ctx, msg, msgCh, deps)
+                }()
 
-// Verify interface compliance at compile time
-var _ ports.MessageParser = (*Adapter)(nil)
+            case err := <-transportErrCh:
+                select {
+                case errCh <- err:
+                case <-ctx.Done():
+                }
+                return
+            }
+        }
+    }()
 
-func NewAdapter() *Adapter {
-	return &Adapter{}
+    return nil
+}
+```
+
+**Safe Field Extraction:**
+
+```go
+// Safely extract fields with defaults/validation
+func getStringField(msg map[string]any, field string) (string, error) {
+    val, ok := msg[field]
+    if !ok {
+        return "", fmt.Errorf("missing required field: %s", field)
+    }
+
+    str, ok := val.(string)
+    if !ok {
+        return "", fmt.Errorf("field %s must be string, got %T", field, val)
+    }
+
+    return str, nil
 }
 
-// Parse implements ports.MessageParser
-func (a *Adapter) Parse(data map[string]any) (messages.Message, error) {
-	msgType, ok := data["type"].(string)
-	if !ok {
-		return nil, fmt.Errorf("message missing type field")
-	}
-	switch msgType {
-	case "user":
-		return a.parseUserMessage(data)
-	case "assistant":
-		return a.parseAssistantMessage(data)
-	case "system":
-		return a.parseSystemMessage(data)
-	case "result":
-		return a.parseResultMessage(data)
-	case "stream_event":
-		return a.parseStreamEvent(data)
-	default:
-		return nil, fmt.Errorf("unknown message type: %s", msgType)
-	}
+func (a *ProtocolAdapter) routeControlResponse(msg map[string]any) {
+    // Validate structure before accessing
+    response, ok := msg["response"].(map[string]any)
+    if !ok {
+        a.metrics.RecordMalformedMessage("control_response")
+        return
+    }
+
+    requestID, err := getStringField(response, "request_id")
+    if err != nil {
+        a.metrics.RecordMalformedMessage("control_response")
+        return
+    }
+
+    a.mu.Lock()
+    ch, exists := a.pendingReqs[requestID]
+    delete(a.pendingReqs, requestID)
+    a.mu.Unlock()
+
+    if !exists {
+        a.metrics.RecordUnknownResponse(requestID)
+        return
+    }
+
+    // Send with timeout to prevent blocking on full channel
+    select {
+    case ch <- a.parseResponse(response):
+    case <-time.After(1 * time.Second):
+        a.metrics.RecordBlockedResponseSend(requestID)
+    }
 }
-func (a *Adapter) parseUserMessage(data map[string]any) (messages.Message, error) {
-	msg, _ := data["message"].(map[string]any)
+```
 
-	// Parse content (can be string or array of blocks)
-	var content messages.MessageContent
-	if contentStr, ok := msg["content"].(string); ok {
-		content = messages.StringContent(contentStr)
-	} else if contentArr, ok := msg["content"].([]any); ok {
-		blocks, err := parseContentBlocks(contentArr)
-		if err != nil {
-			return nil, fmt.Errorf("parse user message content blocks: %w", err)
-		}
-		content = messages.BlockListContent(blocks)
-	} else {
-		return nil, fmt.Errorf("user message content must be string or array")
-	}
+#### 3.2.4 Error Propagation & Diagnostics
 
-	parentToolUseID := getStringPtr(data, "parent_tool_use_id")
-	isSynthetic, _ := data["isSynthetic"].(bool)
+**Error Categories:**
 
-	return &messages.UserMessage{
-		Content:         content,
-		ParentToolUseID: parentToolUseID,
-		IsSynthetic:     isSynthetic,
-	}, nil
-}
+1. **Protocol errors:** Malformed messages, unknown request types
+2. **Timeout errors:** Request exceeded deadline
+3. **Transport errors:** Subprocess died, I/O error
+4. **Handler errors:** Hook/permission/MCP handler returned error
 
-func (a *Adapter) parseSystemMessage(data map[string]any) (messages.Message, error) {
-	subtype, ok := data["subtype"].(string)
-	if !ok {
-		return nil, fmt.Errorf("system message missing subtype field")
-	}
+**Structured Error Types:**
 
-	// Data field is intentionally kept as map[string]any
-	// Users can parse it into specific SystemMessageData types if needed
-	// (SystemMessageInit, SystemMessageCompactBoundary)
-	systemData, _ := data["data"].(map[string]any)
-	if systemData == nil {
-		systemData = make(map[string]any)
-	}
-
-	return &messages.SystemMessage{
-		Subtype: subtype,
-		Data:    systemData,
-	}, nil
+```go
+type ProtocolError struct {
+    Category    string              // "protocol", "timeout", "transport", "handler"
+    RequestID   string
+    Subtype     string
+    Cause       error
+    RequestData map[string]any      // For debugging
 }
 
-func (a *Adapter) parseResultMessage(data map[string]any) (messages.Message, error) {
-	subtype, ok := data["subtype"].(string)
-	if !ok {
-		return nil, fmt.Errorf("result message missing subtype field")
-	}
-
-	// Type-safe approach: marshal map to JSON, then unmarshal into typed struct
-	jsonBytes, err := json.Marshal(data)
-	if err != nil {
-		return nil, fmt.Errorf("marshal result message: %w", err)
-	}
-
-	switch subtype {
-	case "success":
-		var result messages.ResultMessageSuccess
-		if err := json.Unmarshal(jsonBytes, &result); err != nil {
-			return nil, fmt.Errorf("unmarshal success result: %w", err)
-		}
-		return &result, nil
-
-	case "error_max_turns", "error_during_execution":
-		var result messages.ResultMessageError
-		if err := json.Unmarshal(jsonBytes, &result); err != nil {
-			return nil, fmt.Errorf("unmarshal error result: %w", err)
-		}
-		return &result, nil
-
-	default:
-		return nil, fmt.Errorf("unknown result subtype: %s", subtype)
-	}
+func (e *ProtocolError) Error() string {
+    return fmt.Sprintf("protocol %s error [%s/%s]: %v",
+        e.Category, e.RequestID, e.Subtype, e.Cause)
 }
+```
 
-func (a *Adapter) parseStreamEvent(data map[string]any) (messages.Message, error) {
-	uuid, ok := data["uuid"].(string)
-	if !ok {
-		return nil, fmt.Errorf("stream event missing uuid field")
-	}
+**Observability Hooks:**
 
-	sessionID, ok := data["session_id"].(string)
-	if !ok {
-		return nil, fmt.Errorf("stream event missing session_id field")
-	}
-
-	event, ok := data["event"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("stream event missing event field")
-	}
-
-	parentToolUseID := getStringPtr(data, "parent_tool_use_id")
-
-	return &messages.StreamEvent{
-		UUID:            uuid,
-		SessionID:       sessionID,
-		Event:           event, // Keep as map[string]any (raw Anthropic API event)
-		ParentToolUseID: parentToolUseID,
-	}, nil
-}
-func (a *Adapter) parseAssistantMessage(data map[string]any) (messages.Message, error) {
-	// Parse content blocks
-	msg, _ := data["message"].(map[string]any)
-	contentArray, _ := msg["content"].([]any)
-	var blocks []messages.ContentBlock
-	for _, item := range contentArray {
-		block, _ := item.(map[string]any)
-		blockType, _ := block["type"].(string)
-		switch blockType {
-		case "text":
-			text, _ := block["text"].(string)
-			blocks = append(blocks, messages.TextBlock{Text: text})
-		case "thinking":
-			thinking, _ := block["thinking"].(string)
-			signature, _ := block["signature"].(string)
-			blocks = append(blocks, messages.ThinkingBlock{
-				Thinking:  thinking,
-				Signature: signature,
-			})
-		case "tool_use":
-			id, _ := block["id"].(string)
-			name, _ := block["name"].(string)
-			input, _ := block["input"].(map[string]any)
-			blocks = append(blocks, messages.ToolUseBlock{
-				ID:    id,
-				Name:  name,
-				Input: input,
-			})
-		case "tool_result":
-			toolUseID, _ := block["tool_use_id"].(string)
-			content := block["content"]
-			isError, _ := block["is_error"].(*bool)
-			blocks = append(blocks, messages.ToolResultBlock{
-				ToolUseID: toolUseID,
-				Content:   content,
-				IsError:   isError,
-			})
-		}
-	}
-	model, _ := msg["model"].(string)
-	parentToolUseID := getStringPtr(data, "parent_tool_use_id")
-	return &messages.AssistantMessage{
-		Content:         blocks,
-		Model:           model,
-		ParentToolUseID: parentToolUseID,
-	}, nil
-}
-
-// Helper function for extracting optional string pointers
-func getStringPtr(data map[string]any, key string) *string {
-	if val, ok := data[key].(string); ok {
-		return &val
-	}
-	return nil
-}
-
-// parseUsageStats parses usage statistics from raw data
-func parseUsageStats(data any) (messages.UsageStats, error) {
-	if data == nil {
-		return messages.UsageStats{}, nil
-	}
-
-	usageMap, ok := data.(map[string]any)
-	if !ok {
-		return messages.UsageStats{}, fmt.Errorf("usage must be an object")
-	}
-
-	inputTokens, _ := usageMap["input_tokens"].(float64)
-	outputTokens, _ := usageMap["output_tokens"].(float64)
-	cacheReadInputTokens, _ := usageMap["cache_read_input_tokens"].(float64)
-	cacheCreationInputTokens, _ := usageMap["cache_creation_input_tokens"].(float64)
-
-	return messages.UsageStats{
-		InputTokens:              int(inputTokens),
-		OutputTokens:             int(outputTokens),
-		CacheReadInputTokens:     int(cacheReadInputTokens),
-		CacheCreationInputTokens: int(cacheCreationInputTokens),
-	}, nil
-}
-
-// parseModelUsage parses per-model usage statistics
-func parseModelUsage(data any) (map[string]messages.ModelUsage, error) {
-	if data == nil {
-		return make(map[string]messages.ModelUsage), nil
-	}
-
-	modelUsageMap, ok := data.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("modelUsage must be an object")
-	}
-
-	result := make(map[string]messages.ModelUsage)
-	for modelName, usageData := range modelUsageMap {
-		usageMap, ok := usageData.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		inputTokens, _ := usageMap["inputTokens"].(float64)
-		outputTokens, _ := usageMap["outputTokens"].(float64)
-		cacheReadInputTokens, _ := usageMap["cacheReadInputTokens"].(float64)
-		cacheCreationInputTokens, _ := usageMap["cacheCreationInputTokens"].(float64)
-		webSearchRequests, _ := usageMap["webSearchRequests"].(float64)
-		costUSD, _ := usageMap["costUSD"].(float64)
-		contextWindow, _ := usageMap["contextWindow"].(float64)
-
-		result[modelName] = messages.ModelUsage{
-			InputTokens:              int(inputTokens),
-			OutputTokens:             int(outputTokens),
-			CacheReadInputTokens:     int(cacheReadInputTokens),
-			CacheCreationInputTokens: int(cacheCreationInputTokens),
-			WebSearchRequests:        int(webSearchRequests),
-			CostUSD:                  costUSD,
-			ContextWindow:            int(contextWindow),
-		}
-	}
-
-	return result, nil
-}
-
-// parsePermissionDenials parses array of permission denials
-func parsePermissionDenials(data any) ([]messages.PermissionDenial, error) {
-	if data == nil {
-		return []messages.PermissionDenial{}, nil
-	}
-
-	denialsArray, ok := data.([]any)
-	if !ok {
-		return nil, fmt.Errorf("permission_denials must be an array")
-	}
-
-	result := make([]messages.PermissionDenial, 0, len(denialsArray))
-	for _, denialData := range denialsArray {
-		denialMap, ok := denialData.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		toolName, _ := denialMap["tool_name"].(string)
-		toolUseID, _ := denialMap["tool_use_id"].(string)
-		toolInput, _ := denialMap["tool_input"].(map[string]any)
-
-		result = append(result, messages.PermissionDenial{
-			ToolName:  toolName,
-			ToolUseID: toolUseID,
-			ToolInput: toolInput,
-		})
-	}
-
-	return result, nil
-}
-
-// parseContentBlocks parses an array of content blocks
-func parseContentBlocks(contentArr []any) ([]messages.ContentBlock, error) {
-	blocks := make([]messages.ContentBlock, 0, len(contentArr))
-
-	for _, item := range contentArr {
-		block, ok := item.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("content block must be an object")
-		}
-
-		blockType, ok := block["type"].(string)
-		if !ok {
-			return nil, fmt.Errorf("content block missing type field")
-		}
-
-		switch blockType {
-		case "text":
-			textBlock, err := parseTextBlock(block)
-			if err != nil {
-				return nil, err
-			}
-			blocks = append(blocks, textBlock)
-
-		case "thinking":
-			thinkingBlock, err := parseThinkingBlock(block)
-			if err != nil {
-				return nil, err
-			}
-			blocks = append(blocks, thinkingBlock)
-
-		case "tool_use":
-			toolUseBlock, err := parseToolUseBlock(block)
-			if err != nil {
-				return nil, err
-			}
-			blocks = append(blocks, toolUseBlock)
-
-		case "tool_result":
-			toolResultBlock, err := parseToolResultBlock(block)
-			if err != nil {
-				return nil, err
-			}
-			blocks = append(blocks, toolResultBlock)
-
-		default:
-			return nil, fmt.Errorf("unknown content block type: %s", blockType)
-		}
-	}
-
-	return blocks, nil
-}
-
-// parseTextBlock parses a text content block
-func parseTextBlock(block map[string]any) (messages.TextBlock, error) {
-	text, ok := block["text"].(string)
-	if !ok {
-		return messages.TextBlock{}, fmt.Errorf("text block missing text field")
-	}
-
-	return messages.TextBlock{
-		Text: text,
-	}, nil
-}
-
-// parseThinkingBlock parses a thinking content block
-func parseThinkingBlock(block map[string]any) (messages.ThinkingBlock, error) {
-	thinking, ok := block["thinking"].(string)
-	if !ok {
-		return messages.ThinkingBlock{}, fmt.Errorf("thinking block missing thinking field")
-	}
-
-	signature, _ := block["signature"].(string)
-
-	return messages.ThinkingBlock{
-		Thinking:  thinking,
-		Signature: signature,
-	}, nil
-}
-
-// parseToolUseBlock parses a tool_use content block
-func parseToolUseBlock(block map[string]any) (messages.ToolUseBlock, error) {
-	id, ok := block["id"].(string)
-	if !ok {
-		return messages.ToolUseBlock{}, fmt.Errorf("tool_use block missing id field")
-	}
-
-	name, ok := block["name"].(string)
-	if !ok {
-		return messages.ToolUseBlock{}, fmt.Errorf("tool_use block missing name field")
-	}
-
-	input, ok := block["input"].(map[string]any)
-	if !ok {
-		// Input can be missing or null
-		input = make(map[string]any)
-	}
-
-	return messages.ToolUseBlock{
-		ID:    id,
-		Name:  name,
-		Input: input,
-	}, nil
-}
-
-// parseToolResultBlock parses a tool_result content block
-func parseToolResultBlock(block map[string]any) (messages.ToolResultBlock, error) {
-	toolUseID, ok := block["tool_use_id"].(string)
-	if !ok {
-		return messages.ToolResultBlock{}, fmt.Errorf("tool_result block missing tool_use_id field")
-	}
-
-	// Parse content (can be string or array of content blocks)
-	var content messages.ToolResultContent
-	if contentStr, ok := block["content"].(string); ok {
-		content = messages.ToolResultStringContent(contentStr)
-	} else if contentArr, ok := block["content"].([]any); ok {
-		// Tool result content can be an array of raw content blocks (maps)
-		blockMaps := make([]map[string]any, 0, len(contentArr))
-		for _, item := range contentArr {
-			if blockMap, ok := item.(map[string]any); ok {
-				blockMaps = append(blockMaps, blockMap)
-			}
-		}
-		content = messages.ToolResultBlockListContent(blockMaps)
-	} else {
-		return messages.ToolResultBlock{}, fmt.Errorf("tool_result content must be string or array")
-	}
-
-	// is_error is optional
-	var isError *bool
-	if isErrorVal, ok := block["is_error"].(bool); ok {
-		isError = &isErrorVal
-	}
-
-	return messages.ToolResultBlock{
-		ToolUseID: toolUseID,
-		Content:   content,
-		IsError:   isError,
-	}, nil
+```go
+type ProtocolMetrics interface {
+    RecordRequest(subtype string)
+    RecordSuccess(subtype string)
+    RecordError(subtype string)
+    RecordTimeout(subtype string)
+    RecordMalformedMessage(msgType string)
+    RecordUnknownResponse(requestID string)
+    RecordPendingRequests(count int)  // Gauge
+    RecordOrphanedRequests(count int)
 }
 ```
 
 ---
 
-## Linting Compliance Notes
+### 3.3 Message Parser Adapter
 
-### File Size Requirements (175 line limit)
+**Package:** `adapters/parse/`
 
-**All adapters require significant decomposition:**
+**Implements:** `ports.MessageParser`
 
-**adapters/cli/ package:**
-- ❌ Single `transport.go` (400+ lines planned)
-- ✅ Split into 7 files:
-  - `transport.go` - Adapter struct + interface (60 lines)
-  - `connect.go` - Connection logic (70 lines)
-  - `command.go` - Command building (80 lines)
-  - `io.go` - I/O handling (90 lines)
-  - `discovery.go` - CLI discovery (50 lines)
-  - `process.go` - Process management (60 lines)
-  - `errors.go` - Error types (40 lines)
+**Responsibility:** Converts raw JSON maps from transport into typed domain message structures.
 
-**adapters/jsonrpc/ package:**
-- ❌ Single `protocol.go` (350+ lines planned)
-- ✅ Split into 5 files:
-  - `protocol.go` - Handler struct + interface (50 lines)
-  - `control.go` - Control request handling (80 lines)
-  - `routing.go` - Message routing (90 lines)
-  - `handlers.go` - Per-type request handlers (80 lines)
-  - `state.go` - State tracking (50 lines)
+#### 3.3.1 Parsing Failures - Robustness Strategy
 
-**adapters/parse/ package:**
-- ❌ Single `parser.go` shown above (1100+ lines!)
-- ✅ Split into 9 files:
-  - `parser.go` - Main parser interface (40 lines)
-  - `user.go` - UserMessage parsing (60 lines)
-  - `assistant.go` - AssistantMessage parsing (80 lines)
-  - `system.go` - SystemMessage parsing (70 lines)
-  - `result.go` - ResultMessage parsing (90 lines)
-  - `stream.go` - StreamEvent parsing (50 lines)
-  - `content.go` - ContentBlock parsing (80 lines)
-  - `usage.go` - Usage stats parsing (60 lines)
-  - `helpers.go` - Shared helper functions (40 lines)
+**What Can Go Wrong:**
 
-**adapters/mcp/ package:**
-- ❌ Single file approach insufficient - need TWO distinct adapters
-- ✅ Split into 3 files (under 175 lines each):
-  - `client.go` - ClientAdapter for external MCP servers (90 lines)
-  - `server.go` - ServerAdapter for SDK MCP servers (85 lines)
-  - `helpers.go` - Shared utilities (40 lines)
+1. **Type assertion panics** - Field exists but has unexpected type (string vs number, etc.)
+2. **Missing required fields** - CLI sends incomplete message
+3. **Unknown message types** - CLI introduces new message type, SDK doesn't recognize
+4. **Malformed JSON** - Already parsed by transport, but structure invalid
+5. **Encoding issues** - UTF-8 problems in text fields
+6. **Array element type mismatches** - Content blocks have unexpected structure
 
-### Complexity Hotspots
-
-**CLI adapter:**
-- Command building → Use builder pattern with method chaining
-- Process I/O → Extract reader/writer functions
-- CLI discovery → Extract path search functions
-
-**JSON-RPC adapter:**
-- Request routing → Use handler registry map instead of switch
-- State tracking → Extract state manager struct
-- Timeout handling → Extract timeout wrapper function
-
-**Parser adapter:**
-- Type switching → Extract per-type parser functions
-- Field extraction → Extract helper validators
-- Content parsing → Extract block-specific parsers
-
-### Parameter Reduction Patterns
-
-Many adapter functions exceed 4-parameter limit:
+**Safe Parsing Pattern:**
 
 ```go
-// BAD: 6 parameters
-func (a *Adapter) HandleControlRequest(
-    ctx context.Context,
-    req map[string]any,
-    perms *permissions.Service,
-    hooks map[string]hooking.HookCallback,
-    mcpServers map[string]ports.MCPServer,
-    logger Logger,
-) (map[string]any, error)
+// Never panic on type assertions - always check and return error
+func getStringField(data map[string]any, field string, required bool) (string, error) {
+    val, ok := data[field]
+    if !ok {
+        if required {
+            return "", fmt.Errorf("missing required field: %s", field)
+        }
+        return "", nil  // Optional field missing
+    }
 
-// GOOD: Use dependencies struct (3 parameters)
-type ControlDependencies struct {
-    Perms      *permissions.Service
-    Hooks      map[string]hooking.HookCallback
-    MCPServers map[string]ports.MCPServer
+    str, ok := val.(string)
+    if !ok {
+        return "", fmt.Errorf("field %s must be string, got %T", field, val)
+    }
+
+    return str, nil
 }
 
-func (a *Adapter) HandleControlRequest(
-    ctx context.Context,
-    req map[string]any,
-    deps ControlDependencies,
-) (map[string]any, error)
+func getOptionalString(data map[string]any, field string) *string {
+    if str, err := getStringField(data, field, false); err == nil && str != "" {
+        return &str
+    }
+    return nil
+}
 ```
 
-### Checklist
+**Unknown Message Type Handling:**
 
-- [ ] All files under 175 lines
-- [ ] Parser split into per-message-type files
-- [ ] CLI command builder uses fluent/builder pattern
-- [ ] I/O operations in separate helper files
-- [ ] Process management uses extracted functions
-- [ ] Handler functions use dependency structs (≤4 params)
-- [ ] All functions under 25 lines
-- [ ] Max nesting depth ≤ 3 levels
+```go
+func (a *Adapter) Parse(data map[string]any) (messages.Message, error) {
+    msgType, err := getStringField(data, "type", true)
+    if err != nil {
+        return nil, err
+    }
+
+    switch msgType {
+    case "user", "assistant", "system", "result", "stream_event":
+        return a.parseKnownType(msgType, data)
+    default:
+        // Don't fail - wrap in UnknownMessage for forward compatibility
+        a.metrics.RecordUnknownMessageType(msgType)
+        return &messages.UnknownMessage{
+            Type: msgType,
+            Raw:  data,
+        }, nil
+    }
+}
+```
+
+#### 3.3.2 Content Block Parsing - Union Type Handling
+
+**Challenge:** Content can be string or array of blocks, blocks can be text/thinking/tool_use/tool_result.
+
+**Type-Safe Approach:**
+
+```go
+// Parse content with fallback for unknown block types
+func parseContentBlocks(contentArr []any) ([]messages.ContentBlock, error) {
+    blocks := make([]messages.ContentBlock, 0, len(contentArr))
+
+    for i, item := range contentArr {
+        blockMap, ok := item.(map[string]any)
+        if !ok {
+            return nil, fmt.Errorf("content block %d must be object, got %T", i, item)
+        }
+
+        blockType, err := getStringField(blockMap, "type", true)
+        if err != nil {
+            return nil, fmt.Errorf("content block %d: %w", i, err)
+        }
+
+        var block messages.ContentBlock
+        var parseErr error
+
+        switch blockType {
+        case "text":
+            block, parseErr = parseTextBlock(blockMap)
+        case "thinking":
+            block, parseErr = parseThinkingBlock(blockMap)
+        case "tool_use":
+            block, parseErr = parseToolUseBlock(blockMap)
+        case "tool_result":
+            block, parseErr = parseToolResultBlock(blockMap)
+        default:
+            // Forward compatibility: preserve unknown blocks as raw data
+            block = messages.UnknownContentBlock{
+                Type: blockType,
+                Raw:  blockMap,
+            }
+        }
+
+        if parseErr != nil {
+            return nil, fmt.Errorf("parse %s block at index %d: %w", blockType, i, parseErr)
+        }
+
+        blocks = append(blocks, block)
+    }
+
+    return blocks, nil
+}
+```
+
+#### 3.3.3 Error Context - Debugging Support
+
+**Attach Full Context to Parse Errors:**
+
+```go
+type ParseError struct {
+    MessageType string
+    Field       string
+    Cause       error
+    RawData     map[string]any  // Include for debugging (truncate if large)
+}
+
+func (e *ParseError) Error() string {
+    // Truncate raw data for readability
+    rawStr := fmt.Sprintf("%v", e.RawData)
+    if len(rawStr) > 200 {
+        rawStr = rawStr[:200] + "..."
+    }
+
+    return fmt.Sprintf("parse %s message field %s: %v (raw: %s)",
+        e.MessageType, e.Field, e.Cause, rawStr)
+}
+```
+
+**Observability:**
+
+```go
+type ParserMetrics interface {
+    RecordParse(messageType string, success bool)
+    RecordUnknownMessageType(msgType string)
+    RecordUnknownBlockType(blockType string)
+    RecordParseError(messageType string, field string)
+}
+```
+
+---
+
+### 3.4 File Organization - Linting Compliance
+
+**Current state:** Massive single-file adapters violate 175-line limit.
+
+**Required decomposition:**
+
+#### CLI Adapter Package (`adapters/cli/`)
+
+1. `transport.go` - Adapter struct, interface compliance, NewAdapter (60 lines)
+2. `discovery.go` - CLI discovery with platform-specific logic (80 lines)
+3. `connect.go` - Process startup, pipe setup (70 lines)
+4. `command.go` - Command building, option handling (85 lines)
+5. `io.go` - ReadMessages, Write, buffer management (90 lines)
+6. `health.go` - Process monitoring, graceful shutdown (75 lines)
+7. `errors.go` - CLIError type, diagnostic formatting (50 lines)
+
+**Total:** ~510 lines across 7 files (vs 400+ in one file)
+
+#### JSON-RPC Adapter Package (`adapters/jsonrpc/`)
+
+1. `protocol.go` - Adapter struct, interface, NewAdapter (50 lines)
+2. `requests.go` - SendControlRequest, request ID generation (80 lines)
+3. `routing.go` - StartMessageRouter, message partitioning (90 lines)
+4. `handlers.go` - HandleControlRequest, per-subtype routing (85 lines)
+5. `cleanup.go` - Abandoned request cleanup, state management (60 lines)
+6. `errors.go` - ProtocolError type, error categories (40 lines)
+
+**Total:** ~405 lines across 6 files
+
+#### Parser Adapter Package (`adapters/parse/`)
+
+1. `parser.go` - Adapter struct, Parse dispatcher (60 lines)
+2. `user.go` - User message parsing (70 lines)
+3. `assistant.go` - Assistant message parsing (80 lines)
+4. `system.go` - System message parsing (50 lines)
+5. `result.go` - Result message parsing (90 lines)
+6. `stream.go` - Stream event parsing (60 lines)
+7. `blocks.go` - Content block parsing (150 lines - complex unions)
+8. `helpers.go` - Field extraction helpers (60 lines)
+9. `errors.go` - ParseError type (40 lines)
+
+**Total:** ~660 lines across 9 files (vs 1100+ in one file)
+
+---
+
+## Implementation Sequence
+
+**Phase 3.1: CLI Transport** (Week 1)
+
+- Day 1-2: Discovery + platform testing
+- Day 3-4: Process lifecycle + health monitoring
+- Day 5: I/O streaming + buffer management
+- Day 6-7: Error handling + observability hooks
+
+**Acceptance Criteria:**
+- CLI discovered on Windows, macOS, Linux
+- Process terminates gracefully (no zombies)
+- Large messages (>1MB) handled without saturation
+- Timeout/error context included in all errors
+
+**Phase 3.2: JSON-RPC Protocol** (Week 2)
+
+- Day 1-2: State management + concurrent safety
+- Day 3-4: Message routing + request lifecycle
+- Day 5: Timeout handling per subtype
+- Day 6-7: Cleanup logic + leak prevention
+
+**Acceptance Criteria:**
+- No request ID collisions under concurrent load
+- Abandoned requests cleaned up within 5 minutes
+- Timeout errors distinguish deadline vs cancellation
+- Router resilient to malformed messages (no panics)
+
+**Phase 3.3: Message Parser** (Week 2-3)
+
+- Day 1-2: Safe field extraction helpers
+- Day 3-4: Per-message-type parsers
+- Day 5-6: Content block union handling
+- Day 7: Unknown type forward compatibility
+
+**Acceptance Criteria:**
+- No panics on type assertion failures
+- Unknown message/block types wrapped, not rejected
+- Parse errors include full diagnostic context
+- Tests cover all message types from Python SDK
+
+---
+
+## Testing Strategy
+
+### Failure Mode Tests (Priority: Critical)
+
+**CLI Transport:**
+- CLI not found (expect clear error with discovery trace)
+- CLI exits immediately (expect process health error)
+- Stdout saturation (expect buffer overflow error)
+- Stdin write to dead process (expect broken pipe error)
+- Graceful shutdown timeout (expect SIGKILL after 15s)
+
+**JSON-RPC Protocol:**
+- Request timeout (expect timeout error with subtype)
+- Response for unknown request (expect metric, no crash)
+- Concurrent request storm (expect no ID collisions)
+- Router goroutine panic (expect error propagated to caller)
+- Abandoned requests (expect cleanup after 5min)
+
+**Message Parser:**
+- Missing required field (expect ParseError with field name)
+- Wrong type for field (expect ParseError with type info)
+- Unknown message type (expect UnknownMessage wrapper)
+- Unknown block type (expect UnknownContentBlock wrapper)
+- Malformed content array (expect error with index)
+
+### Platform-Specific Tests
+
+**Windows:**
+- CLI discovery with .exe/.cmd/.bat extensions
+- Paths with spaces and backslashes
+- SIGTERM/SIGKILL equivalents (process termination)
+
+**macOS/Linux:**
+- Permission denied on executable
+- Symlink resolution
+- Signal propagation to child process
+
+---
+
+## Observability Checklist
+
+**Required Metrics:**
+- CLI discovery duration and success rate
+- Process lifetime and exit codes
+- Message throughput (msgs/sec, bytes/sec)
+- Control request latency by subtype
+- Timeout rate by subtype
+- Parse error rate by message type
+- Unknown message/block type occurrences
+
+**Required Logs:**
+- CLI path, version, PID at startup
+- Full command-line for reproduction
+- Health warnings (no activity, stderr saturation)
+- All errors with structured diagnostic fields
+- Process exit with runtime and message count
+
+**Suggested Trace Points:**
+- SendControlRequest entry/exit
+- Message routing decision (control vs SDK)
+- Parse entry/exit per message type
+
+---
+
+## Open Questions for Phase 4
+
+1. **Metrics interface:** Should adapters accept optional metrics interface, or use global registry?
+2. **Health monitoring:** Should health checks be opt-in or always enabled?
+3. **Buffer limits:** Should max buffer size be per-message or total process memory?
+4. **Timeout configuration:** Should users be able to override per-subtype timeouts?
+5. **Unknown message handling:** Should UnknownMessage be surfaced to public API or filtered internally?

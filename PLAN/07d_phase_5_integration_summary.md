@@ -68,154 +68,231 @@ Custom authorization logic for tool usage:
 
 ---
 
-## End-to-End Integration Example
+## Integration Validation Checklist
 
-Example showing all three integrations working together:
+This section provides a step-by-step checklist for validating that all three integration features work together correctly.
 
-```go
-package main
+### Step 1: SDK MCP Server Integration Validation
 
-import (
-	"context"
-	"fmt"
-	"log"
+**Objective:** Verify SDK-based MCP servers expose custom tools correctly.
 
-	"github.com/conneroisu/claude/pkg/claude"
-	"github.com/conneroisu/claude/pkg/claude/hooking"
-	"github.com/conneroisu/claude/pkg/claude/options"
-	"github.com/conneroisu/claude/pkg/claude/permissions"
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-)
+- [ ] **1.1** Create SDK MCP server using `claude.NewMCPServer()` (to be defined in Phase 5b)
+- [ ] **1.2** Add at least one custom tool with `claude.AddTool()` (to be defined in Phase 5b)
+- [ ] **1.3** Pass server instance to agent options via `MCPServers` map (to be defined in Phase 4)
+- [ ] **1.4** Verify tool appears in agent's available tools list
+- [ ] **1.5** Send message that triggers custom tool usage
+- [ ] **1.6** Verify tool handler receives correct arguments and executes
+- [ ] **1.7** Verify tool result returns to agent correctly
 
-func main() {
-	ctx := context.Background()
+**Types referenced (to be defined):**
+- `claude.NewMCPServer()` - Phase 5b (MCP servers)
+- `claude.AddTool()` - Phase 5b (MCP servers)
+- `options.MCPServerConfig` - Phase 4 or 5b (configuration)
+- `options.SDKServerConfig` - Phase 4 or 5b (configuration)
 
-	// 1. Create SDK MCP server with custom tools
-	server := claude.NewMCPServer("api-client", "1.0")
+---
 
-	type APICallArgs struct {
-		Endpoint string `json:"endpoint" jsonschema:"description=API endpoint to call"`
-		Method   string `json:"method" jsonschema:"description=HTTP method"`
-	}
+### Step 2: Hooks Integration Validation
 
-	apiHandler := func(ctx context.Context, req *mcpsdk.CallToolRequest, args APICallArgs) (*mcpsdk.CallToolResult, struct{ Response string }, error) {
-		// Make actual API call here
-		return nil, struct{ Response string }{Response: "API response"}, nil
-	}
+**Objective:** Verify lifecycle hooks execute at correct points and can modify behavior.
 
-	claude.AddTool(server, &mcpsdk.Tool{
-		Name:        "call_api",
-		Description: "Make API calls to external services",
-	}, apiHandler)
+- [ ] **2.1** Define hook callbacks for at least two hook events:
+  - `PreToolUse` - Before tool execution
+  - `PostToolUse` - After tool execution
+- [ ] **2.2** Register hooks with agent (mechanism to be defined in Phase 4 or 5a)
+- [ ] **2.3** Trigger tool execution via agent message
+- [ ] **2.4** Verify `PreToolUse` hook fires BEFORE tool executes
+- [ ] **2.5** Verify hook receives correct input (tool name, arguments, etc.)
+- [ ] **2.6** Test hook blocking capability:
+  - Hook returns `Continue: false` (to be defined in Phase 5a)
+  - Verify tool does NOT execute
+  - Verify appropriate response sent to CLI
+- [ ] **2.7** Verify `PostToolUse` hook fires AFTER tool completes
+- [ ] **2.8** Verify hook receives tool result in input
 
-	// 2. Set up hooks for logging and monitoring
-	hooks := map[hooking.HookEvent][]hooking.HookMatcher{
-		hooking.HookEventPreToolUse: {
-			{
-				Matcher: "call_api",
-				Hooks: []hooking.HookCallback{
-					func(input hooking.HookInput) (hooking.HookOutput, error) {
-						log.Printf("About to call API: %v", input)
-						// Optionally block or modify the call
-						return hooking.HookOutput{Continue: true}, nil
-					},
-				},
-			},
-		},
-		hooking.HookEventPostToolUse: {
-			{
-				Hooks: []hooking.HookCallback{
-					func(input hooking.HookInput) (hooking.HookOutput, error) {
-						log.Printf("Tool executed: %v", input)
-						return hooking.HookOutput{}, nil
-					},
-				},
-			},
-		},
-	}
+**Types referenced (to be defined):**
+- `hooking.HookEvent` - Re-exported in Phase 5a from domain
+- `hooking.HookCallback` - Re-exported in Phase 5a from domain
+- `hooking.HookInput` - To be defined in Phase 5a or domain layer
+- `hooking.HookOutput` - To be defined in Phase 5a or domain layer
+- `hooking.HookMatcher` - To be defined in Phase 5a
 
-	// 3. Set up permission callback for authorization
-	canUseTool := func(toolName string, input map[string]any, ctx permissions.Context) (permissions.Result, error) {
-		// Custom authorization logic
-		if toolName == "call_api" {
-			endpoint, _ := input["endpoint"].(string)
-			if isAllowedEndpoint(endpoint) {
-				return permissions.ResultAllow{}, nil
-			}
-			return permissions.ResultDeny{
-				Message: fmt.Sprintf("Endpoint %s not allowed", endpoint),
-			}, nil
-		}
-		return permissions.ResultAllow{}, nil
-	}
+---
 
-	// 4. Configure Claude with all three integrations
-	opts := &options.AgentOptions{
-		MCPServers: map[string]options.MCPServerConfig{
-			"api": options.SDKServerConfig{
-				Type:     "sdk",
-				Name:     "api",
-				Instance: server,
-			},
-		},
-		AllowedTools: []options.BuiltinTool{
-			options.ToolMcp,
-		},
-	}
+### Step 3: Permissions Integration Validation
 
-	permsConfig := &permissions.PermissionsConfig{
-		CanUseTool: canUseTool,
-	}
+**Objective:** Verify permission callbacks control tool authorization correctly.
 
-	// 5. Execute query with all integrations active
-	client := claude.NewClient(opts, hooks, permsConfig)
-	if err := client.Connect(ctx, nil); err != nil {
-		log.Fatal(err)
-	}
-	defer client.Close()
+- [ ] **3.1** Define `CanUseTool` callback function (to be defined in Phase 5c)
+- [ ] **3.2** Register callback in permissions config (to be defined in Phase 5c)
+- [ ] **3.3** Trigger tool usage that callback should ALLOW
+- [ ] **3.4** Verify callback receives correct parameters:
+  - Tool name
+  - Tool input arguments
+  - Context information
+- [ ] **3.5** Verify callback returns `PermissionResultAllow` (defined in Phase 2/5c)
+- [ ] **3.6** Verify tool executes normally
+- [ ] **3.7** Trigger tool usage that callback should DENY
+- [ ] **3.8** Verify callback returns `PermissionResultDeny` (defined in Phase 2/5c)
+- [ ] **3.9** Verify tool does NOT execute
+- [ ] **3.10** Verify denial message reaches CLI correctly
 
-	// Send message and receive responses
-	if err := client.SendMessage(ctx, "Use the API to fetch user data"); err != nil {
-		log.Fatal(err)
-	}
+**Types referenced:**
+- `PermissionResultAllow` - Defined in Phase 2 and 5c
+- `PermissionResultDeny` - Defined in Phase 2 and 5c
+- `PermissionsConfig` - To be defined in Phase 5c
+- `CanUseTool` callback signature - To be defined in Phase 5c
 
-	msgCh, errCh := client.ReceiveMessages(ctx)
-	for {
-		select {
-		case msg, ok := <-msgCh:
-			if !ok {
-				return
-			}
-			fmt.Printf("Response: %v\n", msg)
+---
 
-		case err, ok := <-errCh:
-			if !ok {
-				return
-			}
-			if err != nil {
-				log.Printf("Error: %v", err)
-			}
-		}
-	}
-}
+### Step 4: Combined Integration Validation
 
-func isAllowedEndpoint(endpoint string) bool {
-	// Authorization logic
-	allowedEndpoints := []string{"/api/users", "/api/data"}
-	for _, allowed := range allowedEndpoints {
-		if endpoint == allowed {
-			return true
-		}
-	}
-	return false
-}
+**Objective:** Verify all three integrations work together without conflicts.
+
+- [ ] **4.1** Set up agent with ALL three integrations enabled:
+  - SDK MCP server with custom tool
+  - Hooks for `PreToolUse` and `PostToolUse`
+  - Permission callback
+- [ ] **4.2** Trigger tool execution and verify execution order:
+  1. Permission callback fires FIRST
+  2. If allowed, `PreToolUse` hook fires
+  3. If hook allows, tool executes
+  4. `PostToolUse` hook fires
+- [ ] **4.3** Test permission denial blocks hook execution:
+  - Permission callback returns DENY
+  - Verify `PreToolUse` hook does NOT fire
+  - Verify tool does NOT execute
+- [ ] **4.4** Test hook blocking after permission allows:
+  - Permission callback returns ALLOW
+  - `PreToolUse` hook returns `Continue: false`
+  - Verify tool does NOT execute
+  - Verify `PostToolUse` hook does NOT fire
+- [ ] **4.5** Test successful execution with all integrations:
+  - Permission ALLOWS
+  - `PreToolUse` hook ALLOWS (returns `Continue: true`)
+  - Tool executes successfully
+  - `PostToolUse` hook receives result
+- [ ] **4.6** Verify no resource leaks or deadlocks occur
+
+---
+
+### Step 5: Resource Cleanup Validation
+
+**Objective:** Verify proper cleanup when agent shuts down with active integrations.
+
+**Cleanup Order (to be implemented):**
+1. **Stop accepting new messages** - Agent stops processing new requests
+2. **Complete in-flight tool executions** - Let active tools finish
+3. **Fire cleanup hooks** (if any) - `Stop`, `SubagentStop` hooks
+4. **Close MCP server connections** - SDK servers and external servers
+5. **Release permission callback resources** - If callback holds resources
+6. **Close transport channels** - stdin/stdout/stderr
+7. **Wait for goroutines** - Ensure all background work completes
+
+**Validation Steps:**
+- [ ] **5.1** Start agent with all integrations active
+- [ ] **5.2** Initiate agent shutdown via context cancellation or `Close()`
+- [ ] **5.3** Verify in-flight tool executions complete before shutdown
+- [ ] **5.4** Verify `Stop` hooks fire (if registered)
+- [ ] **5.5** Verify MCP server connections close gracefully:
+  - SDK server handlers stop accepting requests
+  - External server connections send close frames
+- [ ] **5.6** Verify permission callback is NOT called after shutdown starts
+- [ ] **5.7** Verify all goroutines exit within timeout (e.g., 5 seconds)
+- [ ] **5.8** Verify no goroutine leaks using runtime checks
+- [ ] **5.9** Verify no channel deadlocks occur
+- [ ] **5.10** Verify cleanup is idempotent (calling `Close()` twice is safe)
+
+**Resource Cleanup Semantics (to be implemented):**
+- **MCP SDK Servers:** Close all active tool handlers, wait for in-flight calls
+- **MCP External Servers:** Send close frames, close transport connections
+- **Hooks:** No cleanup needed (stateless callbacks)
+- **Permissions:** Callback-specific cleanup (if callback manages resources)
+- **Channels:** Close message/error channels, drain buffered messages
+- **Goroutines:** Cancel contexts, wait for worker pools to exit
+
+---
+
+### Step 6: Error Handling Validation
+
+**Objective:** Verify error conditions are handled gracefully across integrations.
+
+- [ ] **6.1** Verify hook callback errors propagate correctly:
+  - Hook returns error instead of result
+  - Verify error reaches agent error channel
+  - Verify appropriate error sent to CLI
+- [ ] **6.2** Verify permission callback errors propagate correctly:
+  - Callback returns error
+  - Verify tool execution blocked
+  - Verify error message reaches CLI
+- [ ] **6.3** Verify MCP tool handler errors propagate correctly:
+  - Tool handler returns error
+  - Verify error reaches agent
+  - Verify `PostToolUse` hook still fires (if applicable)
+  - Verify error sent to CLI
+- [ ] **6.4** Verify panic recovery in integrations:
+  - Hook callback panics
+  - Verify panic caught and converted to error
+  - Verify agent remains stable
+- [ ] **6.5** Verify timeout handling:
+  - Hook execution exceeds timeout (if timeouts implemented)
+  - Verify hook cancelled
+  - Verify timeout error propagates correctly
+
+---
+
+### Step 7: Concurrency Validation
+
+**Objective:** Verify thread-safety and concurrent execution handling.
+
+- [ ] **7.1** Verify concurrent tool executions don't interfere:
+  - Trigger multiple tool calls in parallel
+  - Verify each gets correct hook callbacks
+  - Verify each gets correct permission checks
+- [ ] **7.2** Verify hook callbacks are goroutine-safe:
+  - Concurrent hooks don't corrupt shared state
+  - Hook registration is thread-safe
+- [ ] **7.3** Verify permission callback is goroutine-safe:
+  - Concurrent permission checks don't interfere
+  - Callback state (if any) is protected
+- [ ] **7.4** Verify MCP server handlers are goroutine-safe:
+  - Concurrent tool calls handled correctly
+  - Server state properly synchronized
+
+---
+
+## Integration Flow Summary
+
+**Conceptual execution flow when all integrations are active:**
+
+```
+User Message
+    ↓
+Agent receives tool use request
+    ↓
+[1] Permission callback fires
+    ├─ DENY → Send denial to CLI, STOP
+    └─ ALLOW → Continue
+         ↓
+[2] PreToolUse hook fires
+    ├─ Continue: false → Send block message to CLI, STOP
+    └─ Continue: true → Continue
+         ↓
+[3] MCP tool handler executes
+    ├─ Success → Continue with result
+    └─ Error → Continue with error
+         ↓
+[4] PostToolUse hook fires
+    └─ Receives result/error
+         ↓
+Send result to CLI
 ```
 
-**Integration Flow:**
-1. User defines custom tools via SDK MCP server
-2. Hooks log and monitor tool usage
-3. Permission callback authorizes tool calls
-4. All three work together seamlessly via hexagonal architecture
+**Key architectural notes:**
+- Permissions checked BEFORE hooks (security boundary)
+- PreToolUse can still block after permission allows (flexibility)
+- PostToolUse always fires if tool executed (observability)
+- Errors at any stage propagate to CLI gracefully
 
 ---
 

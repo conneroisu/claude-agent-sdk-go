@@ -10,8 +10,8 @@ stop:
   run: |
     # echo "Stop hook"
     nix fmt
-    # lint
-    # tests
+    lint
+    tests
 
   # Alternative structured command format with optional custom error messages
   # Each command can have its own error message
