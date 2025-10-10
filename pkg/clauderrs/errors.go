@@ -327,7 +327,13 @@ type ProcessError struct {
 }
 
 // NewProcessError creates a new process error.
-func NewProcessError(code ErrorCode, message string, cause error, exitCode int, stderr string) *ProcessError {
+func NewProcessError(
+	code ErrorCode,
+	message string,
+	cause error,
+	exitCode int,
+	stderr string,
+) *ProcessError {
 	err := &ProcessError{
 		BaseError: NewBaseError(CategoryProcess, code, message, cause),
 		exitCode:  exitCode,
@@ -371,7 +377,13 @@ type ValidationError struct {
 }
 
 // NewValidationError creates a new validation error.
-func NewValidationError(code ErrorCode, message string, cause error, field string, value any) *ValidationError {
+func NewValidationError(
+	code ErrorCode,
+	message string,
+	cause error,
+	field string,
+	value any,
+) *ValidationError {
 	err := &ValidationError{
 		BaseError: NewBaseError(CategoryValidation, code, message, cause),
 		field:     field,
@@ -403,7 +415,12 @@ type PermissionError struct {
 }
 
 // NewPermissionError creates a new permission error.
-func NewPermissionError(code ErrorCode, message string, cause error, resource, action string) *PermissionError {
+func NewPermissionError(
+	code ErrorCode,
+	message string,
+	cause error,
+	resource, action string,
+) *PermissionError {
 	err := &PermissionError{
 		BaseError: NewBaseError(CategoryPermission, code, message, cause),
 		resource:  resource,
@@ -435,7 +452,13 @@ type CallbackError struct {
 }
 
 // NewCallbackError creates a new callback error.
-func NewCallbackError(code ErrorCode, message string, cause error, callback string, timeout bool) *CallbackError {
+func NewCallbackError(
+	code ErrorCode,
+	message string,
+	cause error,
+	callback string,
+	timeout bool,
+) *CallbackError {
 	err := &CallbackError{
 		BaseError: NewBaseError(CategoryCallback, code, message, cause),
 		callback:  callback,
@@ -473,7 +496,13 @@ func (e *CallbackError) WithTimeout(timeout bool) *CallbackError {
 }
 
 // CreateProcessError is a convenience function to create process errors.
-func CreateProcessError(code ErrorCode, message string, cause error, exitCode int, stderr string) *ProcessError {
+func CreateProcessError(
+	code ErrorCode,
+	message string,
+	cause error,
+	exitCode int,
+	stderr string,
+) *ProcessError {
 	return NewProcessError(code, message, cause, exitCode, stderr)
 }
 
@@ -483,12 +512,23 @@ func CreateTransportError(code ErrorCode, message string, cause error) *Transpor
 }
 
 // CreateValidationError is a convenience function to create validation errors.
-func CreateValidationError(code ErrorCode, message string, cause error, field string, value any) *ValidationError {
+func CreateValidationError(
+	code ErrorCode,
+	message string,
+	cause error,
+	field string,
+	value any,
+) *ValidationError {
 	return NewValidationError(code, message, cause, field, value)
 }
 
 // CreatePermissionError is a convenience function to create permission errors.
-func CreatePermissionError(code ErrorCode, message string, cause error, resource, action string) *PermissionError {
+func CreatePermissionError(
+	code ErrorCode,
+	message string,
+	cause error,
+	resource, action string,
+) *PermissionError {
 	return NewPermissionError(code, message, cause, resource, action)
 }
 
