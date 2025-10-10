@@ -12,7 +12,7 @@ go get github.com/conneroisu/claude-agent-sdk-go
 
 - Go 1.23 or later
 - Claude Code CLI installed and available in PATH
-- ANTHROPIC_API_KEY environment variable set
+- ANTHROPIC_API_KEY environment variable set (optional)
 
 ## Quick Start
 
