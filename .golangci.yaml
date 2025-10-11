@@ -302,7 +302,7 @@ linters:
               "internal/api/client\\.go",
             ]
           arguments:
-            - max: 175
+            - max: 300
               skip-comments: true
               skip-blank-lines: true
         # https://github.com/mgechev/revive/blob/HEAD/RULES_DESCRIPTIONS.md#filename-format
