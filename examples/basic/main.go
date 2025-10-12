@@ -77,26 +77,11 @@ func main() {
 func handleMessage(msg claude.SDKMessage) {
 	switch m := msg.(type) {
 	case *claude.SDKSystemMessage:
-		if m.Subtype == "init" {
-			fmt.Printf("Initialized with model: %v\n", m.Data["model"])
-		}
-
+		handleSystemMessage(m)
 	case *claude.SDKAssistantMessage:
-		fmt.Println("\nAssistant response:")
-		for _, block := range m.Message.Content {
-			switch b := block.(type) {
-			case claude.TextBlock:
-				fmt.Printf("  %s\n", b.Text)
-			case claude.TextContentBlock:
-				fmt.Printf("  %s\n", b.Text)
-			}
-		}
-
+		handleAssistantMessage(m)
 	case *claude.SDKResultMessage:
-		fmt.Printf("\nResult: %s\n", m.Subtype)
-		fmt.Printf("Duration: %dms\n", m.DurationMS)
-		fmt.Printf("Cost: $%.4f\n", m.TotalCostUSD)
-		fmt.Printf("Turns: %d\n", m.NumTurns)
+		handleResultMessage(m)
 	}
 }
 
