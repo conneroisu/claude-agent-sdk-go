@@ -172,7 +172,8 @@ func (c *ToolResultContent) UnmarshalJSON(data []byte) error {
 	).WithMessageType(MessageTypeToolResult)
 }
 
-// ToolResultContentBlock represents tool result with strongly typed content union.
+// ToolResultContentBlock represents tool result with strongly typed content
+// union.
 type ToolResultContentBlock struct {
 	Type      string             `json:"type"` // "tool_result"
 	ToolUseID string             `json:"tool_use_id"`
@@ -183,10 +184,6 @@ type ToolResultContentBlock struct {
 func (ToolResultContentBlock) contentBlock() {}
 
 // ThinkingBlock represents extended thinking content from Claude.
-// Extended thinking allows Claude to "think through" problems before responding,
-// similar to how humans might work through a problem step-by-step internally
-// before providing an answer. This content is typically hidden from end users
-// but can be useful for debugging or understanding Claude's reasoning process.
 type ThinkingBlock struct {
 	Type     string `json:"type"` // "thinking"
 	Thinking string `json:"thinking"`
@@ -426,13 +423,17 @@ type MessageStartEvent struct {
 
 func (MessageStartEvent) EventType() string { return "message_start" }
 
+// ContentBlockStartEvent represents a content block start event.
 type ContentBlockStartEvent struct {
 	Type         string       `json:"type"` // "content_block_start"
 	Index        int          `json:"index"`
 	ContentBlock ContentBlock `json:"content_block"`
 }
 
-func (ContentBlockStartEvent) EventType() string { return "content_block_start" }
+// EventType returns the type of event.
+func (ContentBlockStartEvent) EventType() string {
+	return "content_block_start"
+}
 
 type ContentBlockDeltaEvent struct {
 	Type  string       `json:"type"` // "content_block_delta"
@@ -648,7 +649,7 @@ func (SDKSystemMessage) Type() string { return "system" }
 type SystemInitMessage struct {
 	SDKSystemMessage
 	Agents         []string          `json:"agents"`
-	APIKeySource   ApiKeySource      `json:"apiKeySource"`
+	APIKeySource   APIKeySource      `json:"apiKeySource"`
 	Cwd            string            `json:"cwd"`
 	Tools          []string          `json:"tools"`
 	McpServers     []McpServerStatus `json:"mcp_servers"`
