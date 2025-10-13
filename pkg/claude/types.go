@@ -1,8 +1,11 @@
-// Package claudeagent provides core SDK type definitions for Claude agent interactions.
-// This file contains fundamental types including configuration (API keys, system prompts,
-// permissions), MCP server configurations (stdio, SSE, HTTP, SDK), permission management,
-// usage tracking, and callback interfaces. The high number of public structs is intentional
-// to support the comprehensive configuration and extension capabilities of the SDK.
+// Package claude provides core SDK type definitions for Claude agent
+// interactions.
+//
+// This file contains fundamental types including configuration (API keys,
+// system prompts, permissions), MCP server configurations (stdio, SSE, HTTP,
+// SDK), permission management, usage tracking, and callback interfaces. The
+// high number of public structs is intentional to support the comprehensive
+// configuration and extension capabilities of the SDK.
 package claude
 
 import (
@@ -18,14 +21,14 @@ type UUID = uuid.UUID
 // JSONValue preserves raw JSON for caller-controlled decoding.
 type JSONValue = json.RawMessage
 
-// ApiKeySource represents the source of the API key.
-type ApiKeySource string
+// APIKeySource represents the source of the API key.
+type APIKeySource string
 
 const (
-	ApiKeySourceUser      ApiKeySource = "user"
-	ApiKeySourceProject   ApiKeySource = "project"
-	ApiKeySourceOrg       ApiKeySource = "org"
-	ApiKeySourceTemporary ApiKeySource = "temporary"
+	APIKeySourceUser      APIKeySource = "user"
+	APIKeySourceProject   APIKeySource = "project"
+	APIKeySourceOrg       APIKeySource = "org"
+	APIKeySourceTemporary APIKeySource = "temporary"
 )
 
 // ConfigScope represents configuration scope.
@@ -84,9 +87,10 @@ const (
 )
 
 // Usage represents token usage statistics.
-// Note: Using int for token counts. TypeScript uses 'number' which maps to float64,
-// but token counts are always integers. int is sufficient for token counts up to
-// 2^31-1 (~2.1 billion tokens), which exceeds current model context windows.
+// Note: Using int for token counts. TypeScript uses 'number' which maps to
+// float64, but token counts are always integers. int is sufficient for token
+// counts up to 2^31-1 (~2.1 billion tokens), which exceeds current model
+// context windows from Anthropic.
 type Usage struct {
 	InputTokens              int `json:"input_tokens"`
 	OutputTokens             int `json:"output_tokens"`
@@ -100,7 +104,7 @@ type ModelUsage struct {
 	OutputTokens             int     `json:"outputTokens"`
 	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
 	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
-	WebSearchRequests        int     `json:"webSearchRequests"` // Note: camelCase to match TypeScript SDK
+	WebSearchRequests        int     `json:"webSearchRequests"`
 	CostUSD                  float64 `json:"costUSD"`
 	ContextWindow            int     `json:"contextWindow"`
 }
@@ -142,7 +146,7 @@ func (McpHTTPServerConfig) mcpServerConfig() {}
 type McpSdkServerConfig struct {
 	Type     string    `json:"type"` // "sdk"
 	Name     string    `json:"name"`
-	Instance McpServer `json:"-"` // Not serialized, holds actual server instance
+	Instance McpServer `json:"-"`
 }
 
 func (McpSdkServerConfig) mcpServerConfig() {}
@@ -227,17 +231,21 @@ func (SetModeUpdate) permissionUpdate() {}
 
 // PermissionResult represents the result of a permission check.
 //
-// Design Note: The TypeScript SDK uses a discriminated union based on the 'behavior' field
-// (behavior: "allow" | "deny"). Go doesn't have native discriminated unions, so we model
-// this as an interface with two implementations: PermissionAllow and PermissionDeny.
+// Design Note: The TypeScript SDK uses a discriminated union based on the
+// 'behavior' field (behavior: "allow" | "deny").
+//
+// Go doesn't have native discriminated unions, so we model
+// this as an interface with two implementations: PermissionAllow and
+// PermissionDeny.
 //
 // Alternative approaches considered:
-// 1. Single struct with Behavior enum field (simpler but less type-safe)
-// 2. Interface with implementations (chosen - provides compile-time type safety)
+//  1. Single struct with Behavior enum field (simpler but less type-safe)
+//  2. Interface with implementations (chosen - provides compile-time type
+//     safety)
 //
-// The interface approach is more idiomatic Go and provides better type safety at the
-// cost of slightly more verbose code. Users can use type assertions or type switches
-// to handle the different result types:
+// The interface approach is more idiomatic Go and provides better type safety
+// at the cost of slightly more verbose code. Users can use type assertions or
+// type switches to handle the different result types:
 //
 //	switch result := permResult.(type) {
 //	case *PermissionAllow:
