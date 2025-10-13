@@ -53,21 +53,29 @@ const (
 //
 // Both approaches provide equivalent functionality with idiomatic patterns for each language.
 type Query interface {
-	// Message iteration
+	// Next returns the next message from the query stream.
 	Next(ctx context.Context) (SDKMessage, error)
+	// Close closes the query and cleans up resources.
 	Close() error
 
-	// Message sending
+	// SendUserMessage sends a text user message to the process.
 	SendUserMessage(ctx context.Context, text string) error
+	// SendUserMessageWithContent sends a user message with structured content blocks.
 	SendUserMessageWithContent(ctx context.Context, content []ContentBlock) error
 
-	// Control operations
+	// Interrupt interrupts the current query.
 	Interrupt(ctx context.Context) error
+	// SetPermissionMode changes the permission mode.
 	SetPermissionMode(ctx context.Context, mode PermissionMode) error
+	// SetModel changes the model.
 	SetModel(ctx context.Context, model *string) error
+	// SupportedCommands returns available slash commands.
 	SupportedCommands(ctx context.Context) ([]SlashCommand, error)
+	// SupportedModels returns available models.
 	SupportedModels(ctx context.Context) ([]ModelInfo, error)
+	// McpServerStatus returns MCP server status.
 	McpServerStatus(ctx context.Context) ([]McpServerStatus, error)
+	// GetServerInfo returns the initialization result stored during Initialize.
 	GetServerInfo() (map[string]any, error)
 }
 
@@ -238,11 +246,7 @@ func (q *queryImpl) readMessages() {
 		default:
 			msg, err := q.readMessage()
 			if err != nil {
-				if err == io.EOF {
-					return
-				}
-				q.errChan <- err
-
+				q.handleReadError(err)
 				return
 			}
 
@@ -251,6 +255,14 @@ func (q *queryImpl) readMessages() {
 			}
 		}
 	}
+}
+
+// handleReadError handles errors during message reading.
+func (q *queryImpl) handleReadError(err error) {
+	if err == io.EOF {
+		return
+	}
+	q.errChan <- err
 }
 
 // readMessage reads a single message from the process.
@@ -464,6 +476,14 @@ func (q *queryImpl) Close() error {
 	return nil
 }
 
+// controlRequestEnvelope represents the envelope for control request messages.
+type controlRequestEnvelope struct {
+	Request struct {
+		Subtype string `json:"subtype"`
+	} `json:"request"`
+	RequestID string `json:"request_id"`
+}
+
 // handleControlRequests processes incoming control requests from the CLI.
 func (q *queryImpl) handleControlRequests() {
 	for {
@@ -472,12 +492,7 @@ func (q *queryImpl) handleControlRequests() {
 			return
 		case data := <-q.controlRequestChan:
 			// Parse the control request
-			var envelope struct {
-				Request struct {
-					Subtype string `json:"subtype"`
-				} `json:"request"`
-				RequestID string `json:"request_id"`
-			}
+			var envelope controlRequestEnvelope
 			if err := json.Unmarshal(data, &envelope); err != nil {
 				// Can't even parse the request ID, log and continue
 				continue
