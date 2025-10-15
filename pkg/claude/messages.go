@@ -10,6 +10,12 @@ import (
 const (
 	// MessageTypeToolResult is the message type for tool result content blocks.
 	MessageTypeToolResult = "tool_result"
+	// ContentBlockStart is the content block start event type.
+	ContentBlockStart = "content_block_start"
+	// ContentBlockDelta is the content block delta event type.
+	ContentBlockDelta = "content_block_delta"
+	// ControlRequest is the control request message type.
+	ControlRequest = "control_request"
 )
 
 // SDKMessage is the interface all SDK messages implement.
@@ -141,7 +147,8 @@ func (c ToolResultContent) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, clauderrs.NewProtocolError(
 			clauderrs.ErrCodeInvalidMessage,
-			"tool result content must be either text or blocks, not both or neither",
+			"tool result content must be either text or blocks, "+
+				"not both or neither",
 			nil,
 		).WithMessageType(MessageTypeToolResult)
 	}
@@ -441,7 +448,9 @@ type ContentBlockDeltaEvent struct {
 	Delta ContentDelta `json:"delta"`
 }
 
-func (ContentBlockDeltaEvent) EventType() string { return "content_block_delta" }
+func (ContentBlockDeltaEvent) EventType() string {
+	return "content_block_delta"
+}
 
 type ContentBlockStopEvent struct {
 	Type  string `json:"type"` // "content_block_stop"
@@ -499,14 +508,19 @@ func decodeContentDelta(data []byte) (ContentDelta, error) {
 	default:
 		return ContentDelta{}, clauderrs.NewProtocolError(
 			clauderrs.ErrCodeUnknownMessageType,
-			fmt.Sprintf("unsupported content delta type: %s", envelope.Type),
+			fmt.Sprintf(
+				"unsupported content delta type: %s",
+				envelope.Type,
+			),
 			nil,
 		).WithMessageType(envelope.Type)
 	}
 }
 
 // decodeRawMessageStreamEvent converts a raw JSON event into the proper struct.
-func decodeRawMessageStreamEvent(data json.RawMessage) (RawMessageStreamEvent, error) {
+func decodeRawMessageStreamEvent(
+	data json.RawMessage,
+) (RawMessageStreamEvent, error) {
 	var envelope struct {
 		Type string `json:"type"`
 	}
@@ -544,7 +558,7 @@ func decodeRawMessageStreamEvent(data json.RawMessage) (RawMessageStreamEvent, e
 				clauderrs.ErrCodeMessageParseFailed,
 				"failed to parse content_block_start event",
 				err,
-			).WithMessageType("content_block_start")
+			).WithMessageType(ContentBlockStart)
 		}
 		var block ContentBlock
 		block, err = decodeContentBlock(raw.ContentBlock)
@@ -552,11 +566,12 @@ func decodeRawMessageStreamEvent(data json.RawMessage) (RawMessageStreamEvent, e
 			return nil, clauderrs.NewProtocolError(
 				clauderrs.ErrCodeInvalidMessage,
 				fmt.Sprintf(
-					"failed to decode content block in content_block_start at index %d",
+					"failed to decode content block in content_block_start "+
+						"at index %d",
 					raw.Index,
 				),
 				err,
-			).WithMessageType("content_block_start")
+			).WithMessageType(ContentBlockStart)
 		}
 
 		return ContentBlockStartEvent{
@@ -576,15 +591,19 @@ func decodeRawMessageStreamEvent(data json.RawMessage) (RawMessageStreamEvent, e
 				clauderrs.ErrCodeMessageParseFailed,
 				"failed to parse content_block_delta event",
 				err,
-			).WithMessageType("content_block_delta")
+			).WithMessageType(ContentBlockDelta)
 		}
 		delta, err := decodeContentDelta(raw.Delta)
 		if err != nil {
 			return nil, clauderrs.NewProtocolError(
 				clauderrs.ErrCodeInvalidMessage,
-				fmt.Sprintf("failed to decode delta in content_block_delta at index %d", raw.Index),
+				fmt.Sprintf(
+				"failed to decode delta in content_block_delta "+
+					"at index %d",
+				raw.Index,
+			),
 				err,
-			).WithMessageType("content_block_delta")
+			).WithMessageType(ContentBlockDelta)
 		}
 
 		return ContentBlockDeltaEvent{
@@ -662,7 +681,8 @@ type SystemInitMessage struct {
 // McpServerStatus represents MCP server status.
 type McpServerStatus struct {
 	Name       string         `json:"name"`
-	Status     string         `json:"status"` // "connected", "failed", "needs-auth", "pending"
+	Status string `json:"status"` // "connected", "failed", "needs-auth",
+	// "pending"
 	ServerInfo *McpServerInfo `json:"serverInfo,omitempty"`
 }
 
@@ -694,7 +714,7 @@ type SDKResultMessage struct {
 	Usage             Usage                 `json:"usage"`
 	ModelUsage        map[string]ModelUsage `json:"modelUsage"`
 	PermissionDenials []SDKPermissionDenial `json:"permission_denials"`
-	Result            *string               `json:"result,omitempty"` // Only for success
+	Result *string `json:"result,omitempty"` // Only for success
 }
 
 func (SDKResultMessage) Type() string { return "result" }
@@ -724,7 +744,7 @@ type SDKControlRequest struct {
 	Request   ControlRequestVariant `json:"request"`
 }
 
-func (SDKControlRequest) Type() string { return "control_request" }
+func (SDKControlRequest) Type() string { return ControlRequest }
 
 // ControlRequestVariant is the interface for all control request variants.
 type ControlRequestVariant interface {
@@ -738,7 +758,9 @@ type SDKControlInterruptRequest struct {
 	SubtypeField string `json:"subtype"` // "interrupt"
 }
 
-func (r SDKControlInterruptRequest) Subtype() string      { return r.SubtypeField }
+func (r SDKControlInterruptRequest) Subtype() string {
+	return r.SubtypeField
+}
 func (SDKControlInterruptRequest) controlRequestVariant() {}
 
 // SDKControlInitializeRequest initializes the control session with hooks.
@@ -747,7 +769,9 @@ type SDKControlInitializeRequest struct {
 	Hooks        map[string]JSONValue `json:"hooks,omitempty"`
 }
 
-func (r SDKControlInitializeRequest) Subtype() string      { return r.SubtypeField }
+func (r SDKControlInitializeRequest) Subtype() string {
+	return r.SubtypeField
+}
 func (SDKControlInitializeRequest) controlRequestVariant() {}
 
 // SDKControlSetPermissionModeRequest changes the permission mode.
@@ -757,10 +781,10 @@ type SDKControlSetPermissionModeRequest struct {
 }
 
 // Subtype returns the Permission mode request subtype field.
-func (r SDKControlSetPermissionModeRequest) Subtype() string {
-	return r.SubtypeField
+func (SDKControlSetPermissionModeRequest) Subtype() string {
+	return "set_permission_mode"
 }
-func (r SDKControlSetPermissionModeRequest) controlRequestVariant() {}
+func (SDKControlSetPermissionModeRequest) controlRequestVariant() {}
 
 // SDKControlMcpMessageRequest sends a message to an MCP server.
 type SDKControlMcpMessageRequest struct {
@@ -769,10 +793,13 @@ type SDKControlMcpMessageRequest struct {
 	Message      JSONValue `json:"message"`
 }
 
-func (r SDKControlMcpMessageRequest) Subtype() string        { return r.SubtypeField }
-func (r SDKControlMcpMessageRequest) controlRequestVariant() {}
+func (SDKControlMcpMessageRequest) Subtype() string {
+	return "mcp_message"
+}
+func (SDKControlMcpMessageRequest) controlRequestVariant() {}
 
-// UnmarshalJSON custom unmarshaler for SDKControlRequest to handle the request variant.
+// UnmarshalJSON custom unmarshaler for SDKControlRequest to handle
+// the request variant.
 func (r *SDKControlRequest) UnmarshalJSON(data []byte) error {
 	type Alias struct {
 		BaseMessage
@@ -786,7 +813,7 @@ func (r *SDKControlRequest) UnmarshalJSON(data []byte) error {
 			clauderrs.ErrCodeMessageParseFailed,
 			"failed to parse SDKControlRequest JSON",
 			err,
-		).WithMessageType("control_request")
+		).WithMessageType(ControlRequest)
 	}
 
 	r.BaseMessage = aux.BaseMessage
@@ -799,14 +826,15 @@ func (r *SDKControlRequest) UnmarshalJSON(data []byte) error {
 			clauderrs.ErrCodeInvalidMessage,
 			"failed to decode control request variant",
 			err,
-		).WithMessageType("control_request").WithRequestID(aux.RequestID)
+		).WithMessageType(ControlRequest).WithRequestID(aux.RequestID)
 	}
 	r.Request = variant
 
 	return nil
 }
 
-// decodeControlRequestVariant converts raw JSON into a typed control request variant.
+// decodeControlRequestVariant converts raw JSON into a typed control
+// request variant.
 func decodeControlRequestVariant(data []byte) (ControlRequestVariant, error) {
 	var envelope struct {
 		Subtype string `json:"subtype"`
@@ -872,7 +900,10 @@ func decodeControlRequestVariant(data []byte) (ControlRequestVariant, error) {
 	default:
 		return nil, clauderrs.NewProtocolError(
 			clauderrs.ErrCodeUnknownMessageType,
-			fmt.Sprintf("unsupported control request subtype: %s", envelope.Subtype),
+			fmt.Sprintf(
+				"unsupported control request subtype: %s",
+				envelope.Subtype,
+			),
 			nil,
 		).WithMessageType(envelope.Subtype)
 	}
@@ -903,8 +934,12 @@ type ControlSuccessResponse struct {
 	Response       map[string]JSONValue `json:"response,omitempty"`
 }
 
-func (r ControlSuccessResponse) Subtype() string         { return r.SubtypeField }
-func (r ControlSuccessResponse) RequestID() string       { return r.RequestIDField }
+func (ControlSuccessResponse) Subtype() string {
+	return "success"
+}
+func (r ControlSuccessResponse) RequestID() string {
+	return r.RequestIDField
+}
 func (r ControlSuccessResponse) controlResponseVariant() {}
 
 // ControlErrorResponse represents a failed control response.
@@ -914,11 +949,16 @@ type ControlErrorResponse struct {
 	Error          string `json:"error"`
 }
 
-func (r ControlErrorResponse) Subtype() string         { return r.SubtypeField }
-func (r ControlErrorResponse) RequestID() string       { return r.RequestIDField }
-func (r ControlErrorResponse) controlResponseVariant() {}
+func (r ControlErrorResponse) Subtype() string {
+	return r.SubtypeField
+}
+func (r ControlErrorResponse) RequestID() string {
+	return r.RequestIDField
+}
+func (ControlErrorResponse) controlResponseVariant() {}
 
-// UnmarshalJSON custom unmarshaler for SDKControlResponse to handle the response variant.
+// UnmarshalJSON custom unmarshaler for SDKControlResponse to handle
+// the response variant.
 func (r *SDKControlResponse) UnmarshalJSON(data []byte) error {
 	type Alias struct {
 		BaseMessage
@@ -951,7 +991,8 @@ func (r *SDKControlResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// decodeControlResponseVariant converts raw JSON into a typed control response variant.
+// decodeControlResponseVariant converts raw JSON into a typed control
+// response variant.
 func decodeControlResponseVariant(data []byte) (ControlResponseVariant, error) {
 	var envelope struct {
 		Subtype string `json:"subtype"`
@@ -993,31 +1034,36 @@ func decodeControlResponseVariant(data []byte) (ControlResponseVariant, error) {
 	default:
 		return nil, clauderrs.NewProtocolError(
 			clauderrs.ErrCodeUnknownMessageType,
-			fmt.Sprintf("unsupported control response subtype: %s", envelope.Subtype),
+			fmt.Sprintf(
+				"unsupported control response subtype: %s",
+				envelope.Subtype,
+			),
 			nil,
 		).WithMessageType(envelope.Subtype)
 	}
 }
 
-// SDKControlPermissionRequest represents permission requests FROM the Claude CLI.
+// SDKControlPermissionRequest represents permission requests FROM
+// the Claude CLI.
 // The CLI asks the SDK whether a tool should be allowed to execute.
 // The SDK must respond with an SDKControlResponse.
 type SDKControlPermissionRequest struct {
 	BaseMessage
 	RequestIDField        string               `json:"request_id"`
-	SubtypeField          string               `json:"subtype"` // "can_use_tool"
+	SubtypeField string `json:"subtype"` // "can_use_tool"
 	ToolName              string               `json:"tool_name"`
 	Input                 map[string]JSONValue `json:"input"`
-	PermissionSuggestions []JSONValue          `json:"permission_suggestions,omitempty"`
+	PermissionSuggestions []JSONValue `json:"permission_suggestions,omitempty"`
 	BlockedPath           *string              `json:"blocked_path,omitempty"`
 }
 
-func (SDKControlPermissionRequest) Type() string        { return "control_request" }
+func (SDKControlPermissionRequest) Type() string        { return ControlRequest }
 func (r SDKControlPermissionRequest) Subtype() string   { return r.SubtypeField }
 func (r SDKControlPermissionRequest) RequestID() string { return r.RequestIDField }
 
 // SDKHookCallbackRequest represents hook callback requests FROM the Claude CLI.
-// The CLI calls a registered hook and expects the SDK to respond with hook output.
+// The CLI calls a registered hook and expects the SDK to respond
+// with hook output.
 // The SDK must respond with an SDKControlResponse.
 type SDKHookCallbackRequest struct {
 	BaseMessage
@@ -1028,6 +1074,6 @@ type SDKHookCallbackRequest struct {
 	ToolUseID      *string   `json:"tool_use_id,omitempty"`
 }
 
-func (SDKHookCallbackRequest) Type() string        { return "control_request" }
+func (SDKHookCallbackRequest) Type() string        { return ControlRequest }
 func (r SDKHookCallbackRequest) Subtype() string   { return r.SubtypeField }
 func (r SDKHookCallbackRequest) RequestID() string { return r.RequestIDField }
