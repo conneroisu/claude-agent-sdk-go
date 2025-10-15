@@ -87,13 +87,13 @@ func TestPermissionMode(t *testing.T) {
 func TestApiKeySource(t *testing.T) {
 	tests := []struct {
 		name     string
-		source   claude.ApiKeySource
+		source   claude.APIKeySource
 		expected string
 	}{
-		{"User", claude.ApiKeySourceUser, "user"},
-		{"Project", claude.ApiKeySourceProject, "project"},
-		{"Org", claude.ApiKeySourceOrg, "org"},
-		{"Temporary", claude.ApiKeySourceTemporary, "temporary"},
+		{"User", claude.APIKeySourceUser, "user"},
+		{"Project", claude.APIKeySourceProject, "project"},
+		{"Org", claude.APIKeySourceOrg, "org"},
+		{"Temporary", claude.APIKeySourceTemporary, "temporary"},
 	}
 
 	for _, tt := range tests {
