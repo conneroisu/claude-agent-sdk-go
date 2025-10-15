@@ -1,7 +1,7 @@
 package claude
 
-// This file defines the core abstractions for MCP servers and tools, along with SDK
-// implementations that allow users to create custom MCP servers in Go.
+// This file defines the core abstractions for MCP servers and tools, along with
+// SDK implementations that allow users to create custom MCP servers in Go.
 
 import (
 	"context"
@@ -42,7 +42,10 @@ type McpToolResult struct {
 }
 
 // ToolFunc is the handler function for SDK MCP tools.
-type ToolFunc func(ctx context.Context, args map[string]any) (*McpToolResult, error)
+type ToolFunc func(
+	ctx context.Context,
+	args map[string]any,
+) (*McpToolResult, error)
 
 // sdkMcpTool implements McpTool.
 type sdkMcpTool struct {
@@ -56,12 +59,19 @@ func (t *sdkMcpTool) Name() string                { return t.name }
 func (t *sdkMcpTool) Description() string         { return t.description }
 func (t *sdkMcpTool) InputSchema() map[string]any { return t.inputSchema }
 
-func (t *sdkMcpTool) Execute(ctx context.Context, input map[string]any) (*McpToolResult, error) {
+func (t *sdkMcpTool) Execute(
+	ctx context.Context,
+	input map[string]any,
+) (*McpToolResult, error) {
 	return t.handler(ctx, input)
 }
 
 // Tool creates a new SDK MCP tool.
-func Tool(name, description string, inputSchema map[string]any, handler ToolFunc) McpTool {
+func Tool(
+	name, description string,
+	inputSchema map[string]any,
+	handler ToolFunc,
+) McpTool {
 	return &sdkMcpTool{
 		name:        name,
 		description: description,
