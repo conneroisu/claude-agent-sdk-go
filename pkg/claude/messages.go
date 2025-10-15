@@ -439,7 +439,7 @@ type ContentBlockStartEvent struct {
 
 // EventType returns the type of event.
 func (ContentBlockStartEvent) EventType() string {
-	return "content_block_start"
+	return ContentBlockStart
 }
 
 type ContentBlockDeltaEvent struct {
@@ -449,7 +449,7 @@ type ContentBlockDeltaEvent struct {
 }
 
 func (ContentBlockDeltaEvent) EventType() string {
-	return "content_block_delta"
+	return ContentBlockDelta
 }
 
 type ContentBlockStopEvent struct {
