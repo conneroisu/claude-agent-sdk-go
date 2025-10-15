@@ -546,7 +546,7 @@ func decodeRawMessageStreamEvent(
 		}
 
 		return evt, nil
-	case "content_block_start":
+	case ContentBlockStart:
 		var raw struct {
 			Type         string          `json:"type"`
 			Index        int             `json:"index"`
@@ -579,7 +579,7 @@ func decodeRawMessageStreamEvent(
 			Index:        raw.Index,
 			ContentBlock: block,
 		}, nil
-	case "content_block_delta":
+	case ContentBlockDelta:
 		var raw struct {
 			Type  string          `json:"type"`
 			Index int             `json:"index"`
