@@ -759,9 +759,21 @@ type SDKControlInterruptRequest struct {
 }
 
 func (r SDKControlInterruptRequest) Subtype() string {
-	return r.SubtypeField
+	return "interrupt"
 }
 func (SDKControlInterruptRequest) controlRequestVariant() {}
+
+// MarshalJSON ensures the subtype field is always set to "interrupt".
+func (r SDKControlInterruptRequest) MarshalJSON() ([]byte, error) {
+	type Alias SDKControlInterruptRequest
+	return json.Marshal(&struct {
+		SubtypeField string `json:"subtype"`
+		*Alias
+	}{
+		SubtypeField: "interrupt",
+		Alias:        (*Alias)(&r),
+	})
+}
 
 // SDKControlInitializeRequest initializes the control session with hooks.
 type SDKControlInitializeRequest struct {
@@ -770,9 +782,21 @@ type SDKControlInitializeRequest struct {
 }
 
 func (r SDKControlInitializeRequest) Subtype() string {
-	return r.SubtypeField
+	return "initialize"
 }
 func (SDKControlInitializeRequest) controlRequestVariant() {}
+
+// MarshalJSON ensures the subtype field is always set to "initialize".
+func (r SDKControlInitializeRequest) MarshalJSON() ([]byte, error) {
+	type Alias SDKControlInitializeRequest
+	return json.Marshal(&struct {
+		SubtypeField string `json:"subtype"`
+		*Alias
+	}{
+		SubtypeField: "initialize",
+		Alias:        (*Alias)(&r),
+	})
+}
 
 // SDKControlSetPermissionModeRequest changes the permission mode.
 type SDKControlSetPermissionModeRequest struct {
@@ -786,6 +810,18 @@ func (SDKControlSetPermissionModeRequest) Subtype() string {
 }
 func (SDKControlSetPermissionModeRequest) controlRequestVariant() {}
 
+// MarshalJSON ensures the subtype field is always set to "set_permission_mode".
+func (r SDKControlSetPermissionModeRequest) MarshalJSON() ([]byte, error) {
+	type Alias SDKControlSetPermissionModeRequest
+	return json.Marshal(&struct {
+		SubtypeField string `json:"subtype"`
+		*Alias
+	}{
+		SubtypeField: "set_permission_mode",
+		Alias:        (*Alias)(&r),
+	})
+}
+
 // SDKControlMcpMessageRequest sends a message to an MCP server.
 type SDKControlMcpMessageRequest struct {
 	SubtypeField string    `json:"subtype"` // "mcp_message"
@@ -797,6 +833,18 @@ func (SDKControlMcpMessageRequest) Subtype() string {
 	return "mcp_message"
 }
 func (SDKControlMcpMessageRequest) controlRequestVariant() {}
+
+// MarshalJSON ensures the subtype field is always set to "mcp_message".
+func (r SDKControlMcpMessageRequest) MarshalJSON() ([]byte, error) {
+	type Alias SDKControlMcpMessageRequest
+	return json.Marshal(&struct {
+		SubtypeField string `json:"subtype"`
+		*Alias
+	}{
+		SubtypeField: "mcp_message",
+		Alias:        (*Alias)(&r),
+	})
+}
 
 // UnmarshalJSON custom unmarshaler for SDKControlRequest to handle
 // the request variant.
