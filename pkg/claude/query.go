@@ -530,7 +530,7 @@ func (q *queryImpl) handleControlRequest(
 			nil,
 		).
 			WithSessionID(q.sessionID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	default:
 		err = clauderrs.NewProtocolError(
 			clauderrs.ErrCodeProtocolError,
@@ -538,7 +538,7 @@ func (q *queryImpl) handleControlRequest(
 			nil,
 		).
 			WithSessionID(q.sessionID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	// Send response back to CLI
@@ -563,7 +563,7 @@ func (q *queryImpl) handleCanUseTool(
 			err,
 		).
 			WithSessionID(q.sessionID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	// Check if canUseTool callback is provided
@@ -643,7 +643,7 @@ func (q *queryImpl) handleHookCallback(
 			err,
 		).
 			WithSessionID(q.sessionID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	// Look up the callback
@@ -814,7 +814,7 @@ func (q *queryImpl) sendControlRequest(
 		).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	if err := q.proc.Transport().Write(ctx, data); err != nil {
@@ -825,7 +825,7 @@ func (q *queryImpl) sendControlRequest(
 		return nil, clauderrs.NewProtocolError(clauderrs.ErrCodeProtocolError, "failed to send control request", err).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	// Wait for response with timeout
@@ -920,7 +920,7 @@ func (q *queryImpl) SetModel(ctx context.Context, model *string) error {
 		).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	if err := q.proc.Transport().Write(ctx, data); err != nil {
@@ -931,7 +931,7 @@ func (q *queryImpl) SetModel(ctx context.Context, model *string) error {
 		return clauderrs.NewProtocolError(clauderrs.ErrCodeProtocolError, "failed to send SetModel request", err).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	select {
@@ -997,7 +997,7 @@ func (q *queryImpl) SupportedCommands(ctx context.Context) ([]SlashCommand, erro
 		).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	if err := q.proc.Transport().Write(ctx, data); err != nil {
@@ -1012,7 +1012,7 @@ func (q *queryImpl) SupportedCommands(ctx context.Context) ([]SlashCommand, erro
 		).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	select {
@@ -1096,7 +1096,7 @@ func (q *queryImpl) SupportedModels(ctx context.Context) ([]ModelInfo, error) {
 		).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	if err := q.proc.Transport().Write(ctx, data); err != nil {
@@ -1111,7 +1111,7 @@ func (q *queryImpl) SupportedModels(ctx context.Context) ([]ModelInfo, error) {
 		).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	select {
@@ -1195,7 +1195,7 @@ func (q *queryImpl) McpServerStatus(ctx context.Context) ([]McpServerStatus, err
 		).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	if err := q.proc.Transport().Write(ctx, data); err != nil {
@@ -1210,7 +1210,7 @@ func (q *queryImpl) McpServerStatus(ctx context.Context) ([]McpServerStatus, err
 		).
 			WithSessionID(q.sessionID).
 			WithRequestID(requestID).
-			WithMessageType("control_request")
+			WithMessageType(ControlRequest)
 	}
 
 	select {
