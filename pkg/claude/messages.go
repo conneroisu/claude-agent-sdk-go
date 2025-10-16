@@ -736,6 +736,21 @@ type SDKPermissionDenial struct {
 // Control Protocol Messages
 // ============================================================================
 
+// Control request and response subtype constants.
+const (
+	// Control request subtypes.
+	ControlRequestSubtypeInterrupt         = "interrupt"
+	ControlRequestSubtypeInitialize        = "initialize"
+	ControlRequestSubtypeSetPermissionMode = "set_permission_mode"
+	ControlRequestSubtypeMcpMessage        = "mcp_message"
+	ControlRequestSubtypeCanUseTool        = "can_use_tool"
+	ControlRequestSubtypeHookCallback      = "hook_callback"
+
+	// Control response subtypes.
+	ControlResponseSubtypeSuccess = "success"
+	ControlResponseSubtypeError   = "error"
+)
+
 // SDKControlRequest represents control requests sent TO the Claude CLI.
 // These are requests that the SDK sends to control CLI behavior.
 type SDKControlRequest struct {
@@ -759,7 +774,7 @@ type SDKControlInterruptRequest struct {
 }
 
 func (r SDKControlInterruptRequest) Subtype() string {
-	return "interrupt"
+	return ControlRequestSubtypeInterrupt
 }
 func (SDKControlInterruptRequest) controlRequestVariant() {}
 
@@ -770,7 +785,7 @@ func (r SDKControlInterruptRequest) MarshalJSON() ([]byte, error) {
 		SubtypeField string `json:"subtype"`
 		*Alias
 	}{
-		SubtypeField: "interrupt",
+		SubtypeField: ControlRequestSubtypeInterrupt,
 		Alias:        (*Alias)(&r),
 	})
 }
@@ -782,7 +797,7 @@ type SDKControlInitializeRequest struct {
 }
 
 func (r SDKControlInitializeRequest) Subtype() string {
-	return "initialize"
+	return ControlRequestSubtypeInitialize
 }
 func (SDKControlInitializeRequest) controlRequestVariant() {}
 
@@ -793,7 +808,7 @@ func (r SDKControlInitializeRequest) MarshalJSON() ([]byte, error) {
 		SubtypeField string `json:"subtype"`
 		*Alias
 	}{
-		SubtypeField: "initialize",
+		SubtypeField: ControlRequestSubtypeInitialize,
 		Alias:        (*Alias)(&r),
 	})
 }
@@ -806,7 +821,7 @@ type SDKControlSetPermissionModeRequest struct {
 
 // Subtype returns the Permission mode request subtype field.
 func (SDKControlSetPermissionModeRequest) Subtype() string {
-	return "set_permission_mode"
+	return ControlRequestSubtypeSetPermissionMode
 }
 func (SDKControlSetPermissionModeRequest) controlRequestVariant() {}
 
@@ -817,7 +832,7 @@ func (r SDKControlSetPermissionModeRequest) MarshalJSON() ([]byte, error) {
 		SubtypeField string `json:"subtype"`
 		*Alias
 	}{
-		SubtypeField: "set_permission_mode",
+		SubtypeField: ControlRequestSubtypeSetPermissionMode,
 		Alias:        (*Alias)(&r),
 	})
 }
@@ -830,7 +845,7 @@ type SDKControlMcpMessageRequest struct {
 }
 
 func (SDKControlMcpMessageRequest) Subtype() string {
-	return "mcp_message"
+	return ControlRequestSubtypeMcpMessage
 }
 func (SDKControlMcpMessageRequest) controlRequestVariant() {}
 
@@ -841,7 +856,7 @@ func (r SDKControlMcpMessageRequest) MarshalJSON() ([]byte, error) {
 		SubtypeField string `json:"subtype"`
 		*Alias
 	}{
-		SubtypeField: "mcp_message",
+		SubtypeField: ControlRequestSubtypeMcpMessage,
 		Alias:        (*Alias)(&r),
 	})
 }
@@ -897,7 +912,7 @@ func decodeControlRequestVariant(data []byte) (ControlRequestVariant, error) {
 	}
 
 	switch envelope.Subtype {
-	case "interrupt":
+	case ControlRequestSubtypeInterrupt:
 		var req SDKControlInterruptRequest
 		err = json.Unmarshal(data, &req)
 		if err != nil {
@@ -905,11 +920,11 @@ func decodeControlRequestVariant(data []byte) (ControlRequestVariant, error) {
 				clauderrs.ErrCodeMessageParseFailed,
 				"failed to parse interrupt control request",
 				err,
-			).WithMessageType("interrupt")
+			).WithMessageType(ControlRequestSubtypeInterrupt)
 		}
 
 		return req, nil
-	case "initialize":
+	case ControlRequestSubtypeInitialize:
 		var req SDKControlInitializeRequest
 		err = json.Unmarshal(data, &req)
 		if err != nil {
@@ -917,11 +932,11 @@ func decodeControlRequestVariant(data []byte) (ControlRequestVariant, error) {
 				clauderrs.ErrCodeMessageParseFailed,
 				"failed to parse initialize control request",
 				err,
-			).WithMessageType("initialize")
+			).WithMessageType(ControlRequestSubtypeInitialize)
 		}
 
 		return req, nil
-	case "set_permission_mode":
+	case ControlRequestSubtypeSetPermissionMode:
 		var req SDKControlSetPermissionModeRequest
 		err = json.Unmarshal(data, &req)
 		if err != nil {
@@ -929,11 +944,11 @@ func decodeControlRequestVariant(data []byte) (ControlRequestVariant, error) {
 				clauderrs.ErrCodeMessageParseFailed,
 				"failed to parse set_permission_mode control request",
 				err,
-			).WithMessageType("set_permission_mode")
+			).WithMessageType(ControlRequestSubtypeSetPermissionMode)
 		}
 
 		return req, nil
-	case "mcp_message":
+	case ControlRequestSubtypeMcpMessage:
 		var req SDKControlMcpMessageRequest
 		err := json.Unmarshal(data, &req)
 		if err != nil {
@@ -941,7 +956,7 @@ func decodeControlRequestVariant(data []byte) (ControlRequestVariant, error) {
 				clauderrs.ErrCodeMessageParseFailed,
 				"failed to parse mcp_message control request",
 				err,
-			).WithMessageType("mcp_message")
+			).WithMessageType(ControlRequestSubtypeMcpMessage)
 		}
 
 		return req, nil
@@ -983,7 +998,7 @@ type ControlSuccessResponse struct {
 }
 
 func (ControlSuccessResponse) Subtype() string {
-	return "success"
+	return ControlResponseSubtypeSuccess
 }
 func (r ControlSuccessResponse) RequestID() string {
 	return r.RequestIDField
@@ -1055,7 +1070,7 @@ func decodeControlResponseVariant(data []byte) (ControlResponseVariant, error) {
 	}
 
 	switch envelope.Subtype {
-	case "success":
+	case ControlResponseSubtypeSuccess:
 		var resp ControlSuccessResponse
 		err = json.Unmarshal(data, &resp)
 		if err != nil {
@@ -1063,11 +1078,11 @@ func decodeControlResponseVariant(data []byte) (ControlResponseVariant, error) {
 				clauderrs.ErrCodeMessageParseFailed,
 				"failed to parse success control response",
 				err,
-			).WithMessageType("success")
+			).WithMessageType(ControlResponseSubtypeSuccess)
 		}
 
 		return resp, nil
-	case "error":
+	case ControlResponseSubtypeError:
 		var resp ControlErrorResponse
 		err = json.Unmarshal(data, &resp)
 		if err != nil {
@@ -1075,7 +1090,7 @@ func decodeControlResponseVariant(data []byte) (ControlResponseVariant, error) {
 				clauderrs.ErrCodeMessageParseFailed,
 				"failed to parse error control response",
 				err,
-			).WithMessageType("error")
+			).WithMessageType(ControlResponseSubtypeError)
 		}
 
 		return resp, nil
