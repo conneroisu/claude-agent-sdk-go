@@ -799,9 +799,7 @@ func TestBidirectionalCommunication(t *testing.T) {
 			SessionIDField: testSessionID,
 		},
 		RequestID: "sdk-req-1",
-		Request: claudeagent.SDKControlInterruptRequest{
-			SubtypeField: "interrupt",
-		},
+		Request:   claudeagent.SDKControlInterruptRequest{},
 	}
 
 	// CLI responds with control response
