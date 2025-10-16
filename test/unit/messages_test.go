@@ -421,3 +421,98 @@ func TestSDKHookCallbackRequest(t *testing.T) {
 		t.Errorf("expected callback ID 'hook-123', got %s", msg.CallbackID)
 	}
 }
+
+func TestControlSuccessResponseMarshalWithoutSubtypeField(t *testing.T) {
+	// Test that ControlSuccessResponse always marshals with "success" subtype
+	// even when SubtypeField is not explicitly set at construction time
+	resp := claudeagent.ControlSuccessResponse{
+		// Deliberately NOT setting SubtypeField
+		RequestIDField: "req-123",
+		Response: map[string]claudeagent.JSONValue{
+			"status": json.RawMessage(`"ok"`),
+		},
+	}
+
+	// Verify Subtype() method returns "success"
+	if resp.Subtype() != "success" {
+		t.Errorf(
+			"expected Subtype() to return 'success', got %s",
+			resp.Subtype(),
+		)
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("failed to marshal ControlSuccessResponse: %v", err)
+	}
+
+	// Parse the JSON to verify the subtype field is set correctly
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	// Verify subtype field in JSON
+	var subtype string
+	if err := json.Unmarshal(decoded["subtype"], &subtype); err != nil {
+		t.Fatalf("failed to unmarshal subtype field: %v", err)
+	}
+
+	if subtype != "success" {
+		t.Errorf(
+			"expected subtype field in JSON to be 'success', got %s",
+			subtype,
+		)
+	}
+
+	// Also verify request_id is correct
+	var requestID string
+	if err := json.Unmarshal(decoded["request_id"], &requestID); err != nil {
+		t.Fatalf("failed to unmarshal request_id field: %v", err)
+	}
+
+	if requestID != "req-123" {
+		t.Errorf(
+			"expected request_id field in JSON to be 'req-123', got %s",
+			requestID,
+		)
+	}
+}
+
+func TestControlSuccessResponseMarshalWithSubtypeField(t *testing.T) {
+	// Test that ControlSuccessResponse marshals correctly when SubtypeField
+	// is explicitly set (it should still be "success")
+	resp := claudeagent.ControlSuccessResponse{
+		SubtypeField:   "success",
+		RequestIDField: "req-456",
+		Response: map[string]claudeagent.JSONValue{
+			"data": json.RawMessage(`"test"`),
+		},
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("failed to marshal ControlSuccessResponse: %v", err)
+	}
+
+	// Parse the JSON to verify the subtype field is set correctly
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	// Verify subtype field in JSON
+	var subtype string
+	if err := json.Unmarshal(decoded["subtype"], &subtype); err != nil {
+		t.Fatalf("failed to unmarshal subtype field: %v", err)
+	}
+
+	if subtype != "success" {
+		t.Errorf(
+			"expected subtype field in JSON to be 'success', got %s",
+			subtype,
+		)
+	}
+}

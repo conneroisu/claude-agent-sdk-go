@@ -598,10 +598,10 @@ func decodeRawMessageStreamEvent(
 			return nil, clauderrs.NewProtocolError(
 				clauderrs.ErrCodeInvalidMessage,
 				fmt.Sprintf(
-				"failed to decode delta in content_block_delta "+
-					"at index %d",
-				raw.Index,
-			),
+					"failed to decode delta in content_block_delta "+
+						"at index %d",
+					raw.Index,
+				),
 				err,
 			).WithMessageType(ContentBlockDelta)
 		}
@@ -680,7 +680,7 @@ type SystemInitMessage struct {
 
 // McpServerStatus represents MCP server status.
 type McpServerStatus struct {
-	Name       string         `json:"name"`
+	Name   string `json:"name"`
 	Status string `json:"status"` // "connected", "failed", "needs-auth",
 	// "pending"
 	ServerInfo *McpServerInfo `json:"serverInfo,omitempty"`
@@ -714,7 +714,7 @@ type SDKResultMessage struct {
 	Usage             Usage                 `json:"usage"`
 	ModelUsage        map[string]ModelUsage `json:"modelUsage"`
 	PermissionDenials []SDKPermissionDenial `json:"permission_denials"`
-	Result *string `json:"result,omitempty"` // Only for success
+	Result            *string               `json:"result,omitempty"` // Only for success
 }
 
 func (SDKResultMessage) Type() string { return "result" }
@@ -1005,6 +1005,15 @@ func (r ControlSuccessResponse) RequestID() string {
 }
 func (r ControlSuccessResponse) controlResponseVariant() {}
 
+// MarshalJSON ensures SubtypeField is always set to "success"
+// when marshaling ControlSuccessResponse to JSON.
+func (r ControlSuccessResponse) MarshalJSON() ([]byte, error) {
+	type Alias ControlSuccessResponse
+	alias := Alias(r)
+	alias.SubtypeField = ControlResponseSubtypeSuccess
+	return json.Marshal(alias)
+}
+
 // ControlErrorResponse represents a failed control response.
 type ControlErrorResponse struct {
 	SubtypeField   string `json:"subtype"` // "error"
@@ -1113,10 +1122,10 @@ func decodeControlResponseVariant(data []byte) (ControlResponseVariant, error) {
 type SDKControlPermissionRequest struct {
 	BaseMessage
 	RequestIDField        string               `json:"request_id"`
-	SubtypeField string `json:"subtype"` // "can_use_tool"
+	SubtypeField          string               `json:"subtype"` // "can_use_tool"
 	ToolName              string               `json:"tool_name"`
 	Input                 map[string]JSONValue `json:"input"`
-	PermissionSuggestions []JSONValue `json:"permission_suggestions,omitempty"`
+	PermissionSuggestions []JSONValue          `json:"permission_suggestions,omitempty"`
 	BlockedPath           *string              `json:"blocked_path,omitempty"`
 }
 
