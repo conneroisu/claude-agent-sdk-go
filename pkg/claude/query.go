@@ -19,7 +19,6 @@ const (
 
 	// Control protocol message types and subtypes.
 	messageTypeUser            = "user"
-	messageTypeControlRequest  = "control_request"
 	messageTypeControlResponse = "control_response"
 	messageTypeHookCallback    = "hook_callback"
 
@@ -310,7 +309,7 @@ func (q *queryImpl) readMessage() (SDKMessage, error) {
 	}
 
 	// Handle incoming control requests from CLI (bidirectional control protocol)
-	if envelope.Type == messageTypeControlRequest {
+	if envelope.Type == ControlRequest {
 		// Route to control request handler instead of message stream
 		select {
 		case q.controlRequestChan <- data:
@@ -901,7 +900,7 @@ func (q *queryImpl) SetModel(ctx context.Context, model *string) error {
 	q.mu.Unlock()
 
 	controlReq := map[string]any{
-		fieldType:      messageTypeControlRequest,
+		fieldType:      ControlRequest,
 		fieldUUID:      uuid.New().String(),
 		fieldSessionID: q.sessionID,
 		fieldRequestID: requestID,
@@ -976,7 +975,7 @@ func (q *queryImpl) SupportedCommands(ctx context.Context) ([]SlashCommand, erro
 	q.mu.Unlock()
 
 	controlReq := map[string]any{
-		fieldType:      messageTypeControlRequest,
+		fieldType:      ControlRequest,
 		fieldUUID:      uuid.New().String(),
 		fieldSessionID: q.sessionID,
 		fieldRequestID: requestID,
@@ -1075,7 +1074,7 @@ func (q *queryImpl) SupportedModels(ctx context.Context) ([]ModelInfo, error) {
 	q.mu.Unlock()
 
 	controlReq := map[string]any{
-		fieldType:      messageTypeControlRequest,
+		fieldType:      ControlRequest,
 		fieldUUID:      uuid.New().String(),
 		fieldSessionID: q.sessionID,
 		fieldRequestID: requestID,
@@ -1174,7 +1173,7 @@ func (q *queryImpl) McpServerStatus(ctx context.Context) ([]McpServerStatus, err
 	q.mu.Unlock()
 
 	controlReq := map[string]any{
-		fieldType:      messageTypeControlRequest,
+		fieldType:      ControlRequest,
 		fieldUUID:      uuid.New().String(),
 		fieldSessionID: q.sessionID,
 		fieldRequestID: requestID,
