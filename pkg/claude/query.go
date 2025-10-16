@@ -864,9 +864,7 @@ func (q *queryImpl) sendControlRequest(
 
 // Interrupt interrupts the current query.
 func (q *queryImpl) Interrupt(ctx context.Context) error {
-	_, err := q.sendControlRequest(ctx, SDKControlInterruptRequest{
-		SubtypeField: "interrupt",
-	})
+	_, err := q.sendControlRequest(ctx, SDKControlInterruptRequest{})
 
 	return err
 }
@@ -874,8 +872,7 @@ func (q *queryImpl) Interrupt(ctx context.Context) error {
 // SetPermissionMode changes the permission mode.
 func (q *queryImpl) SetPermissionMode(ctx context.Context, mode PermissionMode) error {
 	_, err := q.sendControlRequest(ctx, SDKControlSetPermissionModeRequest{
-		SubtypeField: "setPermissionMode",
-		Mode:         string(mode),
+		Mode: string(mode),
 	})
 
 	return err
@@ -1325,8 +1322,7 @@ func (q *queryImpl) Initialize(ctx context.Context) (map[string]any, error) {
 	}
 
 	resp, err := q.sendControlRequest(ctx, SDKControlInitializeRequest{
-		SubtypeField: "initialize",
-		Hooks:        hooksConfig,
+		Hooks: hooksConfig,
 	})
 	if err != nil {
 		return nil, err

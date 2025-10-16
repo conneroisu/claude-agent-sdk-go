@@ -222,9 +222,7 @@ func TestSDKControlRequest(t *testing.T) {
 			SessionIDField: "test-session",
 		},
 		RequestID: "req-123",
-		Request: claudeagent.SDKControlInterruptRequest{
-			SubtypeField: "interrupt",
-		},
+		Request:   claudeagent.SDKControlInterruptRequest{},
 	}
 
 	if msg.Type() != "control_request" {
@@ -263,8 +261,7 @@ func TestSDKControlSetPermissionModeRequest(t *testing.T) {
 		},
 		RequestID: "req-456",
 		Request: claudeagent.SDKControlSetPermissionModeRequest{
-			SubtypeField: "set_permission_mode",
-			Mode:         "auto",
+			Mode: "auto",
 		},
 	}
 

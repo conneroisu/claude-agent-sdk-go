@@ -16,9 +16,7 @@ func TestSDKControlInterruptRequestSerialization(t *testing.T) {
 			SessionIDField: "test-session",
 		},
 		RequestID: "req-123",
-		Request: claudeagent.SDKControlInterruptRequest{
-			SubtypeField: "interrupt",
-		},
+		Request:   claudeagent.SDKControlInterruptRequest{},
 	}
 
 	// Marshal to JSON
@@ -70,8 +68,7 @@ func TestSDKControlInitializeRequestSerialization(t *testing.T) {
 		},
 		RequestID: "req-init-1",
 		Request: claudeagent.SDKControlInitializeRequest{
-			SubtypeField: "initialize",
-			Hooks:        hooks,
+			Hooks: hooks,
 		},
 	}
 
@@ -113,8 +110,7 @@ func TestSDKControlInitializeRequestNoHooks(t *testing.T) {
 		},
 		RequestID: "req-init-2",
 		Request: claudeagent.SDKControlInitializeRequest{
-			SubtypeField: "initialize",
-			Hooks:        nil,
+			Hooks: nil,
 		},
 	}
 
@@ -149,8 +145,7 @@ func TestSDKControlSetPermissionModeRequestSerialization(t *testing.T) {
 		},
 		RequestID: "req-perm-1",
 		Request: claudeagent.SDKControlSetPermissionModeRequest{
-			SubtypeField: "set_permission_mode",
-			Mode:         "acceptEdits",
+			Mode: "acceptEdits",
 		},
 	}
 
@@ -201,8 +196,7 @@ func TestSDKControlSetPermissionModeRequestAllModes(t *testing.T) {
 				},
 				RequestID: "req-perm-mode",
 				Request: claudeagent.SDKControlSetPermissionModeRequest{
-					SubtypeField: "set_permission_mode",
-					Mode:         mode,
+					Mode: mode,
 				},
 			}
 
@@ -237,9 +231,8 @@ func TestSDKControlMcpMessageRequestSerialization(t *testing.T) {
 		},
 		RequestID: "req-mcp-1",
 		Request: claudeagent.SDKControlMcpMessageRequest{
-			SubtypeField: "mcp_message",
-			ServerName:   "test-server",
-			Message:      json.RawMessage(`{"method":"tools/list"}`),
+			ServerName: "test-server",
+			Message:    json.RawMessage(`{"method":"tools/list"}`),
 		},
 	}
 
@@ -601,33 +594,27 @@ func TestControlRequestVariantTypes(t *testing.T) {
 		expectedSubtype string
 	}{
 		{
-			name: "Interrupt",
-			request: claudeagent.SDKControlInterruptRequest{
-				SubtypeField: "interrupt",
-			},
+			name:            "Interrupt",
+			request:         claudeagent.SDKControlInterruptRequest{},
 			expectedSubtype: "interrupt",
 		},
 		{
-			name: "Initialize",
-			request: claudeagent.SDKControlInitializeRequest{
-				SubtypeField: "initialize",
-			},
+			name:            "Initialize",
+			request:         claudeagent.SDKControlInitializeRequest{},
 			expectedSubtype: "initialize",
 		},
 		{
 			name: "SetPermissionMode",
 			request: claudeagent.SDKControlSetPermissionModeRequest{
-				SubtypeField: "set_permission_mode",
-				Mode:         "default",
+				Mode: "default",
 			},
 			expectedSubtype: "set_permission_mode",
 		},
 		{
 			name: "McpMessage",
 			request: claudeagent.SDKControlMcpMessageRequest{
-				SubtypeField: "mcp_message",
-				ServerName:   "test",
-				Message:      json.RawMessage(`{}`),
+				ServerName: "test",
+				Message:    json.RawMessage(`{}`),
 			},
 			expectedSubtype: "mcp_message",
 		},
