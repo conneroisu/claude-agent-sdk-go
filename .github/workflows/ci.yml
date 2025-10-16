@@ -17,6 +17,8 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@45a18a69953f27af3c2bfad0a5e01c38ef2da462
       - name: Run tests
         run: nix develop -c go test -v -race -coverprofile=coverage.out ./...
+      - name: Run builds
+        run: nix develop -c go build ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
