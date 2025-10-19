@@ -56,7 +56,7 @@ Test implementations by ACTUALLY RENDERING AND VIEWING them using Playwright MCP
 ## Playwright MCP Testing Strategies
 
 **For Web Pages:**
-```
+```text
 1. Navigate to the page using Playwright MCP
 2. Take full page screenshot
 3. Verify all expected elements are visible
@@ -67,7 +67,7 @@ Test implementations by ACTUALLY RENDERING AND VIEWING them using Playwright MCP
 ```
 
 **For UI Components:**
-```
+```text
 1. Navigate to component location
 2. Take screenshot of initial state
 3. Interact with component (hover, click, type)
@@ -77,7 +77,7 @@ Test implementations by ACTUALLY RENDERING AND VIEWING them using Playwright MCP
 ```
 
 **For Forms:**
-```
+```text
 1. Screenshot empty form
 2. Fill in form fields using Playwright
 3. Screenshot filled form
@@ -155,7 +155,7 @@ If ANY visual issue exists, invoke the stuck agent with screenshots - do NOT pro
 
 ## Example Playwright MCP Workflow
 
-```
+```text
 1. Use Playwright MCP to navigate to http://localhost:3000
 2. Take screenshot: "homepage-initial.png"
 3. Verify header, nav, content visible
