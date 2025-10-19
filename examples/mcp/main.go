@@ -12,6 +12,12 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx := context.Background()
 
 	// Define a custom echo tool.
@@ -28,7 +34,10 @@ func main() {
 			},
 			"required": []string{"text"},
 		},
-		func(ctx context.Context, args map[string]any) (*claude.McpToolResult, error) {
+		func(
+			_ context.Context,
+			args map[string]any,
+		) (*claude.McpToolResult, error) {
 			text, ok := args["text"].(string)
 			if !ok {
 				return &claude.McpToolResult{
@@ -71,9 +80,7 @@ func main() {
 
 	client, err := claude.NewClient(opts)
 	if err != nil {
-		handleClientCreationError(err)
-
-		return
+		return handleClientCreationError(err)
 	}
 	defer func() {
 		if closeErr := client.Close(); closeErr != nil {
@@ -85,12 +92,17 @@ func main() {
 	fmt.Println("Sending query: Use the echo tool to echo 'Hello from Go!'")
 	err = client.Query(ctx, "Use the echo tool to echo 'Hello from Go!'")
 	if err != nil {
-		handleQueryError(err)
-
-		return
+		return handleQueryError(err)
 	}
 
 	// Receive and process responses
+	return receiveMessages(ctx, client)
+}
+
+func receiveMessages(
+	ctx context.Context,
+	client *claude.ClaudeSDKClient,
+) error {
 	msgChan, errChan := client.ReceiveMessages(ctx)
 
 	for {
@@ -99,73 +111,103 @@ func main() {
 			if msg == nil {
 				fmt.Println("\nQuery completed")
 
-				return
+				return nil
 			}
 
-			switch m := msg.(type) {
-			case *claude.SDKAssistantMessage:
-				fmt.Println("\nAssistant response:")
-				for _, block := range m.Message.Content {
-					switch b := block.(type) {
-					case claude.TextBlock:
-						fmt.Printf("  Text: %s\n", b.Text)
-					case claude.ToolUseContentBlock:
-						fmt.Printf("  Tool use: %s (id: %s)\n", b.Name, b.ID)
-						fmt.Printf("    Input: %s\n", string(b.Input))
-					}
-				}
-
-			case *claude.SDKResultMessage:
-				fmt.Printf("\nResult: %s\n", m.Subtype)
-				fmt.Printf("Cost: $%.4f\n", m.TotalCostUSD)
-			}
+			processMessage(msg)
 
 		case err := <-errChan:
 			if err != nil {
-				handleStreamError(err)
-
-				return
+				return handleStreamError(err)
 			}
 		}
 	}
 }
 
-// handleClientCreationError provides detailed error handling for client creation.
-func handleClientCreationError(err error) {
+// processMessage handles printing of different message types.
+func processMessage(msg any) {
+	switch m := msg.(type) {
+	case *claude.SDKAssistantMessage:
+		printAssistantMessage(m)
+	case *claude.SDKResultMessage:
+		printResultMessage(m)
+	}
+}
+
+// printAssistantMessage prints assistant message content.
+func printAssistantMessage(m *claude.SDKAssistantMessage) {
+	fmt.Println("\nAssistant response:")
+	for _, block := range m.Message.Content {
+		printContentBlock(block)
+	}
+}
+
+// printContentBlock prints a single content block.
+func printContentBlock(block any) {
+	switch b := block.(type) {
+	case claude.TextBlock:
+		fmt.Printf("  Text: %s\n", b.Text)
+	case claude.ToolUseContentBlock:
+		fmt.Printf("  Tool use: %s (id: %s)\n", b.Name, b.ID)
+		fmt.Printf("    Input: %s\n", string(b.Input))
+	}
+}
+
+// printResultMessage prints result message information.
+func printResultMessage(m *claude.SDKResultMessage) {
+	fmt.Printf("\nResult: %s\n", m.Subtype)
+	fmt.Printf("Cost: $%.4f\n", m.TotalCostUSD)
+}
+
+// handleClientCreationError provides detailed error handling for
+// client creation.
+func handleClientCreationError(err error) error {
 	if clauderrs.IsValidationError(err) {
-		log.Fatalf("Invalid client configuration: %v", err)
+		return fmt.Errorf("invalid client configuration: %w", err)
 	}
 
 	if clauderrs.IsProcessError(err) {
 		var procErr *clauderrs.ProcessError
 		if errors.As(err, &procErr) {
-			log.Fatalf("Failed to start Claude process (exit code %d): %s",
-				procErr.ExitCode(), procErr.Stderr())
+			return fmt.Errorf(
+				"failed to start Claude process (exit code %d): %s",
+				procErr.ExitCode(),
+				procErr.Stderr(),
+			)
 		}
-		log.Fatalf("Failed to start Claude process: %v", err)
+
+		return fmt.Errorf("failed to start Claude process: %w", err)
 	}
 
-	log.Fatalf("Failed to create client: %v", err)
+	return fmt.Errorf("failed to create client: %w", err)
 }
 
-// handleQueryError provides detailed error handling for query operations.
-func handleQueryError(err error) {
+// handleQueryError provides detailed error handling for
+// query operations.
+func handleQueryError(err error) error {
 	// Check for API errors (rate limits, auth issues)
 	if clauderrs.IsAPIError(err) {
 		sdkErr, _ := clauderrs.AsSDKError(err)
 
 		switch sdkErr.Code() {
 		case clauderrs.ErrCodeAPIRateLimit:
-			if retryAfter, ok := sdkErr.Metadata()["retry_after_seconds"].(float64); ok {
-				log.Fatalf("Rate limited. Please wait %v seconds before retrying", retryAfter)
+			if retryAfter, ok :=
+				sdkErr.Metadata()["retry_after_seconds"].(float64); ok {
+				return fmt.Errorf(
+					"rate limited. Please wait %v seconds before retrying",
+					retryAfter,
+				)
 			}
-			log.Fatalf("Rate limited: %v", err)
+
+			return fmt.Errorf("rate limited: %w", err)
 
 		case clauderrs.ErrCodeAPIUnauthorized:
-			log.Fatalf("Authentication failed. Check your ANTHROPIC_API_KEY")
+			return errors.New(
+				"authentication failed. Check your ANTHROPIC_API_KEY",
+			)
 
 		case clauderrs.ErrCodeAPIServerError:
-			log.Fatalf("API server error. Please retry later: %v", err)
+			return fmt.Errorf("API server error. Please retry later: %w", err)
 
 		case clauderrs.ErrCodeAPIBadRequest,
 			clauderrs.ErrCodeAPIForbidden,
@@ -202,55 +244,62 @@ func handleQueryError(err error) {
 			clauderrs.ErrCodeCallbackTimeout,
 			clauderrs.ErrCodeHookFailed,
 			clauderrs.ErrCodeHookTimeout:
-			log.Fatalf("API error: %v", err)
+			return fmt.Errorf("API error: %w", err)
 
 		default:
-			log.Fatalf("Unexpected error code: %v", err)
+			return fmt.Errorf("unexpected error code: %w", err)
 		}
-
-		return
 	}
 
 	// Check for network issues
 	if clauderrs.IsNetworkError(err) {
 		if clauderrs.IsNetworkTimeout(err) {
-			log.Fatalf("Request timed out. Try increasing the timeout")
+			return errors.New(
+				"request timed out. Try increasing the timeout",
+			)
 		}
-		log.Fatalf("Network error: %v", err)
+
+		return fmt.Errorf("network error: %w", err)
 	}
 
 	// Check for client state issues
 	if clauderrs.IsClientError(err) {
 		sdkErr, _ := clauderrs.AsSDKError(err)
 		if sdkErr.Code() == clauderrs.ErrCodeClientClosed {
-			log.Fatalf("Client is closed")
+			return errors.New("client is closed")
 		}
-		log.Fatalf("Client error: %v", err)
+
+		return fmt.Errorf("client error: %w", err)
 	}
 
-	log.Fatalf("Query failed: %v", err)
+	return fmt.Errorf("query failed: %w", err)
 }
 
 // handleStreamError provides error handling during message streaming.
-func handleStreamError(err error) {
+func handleStreamError(err error) error {
 	// Protocol errors may indicate version mismatch
 	if clauderrs.IsProtocolError(err) {
 		sdkErr, _ := clauderrs.AsSDKError(err)
 		if sdkErr.Code() == clauderrs.ErrCodeMessageParseFailed {
-			log.Fatalf("Failed to parse message. This may indicate a version mismatch: %v", err)
+			return fmt.Errorf(
+				"failed to parse message. "+
+					"This may indicate a version mismatch: %w",
+				err,
+			)
 		}
-		log.Fatalf("Protocol error: %v", err)
+
+		return fmt.Errorf("protocol error: %w", err)
 	}
 
 	// MCP tool execution errors
 	if clauderrs.IsCallbackError(err) {
-		log.Fatalf("MCP tool execution failed: %v", err)
+		return fmt.Errorf("MCP tool execution failed: %w", err)
 	}
 
 	// Network interruption during streaming
 	if clauderrs.IsNetworkError(err) {
-		log.Fatalf("Network error during streaming: %v", err)
+		return fmt.Errorf("network error during streaming: %w", err)
 	}
 
-	log.Fatalf("Stream error: %v", err)
+	return fmt.Errorf("stream error: %w", err)
 }
