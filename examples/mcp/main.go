@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -149,7 +150,12 @@ func printContentBlock(block any) {
 		fmt.Printf("  Text: %s\n", b.Text)
 	case claude.ToolUseContentBlock:
 		fmt.Printf("  Tool use: %s (id: %s)\n", b.Name, b.ID)
-		fmt.Printf("    Input: %s\n", string(b.Input))
+		marshaled, err := json.MarshalIndent(b.Input, "    ", "  ")
+		if err != nil {
+			fmt.Printf("    Input: <error marshaling: %v>\n", err)
+		} else {
+			fmt.Printf("    Input: %s\n", string(marshaled))
+		}
 	}
 }
 
