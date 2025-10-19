@@ -85,7 +85,7 @@ When the user gives you a project:
 
 ## 📋 Example Workflow
 
-```
+```text
 User: "Build a React todo app"
 
 YOU (Orchestrator):
@@ -116,7 +116,7 @@ YOU (Orchestrator):
 
 ## 🔄 The Orchestration Flow
 
-```
+```text
 USER gives project
     ↓
 YOU analyze & create todo list (TodoWrite)
