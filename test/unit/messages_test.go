@@ -291,6 +291,7 @@ func TestSDKControlResponse(t *testing.T) {
 			UUIDField:      uuid.New(),
 			SessionIDField: "test-session",
 		},
+		TypeField: "control_response",
 		Response: claudeagent.ControlSuccessResponse{
 			SubtypeField:   "success",
 			RequestIDField: "req-123",
@@ -334,6 +335,7 @@ func TestSDKControlErrorResponse(t *testing.T) {
 			UUIDField:      uuid.New(),
 			SessionIDField: "test-session",
 		},
+		TypeField: "control_response",
 		Response: claudeagent.ControlErrorResponse{
 			SubtypeField:   "error",
 			RequestIDField: "req-789",

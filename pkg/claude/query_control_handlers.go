@@ -21,6 +21,7 @@ func (q *queryImpl) sendControlResponse(
 		UUIDField:      uuid.New(),
 		SessionIDField: q.sessionID,
 	}
+	response.TypeField = messageTypeControlResponse
 
 	if err != nil {
 		// Send error response
