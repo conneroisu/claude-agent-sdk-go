@@ -34,7 +34,10 @@ func (q *queryImpl) SetModel(ctx context.Context, model *string) error {
 	// Note: We need to add this request type to messages.go
 	request := map[string]any{
 		"subtype": "setModel",
-		"model":   model,
+	}
+	// Only add the model key if model is not nil, using dereferenced value
+	if model != nil {
+		request["model"] = *model
 	}
 
 	// For now, use a generic approach since we don't have
