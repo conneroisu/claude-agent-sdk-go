@@ -23,7 +23,11 @@ func (q *queryImpl) handleControlRequests() {
 		select {
 		case <-q.closeChan:
 			return
-		case data := <-q.controlRequestChan:
+		case data, ok := <-q.controlRequestChan:
+			if !ok {
+				// Channel is closed, stop processing
+				return
+			}
 			// Parse the control request
 			var envelope controlRequestEnvelope
 			if err := json.Unmarshal(data, &envelope); err != nil {
