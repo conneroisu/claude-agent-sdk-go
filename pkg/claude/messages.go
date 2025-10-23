@@ -976,7 +976,8 @@ func decodeControlRequestVariant(data []byte) (ControlRequestVariant, error) {
 // These are responses to control requests sent by the SDK.
 type SDKControlResponse struct {
 	BaseMessage
-	Response ControlResponseVariant `json:"response"`
+	TypeField string                 `json:"type"`
+	Response  ControlResponseVariant `json:"response"`
 }
 
 func (SDKControlResponse) Type() string { return "control_response" }
@@ -1025,7 +1026,8 @@ func (ControlErrorResponse) controlResponseVariant() {}
 func (r *SDKControlResponse) UnmarshalJSON(data []byte) error {
 	type Alias struct {
 		BaseMessage
-		Response json.RawMessage `json:"response"`
+		TypeField string          `json:"type"`
+		Response  json.RawMessage `json:"response"`
 	}
 
 	var aux Alias
@@ -1039,6 +1041,7 @@ func (r *SDKControlResponse) UnmarshalJSON(data []byte) error {
 	}
 
 	r.BaseMessage = aux.BaseMessage
+	r.TypeField = aux.TypeField
 
 	// Decode the response variant
 	variant, err := decodeControlResponseVariant(aux.Response)
