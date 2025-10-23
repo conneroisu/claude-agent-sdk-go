@@ -13,6 +13,7 @@ import (
 // readMessages reads messages from the process.
 func (q *queryImpl) readMessages() {
 	defer close(q.msgChan)
+	defer close(q.controlRequestChan)
 
 	for {
 		select {
@@ -247,7 +248,6 @@ func (q *queryImpl) Close() error {
 
 	q.closed = true
 	close(q.closeChan)
-	close(q.controlRequestChan)
 
 	if q.proc != nil {
 		return q.proc.Close()
