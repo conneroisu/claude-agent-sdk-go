@@ -130,10 +130,25 @@ func (q *queryImpl) sendControlRequest(
 		// Check response type
 		switch r := resp.Response.(type) {
 		case ControlSuccessResponse:
-			// Convert JSONValue map to any map
+			// Convert JSONValue map to any map by decoding each json.RawMessage
 			result := make(map[string]any)
 			for k, v := range r.Response {
-				result[k] = v
+				if v == nil {
+					result[k] = nil
+					continue
+				}
+				var decoded any
+				if err := json.Unmarshal(v, &decoded); err != nil {
+					return nil, clauderrs.NewProtocolError(
+						clauderrs.ErrCodeMessageParseFailed,
+						fmt.Sprintf("failed to decode response value for key %s", k),
+						err,
+					).
+						WithSessionID(q.sessionID).
+						WithRequestID(requestID).
+						WithMessageType("control_response")
+				}
+				result[k] = decoded
 			}
 
 			return result, nil

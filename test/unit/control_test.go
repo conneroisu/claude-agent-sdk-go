@@ -721,6 +721,125 @@ func TestControlResponseVariantTypes(t *testing.T) {
 	}
 }
 
+// Test that ControlSuccessResponse values can be decoded from JSONValue.
+func TestControlSuccessResponseValueDecoding(t *testing.T) {
+	testCases := []struct {
+		name     string
+		key      string
+		jsonVal  claudeagent.JSONValue
+		expected interface{}
+	}{
+		{
+			name:     "String value",
+			key:      "status",
+			jsonVal:  json.RawMessage(`"ok"`),
+			expected: "ok",
+		},
+		{
+			name:     "Number value",
+			key:      "count",
+			jsonVal:  json.RawMessage(`42`),
+			expected: float64(42), // JSON numbers decode as float64
+		},
+		{
+			name:     "Boolean value",
+			key:      "enabled",
+			jsonVal:  json.RawMessage(`true`),
+			expected: true,
+		},
+		{
+			name:     "Object value",
+			key:      "config",
+			jsonVal:  json.RawMessage(`{"key":"value"}`),
+			expected: map[string]interface{}{"key": "value"},
+		},
+		{
+			name:     "Array value",
+			key:      "items",
+			jsonVal:  json.RawMessage(`[1,2,3]`),
+			expected: []interface{}{float64(1), float64(2), float64(3)},
+		},
+		{
+			name:     "Null value",
+			key:      "optional",
+			jsonVal:  nil,
+			expected: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Simulate what sendControlRequest does with the response
+			responseMap := map[string]claudeagent.JSONValue{
+				tc.key: tc.jsonVal,
+			}
+
+			// Decode the value as sendControlRequest would
+			result := make(map[string]interface{})
+			for k, v := range responseMap {
+				if v == nil {
+					result[k] = nil
+					continue
+				}
+				var decoded interface{}
+				if err := json.Unmarshal(v, &decoded); err != nil {
+					t.Fatalf("failed to decode value: %v", err)
+				}
+				result[k] = decoded
+			}
+
+			// Verify the decoded value matches expected type and value
+			actualValue, exists := result[tc.key]
+			if !exists {
+				t.Fatalf("key %s not found in result", tc.key)
+			}
+
+			// For nil, just check it's nil
+			if tc.expected == nil {
+				if actualValue != nil {
+					t.Errorf("expected nil, got %v", actualValue)
+				}
+				return
+			}
+
+			// For slices and maps, use deep comparison
+			switch expected := tc.expected.(type) {
+			case map[string]interface{}:
+				actual, ok := actualValue.(map[string]interface{})
+				if !ok {
+					t.Fatalf("expected map[string]interface{}, got %T", actualValue)
+				}
+				if len(actual) != len(expected) {
+					t.Errorf("map length mismatch: expected %d, got %d", len(expected), len(actual))
+				}
+				for k, v := range expected {
+					if actual[k] != v {
+						t.Errorf("map[%s]: expected %v, got %v", k, v, actual[k])
+					}
+				}
+			case []interface{}:
+				actual, ok := actualValue.([]interface{})
+				if !ok {
+					t.Fatalf("expected []interface{}, got %T", actualValue)
+				}
+				if len(actual) != len(expected) {
+					t.Errorf("array length mismatch: expected %d, got %d", len(expected), len(actual))
+				}
+				for i, v := range expected {
+					if actual[i] != v {
+						t.Errorf("array[%d]: expected %v, got %v", i, v, actual[i])
+					}
+				}
+			default:
+				// For primitives, direct comparison
+				if actualValue != tc.expected {
+					t.Errorf("expected %v (%T), got %v (%T)", tc.expected, tc.expected, actualValue, actualValue)
+				}
+			}
+		})
+	}
+}
+
 // Helper function to create string pointers.
 func stringPtr(s string) *string {
 	return &s
