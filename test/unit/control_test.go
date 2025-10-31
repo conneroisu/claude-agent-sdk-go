@@ -282,6 +282,7 @@ func TestSDKControlSuccessResponseSerialization(t *testing.T) {
 			UUIDField:      uuid.New(),
 			SessionIDField: "test-session",
 		},
+		TypeField: "control_response",
 		Response: claudeagent.ControlSuccessResponse{
 			SubtypeField:   "success",
 			RequestIDField: "req-123",
@@ -300,6 +301,19 @@ func TestSDKControlSuccessResponseSerialization(t *testing.T) {
 
 	t.Logf("Success response JSON:\n%s", string(data))
 
+	// Verify the type field is present
+	var rawMsg map[string]interface{}
+	if err := json.Unmarshal(data, &rawMsg); err != nil {
+		t.Fatalf("failed to unmarshal as map: %v", err)
+	}
+
+	typeField, ok := rawMsg["type"]
+	if !ok {
+		t.Error("type field is missing from JSON")
+	} else if typeField != "control_response" {
+		t.Errorf("expected type 'control_response', got %v", typeField)
+	}
+
 	// Unmarshal back
 	var decoded claudeagent.SDKControlResponse
 	if err := json.Unmarshal(data, &decoded); err != nil {
@@ -309,6 +323,11 @@ func TestSDKControlSuccessResponseSerialization(t *testing.T) {
 	// Verify type
 	if decoded.Type() != "control_response" {
 		t.Errorf("expected type 'control_response', got %s", decoded.Type())
+	}
+
+	// Verify TypeField is set
+	if decoded.TypeField != "control_response" {
+		t.Errorf("expected TypeField 'control_response', got %s", decoded.TypeField)
 	}
 
 	// Verify response variant
@@ -337,6 +356,7 @@ func TestSDKControlErrorResponseSerialization(t *testing.T) {
 			UUIDField:      uuid.New(),
 			SessionIDField: "test-session",
 		},
+		TypeField: "control_response",
 		Response: claudeagent.ControlErrorResponse{
 			SubtypeField:   "error",
 			RequestIDField: "req-456",
@@ -352,10 +372,28 @@ func TestSDKControlErrorResponseSerialization(t *testing.T) {
 
 	t.Logf("Error response JSON:\n%s", string(data))
 
+	// Verify the type field is present
+	var rawMsg map[string]interface{}
+	if err := json.Unmarshal(data, &rawMsg); err != nil {
+		t.Fatalf("failed to unmarshal as map: %v", err)
+	}
+
+	typeField, ok := rawMsg["type"]
+	if !ok {
+		t.Error("type field is missing from JSON")
+	} else if typeField != "control_response" {
+		t.Errorf("expected type 'control_response', got %v", typeField)
+	}
+
 	// Unmarshal back
 	var decoded claudeagent.SDKControlResponse
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("failed to unmarshal error response: %v", err)
+	}
+
+	// Verify TypeField is set
+	if decoded.TypeField != "control_response" {
+		t.Errorf("expected TypeField 'control_response', got %s", decoded.TypeField)
 	}
 
 	// Verify response variant
@@ -689,7 +727,8 @@ func TestControlResponseVariantTypes(t *testing.T) {
 					UUIDField:      uuid.New(),
 					SessionIDField: "test-session",
 				},
-				Response: tc.response,
+				TypeField: "control_response",
+				Response:  tc.response,
 			}
 
 			data, err := json.Marshal(msg)
