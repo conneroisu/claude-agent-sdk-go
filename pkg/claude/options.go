@@ -63,11 +63,16 @@ type Options struct {
 }
 
 // AgentDefinition defines a custom agent.
+//
+// Tools and DisallowedTools are mutually exclusive - specify one or the other.
+// Tools is an allowlist (agent can only use these tools), while DisallowedTools
+// is a denylist (agent can use any tool except these).
 type AgentDefinition struct {
-	Description string   `json:"description"`
-	Prompt      string   `json:"prompt"`
-	Tools       []string `json:"tools"`
-	Model       string   `json:"model,omitempty"`
+	Description     string   `json:"description"`
+	Prompt          string   `json:"prompt"`
+	Tools           []string `json:"tools"`
+	DisallowedTools []string `json:"disallowedTools,omitempty"`
+	Model           string   `json:"model,omitempty"`
 }
 
 // ModelInfo represents model information.
