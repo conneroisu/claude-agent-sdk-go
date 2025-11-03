@@ -1,38 +1,5 @@
 {
   "hooks": {
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "conclaude PreCompact"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "conclaude Notification"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "conclaude Stop"
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "matcher": "",
@@ -44,13 +11,35 @@
         ]
       }
     ],
-    "PostToolUse": [
+    "SessionEnd": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "conclaude PostToolUse"
+            "command": "conclaude SessionEnd"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "conclaude PreCompact"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "conclaude Stop"
           }
         ]
       }
@@ -84,6 +73,28 @@
           {
             "type": "command",
             "command": "conclaude PreToolUse"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "conclaude PostToolUse"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "conclaude Notification"
           }
         ]
       }

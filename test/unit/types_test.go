@@ -215,3 +215,121 @@ func TestPermissionRuleValue(t *testing.T) {
 		)
 	}
 }
+
+func TestAgentDefinitionSerialization(t *testing.T) {
+	tests := []struct {
+		name     string
+		agent    claude.AgentDefinition
+		wantJSON string
+	}{
+		{
+			name: "Basic agent with tools allowlist",
+			agent: claude.AgentDefinition{
+				Description: "Test agent",
+				Prompt:      "You are a test agent",
+				Tools:       []string{"Read", "Write"},
+				Model:       "claude-sonnet-4-5",
+			},
+			wantJSON: `{"description":"Test agent","prompt":"You are a test agent","tools":["Read","Write"],"model":"claude-sonnet-4-5"}`,
+		},
+		{
+			name: "Agent with disallowedTools",
+			agent: claude.AgentDefinition{
+				Description:     "Test agent with disallowed tools",
+				Prompt:          "You are restricted",
+				DisallowedTools: []string{"Bash", "WebSearch"},
+				Model:           "claude-sonnet-4-5",
+			},
+			wantJSON: `{"description":"Test agent with disallowed tools","prompt":"You are restricted","tools":null,"disallowedTools":["Bash","WebSearch"],"model":"claude-sonnet-4-5"}`,
+		},
+		{
+			name: "Agent with empty disallowedTools omitted",
+			agent: claude.AgentDefinition{
+				Description:     "Test agent",
+				Prompt:          "You are a test agent",
+				Tools:           []string{"Read"},
+				DisallowedTools: []string{},
+			},
+			wantJSON: `{"description":"Test agent","prompt":"You are a test agent","tools":["Read"]}`,
+		},
+		{
+			name: "Agent with nil disallowedTools omitted",
+			agent: claude.AgentDefinition{
+				Description:     "Test agent",
+				Prompt:          "You are a test agent",
+				Tools:           []string{"Read"},
+				DisallowedTools: nil,
+			},
+			wantJSON: `{"description":"Test agent","prompt":"You are a test agent","tools":["Read"]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.agent)
+			if err != nil {
+				t.Fatalf("failed to marshal agent: %v", err)
+			}
+
+			gotJSON := string(data)
+			if gotJSON != tt.wantJSON {
+				t.Errorf("JSON mismatch:\nwant: %s\ngot:  %s", tt.wantJSON, gotJSON)
+			}
+
+			var decoded claude.AgentDefinition
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("failed to unmarshal agent: %v", err)
+			}
+
+			if decoded.Description != tt.agent.Description {
+				t.Errorf("description mismatch: expected %s, got %s", tt.agent.Description, decoded.Description)
+			}
+			if decoded.Prompt != tt.agent.Prompt {
+				t.Errorf("prompt mismatch: expected %s, got %s", tt.agent.Prompt, decoded.Prompt)
+			}
+			if decoded.Model != tt.agent.Model {
+				t.Errorf("model mismatch: expected %s, got %s", tt.agent.Model, decoded.Model)
+			}
+		})
+	}
+}
+
+func TestAgentDefinitionDisallowedToolsField(t *testing.T) {
+	agent := claude.AgentDefinition{
+		Description:     "Test agent",
+		Prompt:          "Test prompt",
+		DisallowedTools: []string{"Bash", "WebSearch", "Task"},
+	}
+
+	data, err := json.Marshal(agent)
+	if err != nil {
+		t.Fatalf("failed to marshal agent: %v", err)
+	}
+
+	// Verify disallowedTools field is in camelCase
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	if _, ok := raw["disallowedTools"]; !ok {
+		t.Error("expected disallowedTools field in camelCase")
+	}
+
+	// Verify round-trip
+	var decoded claude.AgentDefinition
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal agent: %v", err)
+	}
+
+	if len(decoded.DisallowedTools) != 3 {
+		t.Errorf("expected 3 disallowed tools, got %d", len(decoded.DisallowedTools))
+	}
+
+	expectedTools := []string{"Bash", "WebSearch", "Task"}
+	for i, tool := range expectedTools {
+		if decoded.DisallowedTools[i] != tool {
+			t.Errorf("disallowed tool %d mismatch: expected %s, got %s", i, tool, decoded.DisallowedTools[i])
+		}
+	}
+}
