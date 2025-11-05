@@ -1,5 +1,7 @@
 # Claude Agent SDK for Go
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/conneroisu/claude-agent-sdk-go.svg)](https://pkg.go.dev/github.com/conneroisu/claude-agent-sdk-go)
+
 Official Go SDK for Claude Agent, providing programmatic access to Claude's agent capabilities.
 
 ## Installation
