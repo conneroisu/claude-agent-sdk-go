@@ -213,3 +213,111 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 <!-- OPENSPEC:END -->
 
 
+<project>
+
+.
+.claude
+├── agents
+│   ├── coder.md
+│   ├── stuck.md
+│   └── tester.md
+├── commands
+│   └── openspec
+│       ├── apply.md
+│       ├── archive.md
+│       └── proposal.md
+├── contexts
+│   ├── claude-agent-sdk-python-v0.1.0.md
+│   └── claude-agent-sdk-ts
+│       ├── cli.js
+│       ├── LICENSE.md
+│       ├── package.json
+│       ├── README.md
+│       ├── sdk.d.ts
+│       ├── sdk.mjs
+│       ├── sdk-tools.d.ts
+│       └── vendor
+├── pairup_sessions
+├── settings.json
+└── settings.local.json
+├── AGENTS.md
+├── CLAUDE.md
+├── examples
+│   ├── basic
+│   │   └── main.go
+│   ├── dynamic-permissions
+│   │   └── main.go
+│   ├── file-analyzer
+│   │   └── main.go
+│   ├── hooks
+│   │   └── main.go
+│   ├── interactive
+│   │   └── main.go
+│   ├── interrupt
+│   │   └── main.go
+│   ├── mcp
+│   │   └── main.go
+│   ├── model-switching
+│   │   └── main.go
+│   ├── multi-turn
+│   │   └── main.go
+│   ├── permissions
+│   │   └── main.go
+│   └── streaming
+│       └── main.go
+├── flake.lock
+├── flake.nix
+├── go.mod
+├── go.sum
+├── internal
+│   └── transport
+│       ├── errors.go
+│       ├── process.go
+│       └── transport.go
+├── openspec
+│   ├── AGENTS.md
+│   ├── changes
+│   │   ├── add-agent-disallowed-tools
+│   │   └── archive
+│   ├── project.md
+│   └── specs
+│       └── typescript-sdk-download
+├── output
+├── pkg
+│   ├── claude
+│   │   ├── client.go
+│   │   ├── doc.go
+│   │   ├── hooks_events.go
+│   │   ├── hooks.go
+│   │   ├── mcp.go
+│   │   ├── messages.go
+│   │   ├── options.go
+│   │   ├── query.go
+│   │   ├── tool_inputs.go
+│   │   └── types.go
+│   └── clauderrs
+│       ├── api.go
+│       ├── base.go
+│       ├── client.go
+│       ├── errors.go
+│       ├── network.go
+│       ├── permission.go
+│       ├── process.go
+│       ├── types.go
+│       └── utils.go
+├── README.md
+├── scripts
+│   └── download-ts-sdk.sh
+└── test
+    ├── integration
+    │   └── integration_test.go
+    └── unit
+        ├── client_test.go
+        ├── control_test.go
+        ├── messages_test.go
+        ├── protocol_test.go
+        ├── query_test.go
+        └── types_test.go
+
+28 directories, 51 files
+</project>
