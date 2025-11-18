@@ -962,3 +962,643 @@ func TestClientOptionsWithCombinedFields(t *testing.T) {
 		t.Error("Options.Plugins assignment failed")
 	}
 }
+
+// ============================================================================
+// Structured Output Support Tests - SDKResultMessage Extensions
+// ============================================================================
+
+// TestSDKResultMessageWithStructuredOutput verifies the StructuredOutput field
+// is populated correctly with various data structures.
+func TestSDKResultMessageWithStructuredOutput(t *testing.T) {
+	tests := []struct {
+		name             string
+		structuredOutput interface{}
+		wantJSONField    string
+	}{
+		{
+			name:             "simple string",
+			structuredOutput: "hello world",
+			wantJSONField:    `"hello world"`,
+		},
+		{
+			name:             "number",
+			structuredOutput: 42.5,
+			wantJSONField:    `42.5`,
+		},
+		{
+			name: "simple object",
+			structuredOutput: map[string]interface{}{
+				"name": "Alice",
+				"age":  30,
+			},
+			wantJSONField: `{"age":30,"name":"Alice"}`,
+		},
+		{
+			name: "complex nested object",
+			structuredOutput: map[string]interface{}{
+				"person": map[string]interface{}{
+					"name": "Bob",
+					"address": map[string]interface{}{
+						"city":  "San Francisco",
+						"state": "CA",
+					},
+				},
+				"items": []interface{}{"apple", "banana", "cherry"},
+			},
+			wantJSONField: `{"items":["apple","banana","cherry"],"person":{"address":{"city":"San Francisco","state":"CA"},"name":"Bob"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := claude.SDKResultMessage{
+				Subtype:          "success",
+				StructuredOutput: tt.structuredOutput,
+			}
+
+			data, err := json.Marshal(msg)
+			if err != nil {
+				t.Fatalf("failed to marshal SDKResultMessage: %v", err)
+			}
+
+			// Verify structured_output field is present in JSON
+			var raw map[string]interface{}
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatalf("failed to unmarshal to map: %v", err)
+			}
+
+			if _, ok := raw["structured_output"]; !ok {
+				t.Error("expected 'structured_output' field in JSON")
+			}
+
+			// Unmarshal back and verify
+			var decoded claude.SDKResultMessage
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("failed to unmarshal SDKResultMessage: %v", err)
+			}
+
+			if decoded.StructuredOutput == nil {
+				t.Fatal("StructuredOutput should not be nil")
+			}
+
+			// Marshal the structured output to compare
+			decodedJSON, err := json.Marshal(decoded.StructuredOutput)
+			if err != nil {
+				t.Fatalf("failed to marshal decoded structured output: %v", err)
+			}
+
+			if string(decodedJSON) != tt.wantJSONField {
+				t.Errorf("structured output mismatch:\nwant: %s\ngot:  %s", tt.wantJSONField, string(decodedJSON))
+			}
+		})
+	}
+}
+
+// TestSDKResultMessageWithErrors verifies the Errors field is populated correctly.
+func TestSDKResultMessageWithErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		errors []string
+	}{
+		{
+			name:   "single error",
+			errors: []string{"execution failed"},
+		},
+		{
+			name:   "multiple errors",
+			errors: []string{"error 1", "error 2", "error 3"},
+		},
+		{
+			name:   "empty errors",
+			errors: []string{},
+		},
+		{
+			name:   "nil errors",
+			errors: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := claude.SDKResultMessage{
+				Subtype: "error_during_execution",
+				IsError: true,
+				Errors:  tt.errors,
+			}
+
+			data, err := json.Marshal(msg)
+			if err != nil {
+				t.Fatalf("failed to marshal SDKResultMessage: %v", err)
+			}
+
+			var decoded claude.SDKResultMessage
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("failed to unmarshal SDKResultMessage: %v", err)
+			}
+
+			// For empty or nil slices, decoded.Errors should be nil or empty
+			if len(tt.errors) == 0 {
+				if len(decoded.Errors) != 0 {
+					t.Errorf("expected empty or nil errors, got %v", decoded.Errors)
+				}
+				return
+			}
+
+			if len(decoded.Errors) != len(tt.errors) {
+				t.Fatalf("errors length mismatch: expected %d, got %d", len(tt.errors), len(decoded.Errors))
+			}
+
+			for i, err := range tt.errors {
+				if decoded.Errors[i] != err {
+					t.Errorf("errors[%d] mismatch: expected %s, got %s", i, err, decoded.Errors[i])
+				}
+			}
+		})
+	}
+}
+
+// TestSDKResultMessageOmitemptyBehavior verifies omitempty works correctly
+// for StructuredOutput and Errors fields.
+func TestSDKResultMessageOmitemptyBehavior(t *testing.T) {
+	tests := []struct {
+		name             string
+		msg              claude.SDKResultMessage
+		wantFields       []string
+		wantMissingField []string
+	}{
+		{
+			name: "nil structured_output and empty errors",
+			msg: claude.SDKResultMessage{
+				Subtype:          "success",
+				StructuredOutput: nil,
+				Errors:           nil,
+			},
+			wantFields:       []string{"subtype"},
+			wantMissingField: []string{"structured_output", "errors"},
+		},
+		{
+			name: "populated structured_output",
+			msg: claude.SDKResultMessage{
+				Subtype:          "success",
+				StructuredOutput: map[string]interface{}{"result": "ok"},
+				Errors:           nil,
+			},
+			wantFields:       []string{"subtype", "structured_output"},
+			wantMissingField: []string{"errors"},
+		},
+		{
+			name: "populated errors",
+			msg: claude.SDKResultMessage{
+				Subtype:          "error_during_execution",
+				IsError:          true,
+				StructuredOutput: nil,
+				Errors:           []string{"error message"},
+			},
+			wantFields:       []string{"subtype", "errors"},
+			wantMissingField: []string{"structured_output"},
+		},
+		{
+			name: "both fields populated",
+			msg: claude.SDKResultMessage{
+				Subtype:          "success",
+				StructuredOutput: "some result",
+				Errors:           []string{"warning"},
+			},
+			wantFields:       []string{"subtype", "structured_output", "errors"},
+			wantMissingField: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.msg)
+			if err != nil {
+				t.Fatalf("failed to marshal SDKResultMessage: %v", err)
+			}
+
+			var raw map[string]interface{}
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatalf("failed to unmarshal to map: %v", err)
+			}
+
+			// Check expected fields are present
+			for _, field := range tt.wantFields {
+				if _, ok := raw[field]; !ok {
+					t.Errorf("expected field '%s' to be present in JSON", field)
+				}
+			}
+
+			// Check fields that should be missing
+			for _, field := range tt.wantMissingField {
+				if _, ok := raw[field]; ok {
+					t.Errorf("expected field '%s' to be omitted from JSON", field)
+				}
+			}
+		})
+	}
+}
+
+// TestSDKResultMessageJSONRoundTrip verifies JSON marshaling and unmarshaling
+// with structured output and errors fields.
+func TestSDKResultMessageJSONRoundTrip(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonData string
+		want     claude.SDKResultMessage
+	}{
+		{
+			name: "with structured_output",
+			jsonData: `{
+				"uuid": "00000000-0000-0000-0000-000000000000",
+				"session_id": "test-session",
+				"subtype": "success",
+				"duration_ms": 1000,
+				"duration_api_ms": 800,
+				"is_error": false,
+				"num_turns": 1,
+				"total_cost_usd": 0.001,
+				"usage": {
+					"input_tokens": 100,
+					"output_tokens": 50,
+					"cache_read_input_tokens": 0,
+					"cache_creation_input_tokens": 0
+				},
+				"modelUsage": {},
+				"permission_denials": [],
+				"structured_output": {"name": "test", "value": 42}
+			}`,
+			want: claude.SDKResultMessage{
+				Subtype:          "success",
+				DurationMS:       1000,
+				DurationAPIMS:    800,
+				IsError:          false,
+				NumTurns:         1,
+				TotalCostUSD:     0.001,
+				StructuredOutput: map[string]interface{}{"name": "test", "value": float64(42)},
+			},
+		},
+		{
+			name: "with errors",
+			jsonData: `{
+				"uuid": "00000000-0000-0000-0000-000000000000",
+				"session_id": "test-session",
+				"subtype": "error_during_execution",
+				"duration_ms": 500,
+				"duration_api_ms": 400,
+				"is_error": true,
+				"num_turns": 1,
+				"total_cost_usd": 0.0005,
+				"usage": {
+					"input_tokens": 50,
+					"output_tokens": 10,
+					"cache_read_input_tokens": 0,
+					"cache_creation_input_tokens": 0
+				},
+				"modelUsage": {},
+				"permission_denials": [],
+				"errors": ["tool execution failed", "timeout occurred"]
+			}`,
+			want: claude.SDKResultMessage{
+				Subtype:       "error_during_execution",
+				DurationMS:    500,
+				DurationAPIMS: 400,
+				IsError:       true,
+				NumTurns:      1,
+				TotalCostUSD:  0.0005,
+				Errors:        []string{"tool execution failed", "timeout occurred"},
+			},
+		},
+		{
+			name: "backward compatibility - neither field",
+			jsonData: `{
+				"uuid": "00000000-0000-0000-0000-000000000000",
+				"session_id": "test-session",
+				"subtype": "success",
+				"duration_ms": 1000,
+				"duration_api_ms": 800,
+				"is_error": false,
+				"num_turns": 1,
+				"total_cost_usd": 0.001,
+				"usage": {
+					"input_tokens": 100,
+					"output_tokens": 50,
+					"cache_read_input_tokens": 0,
+					"cache_creation_input_tokens": 0
+				},
+				"modelUsage": {},
+				"permission_denials": [],
+				"result": "plain text result"
+			}`,
+			want: claude.SDKResultMessage{
+				Subtype:       "success",
+				DurationMS:    1000,
+				DurationAPIMS: 800,
+				IsError:       false,
+				NumTurns:      1,
+				TotalCostUSD:  0.001,
+				Result:        stringPtr("plain text result"),
+			},
+		},
+		{
+			name: "with both structured_output and errors",
+			jsonData: `{
+				"uuid": "00000000-0000-0000-0000-000000000000",
+				"session_id": "test-session",
+				"subtype": "success",
+				"duration_ms": 1000,
+				"duration_api_ms": 800,
+				"is_error": false,
+				"num_turns": 2,
+				"total_cost_usd": 0.002,
+				"usage": {
+					"input_tokens": 200,
+					"output_tokens": 100,
+					"cache_read_input_tokens": 0,
+					"cache_creation_input_tokens": 0
+				},
+				"modelUsage": {},
+				"permission_denials": [],
+				"structured_output": {"status": "complete"},
+				"errors": ["warning: slow response"]
+			}`,
+			want: claude.SDKResultMessage{
+				Subtype:          "success",
+				DurationMS:       1000,
+				DurationAPIMS:    800,
+				IsError:          false,
+				NumTurns:         2,
+				TotalCostUSD:     0.002,
+				StructuredOutput: map[string]interface{}{"status": "complete"},
+				Errors:           []string{"warning: slow response"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var decoded claude.SDKResultMessage
+			if err := json.Unmarshal([]byte(tt.jsonData), &decoded); err != nil {
+				t.Fatalf("failed to unmarshal JSON: %v", err)
+			}
+
+			// Compare key fields
+			if decoded.Subtype != tt.want.Subtype {
+				t.Errorf("subtype mismatch: expected %s, got %s", tt.want.Subtype, decoded.Subtype)
+			}
+
+			if decoded.IsError != tt.want.IsError {
+				t.Errorf("is_error mismatch: expected %v, got %v", tt.want.IsError, decoded.IsError)
+			}
+
+			// Compare StructuredOutput
+			if tt.want.StructuredOutput != nil {
+				if decoded.StructuredOutput == nil {
+					t.Error("expected StructuredOutput to be non-nil")
+				} else {
+					wantJSON, _ := json.Marshal(tt.want.StructuredOutput)
+					gotJSON, _ := json.Marshal(decoded.StructuredOutput)
+					if string(wantJSON) != string(gotJSON) {
+						t.Errorf("structured_output mismatch:\nwant: %s\ngot:  %s", string(wantJSON), string(gotJSON))
+					}
+				}
+			}
+
+			// Compare Errors
+			if tt.want.Errors != nil {
+				if len(decoded.Errors) != len(tt.want.Errors) {
+					t.Errorf("errors length mismatch: expected %d, got %d", len(tt.want.Errors), len(decoded.Errors))
+				} else {
+					for i, err := range tt.want.Errors {
+						if decoded.Errors[i] != err {
+							t.Errorf("errors[%d] mismatch: expected %s, got %s", i, err, decoded.Errors[i])
+						}
+					}
+				}
+			}
+
+			// Compare Result field for backward compatibility test
+			if tt.want.Result != nil {
+				if decoded.Result == nil {
+					t.Error("expected Result to be non-nil")
+				} else if *decoded.Result != *tt.want.Result {
+					t.Errorf("result mismatch: expected %s, got %s", *tt.want.Result, *decoded.Result)
+				}
+			}
+		})
+	}
+}
+
+// TestResultSubtypeConstants verifies the result subtype constants have correct values.
+func TestResultSubtypeConstants(t *testing.T) {
+	tests := []struct {
+		name     string
+		constant string
+		expected string
+	}{
+		{
+			name:     "success",
+			constant: claude.ResultSubtypeSuccess,
+			expected: "success",
+		},
+		{
+			name:     "error_max_turns",
+			constant: claude.ResultSubtypeErrorMaxTurns,
+			expected: "error_max_turns",
+		},
+		{
+			name:     "error_max_budget_usd",
+			constant: claude.ResultSubtypeErrorMaxBudgetUsd,
+			expected: "error_max_budget_usd",
+		},
+		{
+			name:     "error_max_structured_output_retries",
+			constant: claude.ResultSubtypeErrorMaxStructuredOutputRetries,
+			expected: "error_max_structured_output_retries",
+		},
+		{
+			name:     "error_during_execution",
+			constant: claude.ResultSubtypeErrorDuringExecution,
+			expected: "error_during_execution",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.constant != tt.expected {
+				t.Errorf("constant value mismatch: expected %s, got %s", tt.expected, tt.constant)
+			}
+		})
+	}
+}
+
+// TestResultSubtypeConstantUsage verifies result subtypes can be checked against constants.
+func TestResultSubtypeConstantUsage(t *testing.T) {
+	tests := []struct {
+		name            string
+		result          claude.SDKResultMessage
+		expectedSubtype string
+	}{
+		{
+			name: "success result",
+			result: claude.SDKResultMessage{
+				Subtype: claude.ResultSubtypeSuccess,
+				IsError: false,
+			},
+			expectedSubtype: claude.ResultSubtypeSuccess,
+		},
+		{
+			name: "max budget error",
+			result: claude.SDKResultMessage{
+				Subtype: claude.ResultSubtypeErrorMaxBudgetUsd,
+				IsError: true,
+			},
+			expectedSubtype: claude.ResultSubtypeErrorMaxBudgetUsd,
+		},
+		{
+			name: "max structured output retries error",
+			result: claude.SDKResultMessage{
+				Subtype: claude.ResultSubtypeErrorMaxStructuredOutputRetries,
+				IsError: true,
+			},
+			expectedSubtype: claude.ResultSubtypeErrorMaxStructuredOutputRetries,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.result.Subtype != tt.expectedSubtype {
+				t.Errorf("subtype mismatch: expected %s, got %s", tt.expectedSubtype, tt.result.Subtype)
+			}
+
+			// Test that we can use switch statements with constants
+			var gotSubtype string
+			switch tt.result.Subtype {
+			case claude.ResultSubtypeSuccess:
+				gotSubtype = claude.ResultSubtypeSuccess
+			case claude.ResultSubtypeErrorMaxBudgetUsd:
+				gotSubtype = claude.ResultSubtypeErrorMaxBudgetUsd
+			case claude.ResultSubtypeErrorMaxStructuredOutputRetries:
+				gotSubtype = claude.ResultSubtypeErrorMaxStructuredOutputRetries
+			case claude.ResultSubtypeErrorMaxTurns:
+				gotSubtype = claude.ResultSubtypeErrorMaxTurns
+			case claude.ResultSubtypeErrorDuringExecution:
+				gotSubtype = claude.ResultSubtypeErrorDuringExecution
+			default:
+				t.Errorf("unexpected subtype: %s", tt.result.Subtype)
+			}
+
+			if gotSubtype != tt.expectedSubtype {
+				t.Errorf("switch statement subtype mismatch: expected %s, got %s", tt.expectedSubtype, gotSubtype)
+			}
+		})
+	}
+}
+
+// TestSDKResultMessageEdgeCases tests edge cases for structured output.
+func TestSDKResultMessageEdgeCases(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  claude.SDKResultMessage
+	}{
+		{
+			name: "nil structured_output with populated errors",
+			msg: claude.SDKResultMessage{
+				Subtype:          "error_during_execution",
+				IsError:          true,
+				StructuredOutput: nil,
+				Errors:           []string{"error 1", "error 2"},
+			},
+		},
+		{
+			name: "populated structured_output with empty errors",
+			msg: claude.SDKResultMessage{
+				Subtype:          "success",
+				IsError:          false,
+				StructuredOutput: map[string]interface{}{"status": "ok"},
+				Errors:           []string{},
+			},
+		},
+		{
+			name: "complex nested JSON structure",
+			msg: claude.SDKResultMessage{
+				Subtype: "success",
+				StructuredOutput: map[string]interface{}{
+					"level1": map[string]interface{}{
+						"level2": map[string]interface{}{
+							"level3": []interface{}{
+								map[string]interface{}{"id": 1, "name": "item1"},
+								map[string]interface{}{"id": 2, "name": "item2"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "special characters in error messages",
+			msg: claude.SDKResultMessage{
+				Subtype: "error_during_execution",
+				IsError: true,
+				Errors:  []string{"error with \"quotes\"", "error with\nnewline", "error with\ttab"},
+			},
+		},
+		{
+			name: "array as structured_output",
+			msg: claude.SDKResultMessage{
+				Subtype:          "success",
+				StructuredOutput: []interface{}{"item1", "item2", "item3"},
+			},
+		},
+		{
+			name: "boolean as structured_output",
+			msg: claude.SDKResultMessage{
+				Subtype:          "success",
+				StructuredOutput: true,
+			},
+		},
+		{
+			name: "null as structured_output",
+			msg: claude.SDKResultMessage{
+				Subtype:          "success",
+				StructuredOutput: nil,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal to JSON
+			data, err := json.Marshal(tt.msg)
+			if err != nil {
+				t.Fatalf("failed to marshal SDKResultMessage: %v", err)
+			}
+
+			// Unmarshal back
+			var decoded claude.SDKResultMessage
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("failed to unmarshal SDKResultMessage: %v", err)
+			}
+
+			// Verify round-trip preserves data
+			decodedData, err := json.Marshal(decoded)
+			if err != nil {
+				t.Fatalf("failed to marshal decoded SDKResultMessage: %v", err)
+			}
+
+			// Compare JSON representations (order-independent for objects)
+			var original, roundtrip map[string]interface{}
+			if err := json.Unmarshal(data, &original); err != nil {
+				t.Fatalf("failed to unmarshal original to map: %v", err)
+			}
+			if err := json.Unmarshal(decodedData, &roundtrip); err != nil {
+				t.Fatalf("failed to unmarshal roundtrip to map: %v", err)
+			}
+
+			// For this test, we just verify no error occurred in round-trip
+			// Detailed comparison is done in other tests
+			if decoded.Subtype != tt.msg.Subtype {
+				t.Errorf("subtype mismatch after round-trip: expected %s, got %s", tt.msg.Subtype, decoded.Subtype)
+			}
+		})
+	}
+}

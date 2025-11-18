@@ -715,13 +715,32 @@ type SDKResultMessage struct {
 	ModelUsage        map[string]ModelUsage `json:"modelUsage"`
 	PermissionDenials []SDKPermissionDenial `json:"permission_denials"`
 	Result            *string               `json:"result,omitempty"` // Only for success
+	// StructuredOutput contains the structured data returned from queries
+	// configured with OutputFormat. When a query specifies structured output
+	// (e.g., JSON schema), the parsed result is populated here instead of Result.
+	// The data format depends on the OutputFormat specification provided in the query.
+	StructuredOutput interface{} `json:"structured_output,omitempty"`
+	// Errors contains error messages when IsError is true. For error results
+	// (subtype error_during_execution or error_max_turns), this field holds
+	// an array of error message strings describing what went wrong during execution.
+	Errors []string `json:"errors,omitempty"`
 }
 
 func (SDKResultMessage) Type() string { return "result" }
 
+// Result subtype constants define the possible values for SDKResultMessage.Subtype.
 const (
-	ResultSubtypeSuccess              = "success"
-	ResultSubtypeErrorMaxTurns        = "error_max_turns"
+	// ResultSubtypeSuccess indicates the query completed successfully.
+	ResultSubtypeSuccess = "success"
+	// ResultSubtypeErrorMaxTurns indicates the query exceeded the maximum turn limit.
+	ResultSubtypeErrorMaxTurns = "error_max_turns"
+	// ResultSubtypeErrorMaxBudgetUsd indicates the query exceeded the maximum USD budget limit
+	// configured in ClientOptions.MaxBudgetUsd.
+	ResultSubtypeErrorMaxBudgetUsd = "error_max_budget_usd"
+	// ResultSubtypeErrorMaxStructuredOutputRetries indicates the maximum number of structured
+	// output validation retries was exceeded when using OutputFormat configuration.
+	ResultSubtypeErrorMaxStructuredOutputRetries = "error_max_structured_output_retries"
+	// ResultSubtypeErrorDuringExecution indicates an error occurred during query execution.
 	ResultSubtypeErrorDuringExecution = "error_during_execution"
 )
 
