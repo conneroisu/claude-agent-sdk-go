@@ -16,6 +16,15 @@ export type ModelUsage = {
     costUSD: number;
     contextWindow: number;
 };
+export type OutputFormatType = 'json_schema';
+export type BaseOutputFormat = {
+    type: OutputFormatType;
+};
+export type JsonSchemaOutputFormat = BaseOutputFormat & {
+    type: 'json_schema';
+    schema: Record<string, unknown>;
+};
+export type OutputFormat = JsonSchemaOutputFormat;
 export type ApiKeySource = 'user' | 'project' | 'org' | 'temporary';
 export type ConfigScope = 'local' | 'user' | 'project';
 export type McpStdioServerConfig = {
@@ -97,6 +106,10 @@ export type PermissionResult = {
      * commands.
      */
     updatedPermissions?: PermissionUpdate[];
+    /**
+     * The tool use ID. Supplied and used internally.
+     */
+    toolUseID?: string;
 } | {
     behavior: 'deny';
     /**
@@ -112,6 +125,10 @@ export type PermissionResult = {
      * which the model should incorporate and continue.
      */
     interrupt?: boolean;
+    /**
+     * The tool use ID. Supplied and used internally.
+     */
+    toolUseID?: string;
 };
 export type PermissionRuleValue = {
     toolName: string;
@@ -130,12 +147,21 @@ export type CanUseTool = (toolName: string, input: Record<string, unknown>, opti
      */
     suggestions?: PermissionUpdate[];
     /**
+     * The file path that triggered the permission request, if applicable.
+     * For example, when a Bash command tries to access a path outside allowed directories.
+     */
+    blockedPath?: string;
+    /** Explains why this permission request was triggered. */
+    decisionReason?: string;
+    /**
      * Unique identifier for this specific tool call within the assistant message.
      * Multiple tool calls in the same assistant message will have different toolUseIDs.
      */
     toolUseID: string;
+    /** If running within the context of a sub-agent, the sub-agent's ID. */
+    agentID?: string;
 }) => Promise<PermissionResult>;
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStop", "PreCompact"];
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest"];
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 export type HookCallback = (input: HookInput, toolUseID: string | undefined, options: {
     signal: AbortSignal;
@@ -143,6 +169,8 @@ export type HookCallback = (input: HookInput, toolUseID: string | undefined, opt
 export interface HookCallbackMatcher {
     matcher?: string;
     hooks: HookCallback[];
+    /** Timeout in seconds for all hooks in this matcher */
+    timeout?: number;
 }
 export type BaseHookInput = {
     session_id: string;
@@ -154,17 +182,25 @@ export type PreToolUseHookInput = BaseHookInput & {
     hook_event_name: 'PreToolUse';
     tool_name: string;
     tool_input: unknown;
+    tool_use_id: string;
+};
+export type PermissionRequestHookInput = BaseHookInput & {
+    hook_event_name: 'PermissionRequest';
+    tool_name: string;
+    tool_input: unknown;
 };
 export type PostToolUseHookInput = BaseHookInput & {
     hook_event_name: 'PostToolUse';
     tool_name: string;
     tool_input: unknown;
     tool_response: unknown;
+    tool_use_id: string;
 };
 export type NotificationHookInput = BaseHookInput & {
     hook_event_name: 'Notification';
     message: string;
     title?: string;
+    notification_type: string;
 };
 export type UserPromptSubmitHookInput = BaseHookInput & {
     hook_event_name: 'UserPromptSubmit';
@@ -178,9 +214,16 @@ export type StopHookInput = BaseHookInput & {
     hook_event_name: 'Stop';
     stop_hook_active: boolean;
 };
+export type SubagentStartHookInput = BaseHookInput & {
+    hook_event_name: 'SubagentStart';
+    agent_id: string;
+    agent_type: string;
+};
 export type SubagentStopHookInput = BaseHookInput & {
     hook_event_name: 'SubagentStop';
     stop_hook_active: boolean;
+    agent_id: string;
+    agent_transcript_path: string;
 };
 export type PreCompactHookInput = BaseHookInput & {
     hook_event_name: 'PreCompact';
@@ -193,7 +236,7 @@ export type SessionEndHookInput = BaseHookInput & {
     hook_event_name: 'SessionEnd';
     reason: ExitReason;
 };
-export type HookInput = PreToolUseHookInput | PostToolUseHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStopHookInput | PreCompactHookInput;
+export type HookInput = PreToolUseHookInput | PostToolUseHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PermissionRequestHookInput;
 export type AsyncHookJSONOutput = {
     async: true;
     asyncTimeout?: number;
@@ -217,8 +260,22 @@ export type SyncHookJSONOutput = {
         hookEventName: 'SessionStart';
         additionalContext?: string;
     } | {
+        hookEventName: 'SubagentStart';
+        additionalContext?: string;
+    } | {
         hookEventName: 'PostToolUse';
         additionalContext?: string;
+        updatedMCPToolOutput?: unknown;
+    } | {
+        hookEventName: 'PermissionRequest';
+        decision: {
+            behavior: 'allow';
+            updatedInput?: Record<string, unknown>;
+        } | {
+            behavior: 'deny';
+            message?: string;
+            interrupt?: boolean;
+        };
     };
 };
 export type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
@@ -298,11 +355,12 @@ export type SDKResultMessage = {
         [modelName: string]: ModelUsage;
     };
     permission_denials: SDKPermissionDenial[];
+    structured_output?: unknown;
     uuid: UUID;
     session_id: string;
 } | {
     type: 'result';
-    subtype: 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd';
+    subtype: 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd' | 'error_max_structured_output_retries';
     duration_ms: number;
     duration_api_ms: number;
     is_error: boolean;
@@ -358,6 +416,14 @@ export type SDKCompactBoundaryMessage = {
     uuid: UUID;
     session_id: string;
 };
+export type SDKStatus = 'compacting' | null;
+export type SDKStatusMessage = {
+    type: 'system';
+    subtype: 'status';
+    status: SDKStatus;
+    uuid: UUID;
+    session_id: string;
+};
 export type SDKHookResponseMessage = {
     type: 'system';
     subtype: 'hook_response';
@@ -386,7 +452,7 @@ export type SDKAuthStatusMessage = {
     uuid: UUID;
     session_id: string;
 };
-export type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage;
+export type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage;
 export interface Query extends AsyncGenerator<SDKMessage, void> {
     /**
      * Control Requests
@@ -472,6 +538,7 @@ export type Options = {
     maxBudgetUsd?: number;
     mcpServers?: Record<string, McpServerConfig>;
     model?: string;
+    outputFormat?: OutputFormat;
     pathToClaudeCodeExecutable?: string;
     permissionMode?: PermissionMode;
     allowDangerouslySkipPermissions?: boolean;
@@ -493,10 +560,9 @@ export type Options = {
     plugins?: SdkPluginConfig[];
     resume?: string;
     /**
-     * When resuming, only resume messages up to and including the assistant
-     * message with this message.id. Use with --resume.
-     * This allows you to resume from a specific point in the conversation.
-     * The message ID is expected to be from SDKAssistantMessage.message.id.
+     * When resuming, only resume messages up to and including the message with this message.uuid.
+     * Use with --resume. This allows you to resume from a specific point in the conversation.
+     * The message ID is expected to be from SDKAssistantMessage.uuid.
      */
     resumeSessionAt?: string;
     settingSources?: SettingSource[];
