@@ -421,3 +421,617 @@ func TestSDKHookCallbackRequest(t *testing.T) {
 		t.Errorf("expected callback ID 'hook-123', got %s", msg.CallbackID)
 	}
 }
+
+// ============================================================================
+// Extension Message Type Tests (5 new message types)
+// ============================================================================
+
+// TestSDKToolProgressMessageJSON verifies full JSON marshaling/unmarshaling
+// for SDKToolProgressMessage with all fields populated.
+func TestSDKToolProgressMessageJSON(t *testing.T) {
+	parentToolUseID := "parent-tool-456"
+	original := claudeagent.SDKToolProgressMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session-123",
+		},
+		TypeField:          "tool_progress",
+		ToolUseID:          "tool-789",
+		ToolName:           "Write",
+		ParentToolUseID:    &parentToolUseID,
+		ElapsedTimeSeconds: 3.14159,
+	}
+
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal SDKToolProgressMessage: %v", err)
+	}
+
+	// Unmarshal back
+	var unmarshaled claudeagent.SDKToolProgressMessage
+	if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal SDKToolProgressMessage: %v", err)
+	}
+
+	// Verify all fields match
+	if unmarshaled.UUIDField != original.UUIDField {
+		t.Errorf("UUID mismatch: expected %v, got %v", original.UUIDField, unmarshaled.UUIDField)
+	}
+	if unmarshaled.SessionIDField != original.SessionIDField {
+		t.Errorf("SessionID mismatch: expected %s, got %s", original.SessionIDField, unmarshaled.SessionIDField)
+	}
+	if unmarshaled.TypeField != original.TypeField {
+		t.Errorf("TypeField mismatch: expected %s, got %s", original.TypeField, unmarshaled.TypeField)
+	}
+	if unmarshaled.ToolUseID != original.ToolUseID {
+		t.Errorf("ToolUseID mismatch: expected %s, got %s", original.ToolUseID, unmarshaled.ToolUseID)
+	}
+	if unmarshaled.ToolName != original.ToolName {
+		t.Errorf("ToolName mismatch: expected %s, got %s", original.ToolName, unmarshaled.ToolName)
+	}
+	if unmarshaled.ParentToolUseID == nil || *unmarshaled.ParentToolUseID != *original.ParentToolUseID {
+		t.Errorf("ParentToolUseID mismatch: expected %v, got %v", original.ParentToolUseID, unmarshaled.ParentToolUseID)
+	}
+	if unmarshaled.ElapsedTimeSeconds != original.ElapsedTimeSeconds {
+		t.Errorf("ElapsedTimeSeconds mismatch: expected %f, got %f", original.ElapsedTimeSeconds, unmarshaled.ElapsedTimeSeconds)
+	}
+}
+
+// TestSDKToolProgressMessageNilParent verifies nil parent_tool_use_id handling.
+func TestSDKToolProgressMessageNilParent(t *testing.T) {
+	original := claudeagent.SDKToolProgressMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField:          "tool_progress",
+		ToolUseID:          "tool-123",
+		ToolName:           "Read",
+		ParentToolUseID:    nil, // Explicitly nil
+		ElapsedTimeSeconds: 1.5,
+	}
+
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var unmarshaled claudeagent.SDKToolProgressMessage
+	if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if unmarshaled.ParentToolUseID != nil {
+		t.Errorf("expected nil ParentToolUseID, got %v", unmarshaled.ParentToolUseID)
+	}
+}
+
+// TestSDKToolProgressMessageType verifies Type() method.
+func TestSDKToolProgressMessageType(t *testing.T) {
+	msg := claudeagent.SDKToolProgressMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField: "tool_progress",
+		ToolUseID: "tool-123",
+		ToolName:  "Bash",
+	}
+
+	if msg.Type() != "tool_progress" {
+		t.Errorf("expected type 'tool_progress', got %s", msg.Type())
+	}
+}
+
+// TestSDKToolProgressMessageInterface verifies SDKMessage interface implementation.
+func TestSDKToolProgressMessageInterface(t *testing.T) {
+	testUUID := uuid.New()
+	msg := claudeagent.SDKToolProgressMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      testUUID,
+			SessionIDField: "test-session-456",
+		},
+		ToolUseID: "tool-789",
+		ToolName:  "Write",
+	}
+
+	if msg.UUID() != testUUID {
+		t.Errorf("UUID() mismatch: expected %v, got %v", testUUID, msg.UUID())
+	}
+	if msg.SessionID() != "test-session-456" {
+		t.Errorf("SessionID() mismatch: expected test-session-456, got %s", msg.SessionID())
+	}
+}
+
+// TestSDKAuthStatusMessageJSON verifies full JSON marshaling/unmarshaling
+// for SDKAuthStatusMessage with all fields populated.
+func TestSDKAuthStatusMessageJSON(t *testing.T) {
+	errorMsg := "authentication failed"
+	original := claudeagent.SDKAuthStatusMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "auth-session-123",
+		},
+		TypeField:        "auth_status",
+		IsAuthenticating: true,
+		Output:           []string{"line1", "line2", "line3"},
+		Error:            &errorMsg,
+	}
+
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal SDKAuthStatusMessage: %v", err)
+	}
+
+	// Unmarshal back
+	var unmarshaled claudeagent.SDKAuthStatusMessage
+	if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal SDKAuthStatusMessage: %v", err)
+	}
+
+	// Verify all fields match
+	if unmarshaled.UUIDField != original.UUIDField {
+		t.Errorf("UUID mismatch: expected %v, got %v", original.UUIDField, unmarshaled.UUIDField)
+	}
+	if unmarshaled.SessionIDField != original.SessionIDField {
+		t.Errorf("SessionID mismatch: expected %s, got %s", original.SessionIDField, unmarshaled.SessionIDField)
+	}
+	if unmarshaled.IsAuthenticating != original.IsAuthenticating {
+		t.Errorf("IsAuthenticating mismatch: expected %v, got %v", original.IsAuthenticating, unmarshaled.IsAuthenticating)
+	}
+	if len(unmarshaled.Output) != len(original.Output) {
+		t.Errorf("Output length mismatch: expected %d, got %d", len(original.Output), len(unmarshaled.Output))
+	}
+	for i, line := range original.Output {
+		if unmarshaled.Output[i] != line {
+			t.Errorf("Output[%d] mismatch: expected %s, got %s", i, line, unmarshaled.Output[i])
+		}
+	}
+	if unmarshaled.Error == nil || *unmarshaled.Error != *original.Error {
+		t.Errorf("Error mismatch: expected %v, got %v", original.Error, unmarshaled.Error)
+	}
+}
+
+// TestSDKAuthStatusMessageNilError verifies nil error field handling.
+func TestSDKAuthStatusMessageNilError(t *testing.T) {
+	original := claudeagent.SDKAuthStatusMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "auth-session",
+		},
+		TypeField:        "auth_status",
+		IsAuthenticating: false,
+		Output:           []string{"success"},
+		Error:            nil,
+	}
+
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var unmarshaled claudeagent.SDKAuthStatusMessage
+	if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if unmarshaled.Error != nil {
+		t.Errorf("expected nil Error, got %v", unmarshaled.Error)
+	}
+}
+
+// TestSDKAuthStatusMessageType verifies Type() method.
+func TestSDKAuthStatusMessageType(t *testing.T) {
+	msg := claudeagent.SDKAuthStatusMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField:        "auth_status",
+		IsAuthenticating: true,
+		Output:           []string{},
+	}
+
+	if msg.Type() != "auth_status" {
+		t.Errorf("expected type 'auth_status', got %s", msg.Type())
+	}
+}
+
+// TestSDKAuthStatusMessageBoolValues verifies IsAuthenticating bool handling.
+func TestSDKAuthStatusMessageBoolValues(t *testing.T) {
+	tests := []struct {
+		name             string
+		isAuthenticating bool
+	}{
+		{"authenticating_true", true},
+		{"authenticating_false", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := claudeagent.SDKAuthStatusMessage{
+				BaseMessage: claudeagent.BaseMessage{
+					UUIDField:      uuid.New(),
+					SessionIDField: "test-session",
+				},
+				IsAuthenticating: tt.isAuthenticating,
+				Output:           []string{},
+			}
+
+			jsonBytes, err := json.Marshal(original)
+			if err != nil {
+				t.Fatalf("failed to marshal: %v", err)
+			}
+
+			var unmarshaled claudeagent.SDKAuthStatusMessage
+			if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+				t.Fatalf("failed to unmarshal: %v", err)
+			}
+
+			if unmarshaled.IsAuthenticating != tt.isAuthenticating {
+				t.Errorf("IsAuthenticating mismatch: expected %v, got %v", tt.isAuthenticating, unmarshaled.IsAuthenticating)
+			}
+		})
+	}
+}
+
+// TestSDKStatusMessageJSON verifies full JSON marshaling/unmarshaling
+// for SDKStatusMessage.
+func TestSDKStatusMessageJSON(t *testing.T) {
+	original := claudeagent.SDKStatusMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "status-session-123",
+		},
+		TypeField:    "system",
+		SubtypeField: "status",
+		Status:       claudeagent.SDKStatusCompacting,
+	}
+
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal SDKStatusMessage: %v", err)
+	}
+
+	// Unmarshal back
+	var unmarshaled claudeagent.SDKStatusMessage
+	if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal SDKStatusMessage: %v", err)
+	}
+
+	// Verify all fields match
+	if unmarshaled.UUIDField != original.UUIDField {
+		t.Errorf("UUID mismatch: expected %v, got %v", original.UUIDField, unmarshaled.UUIDField)
+	}
+	if unmarshaled.SessionIDField != original.SessionIDField {
+		t.Errorf("SessionID mismatch: expected %s, got %s", original.SessionIDField, unmarshaled.SessionIDField)
+	}
+	if unmarshaled.TypeField != original.TypeField {
+		t.Errorf("TypeField mismatch: expected %s, got %s", original.TypeField, unmarshaled.TypeField)
+	}
+	if unmarshaled.SubtypeField != original.SubtypeField {
+		t.Errorf("SubtypeField mismatch: expected %s, got %s", original.SubtypeField, unmarshaled.SubtypeField)
+	}
+	if unmarshaled.Status != original.Status {
+		t.Errorf("Status mismatch: expected %s, got %s", original.Status, unmarshaled.Status)
+	}
+}
+
+// TestSDKStatusMessageType verifies Type() method returns "system".
+func TestSDKStatusMessageType(t *testing.T) {
+	msg := claudeagent.SDKStatusMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField:    "system",
+		SubtypeField: "status",
+		Status:       claudeagent.SDKStatusCompacting,
+	}
+
+	if msg.Type() != "system" {
+		t.Errorf("expected type 'system', got %s", msg.Type())
+	}
+}
+
+// TestSDKStatusMessageSubtype verifies Subtype() method returns "status".
+func TestSDKStatusMessageSubtype(t *testing.T) {
+	msg := claudeagent.SDKStatusMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField:    "system",
+		SubtypeField: "status",
+		Status:       claudeagent.SDKStatusCompacting,
+	}
+
+	if msg.Subtype() != "status" {
+		t.Errorf("expected subtype 'status', got %s", msg.Subtype())
+	}
+}
+
+// TestSDKStatusMessageSDKStatusEnum verifies SDKStatus enum value.
+func TestSDKStatusMessageSDKStatusEnum(t *testing.T) {
+	msg := claudeagent.SDKStatusMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField:    "system",
+		SubtypeField: "status",
+		Status:       claudeagent.SDKStatusCompacting,
+	}
+
+	if msg.Status != "compacting" {
+		t.Errorf("expected status 'compacting', got %s", msg.Status)
+	}
+}
+
+// TestSDKHookResponseMessageJSON verifies full JSON marshaling/unmarshaling
+// for SDKHookResponseMessage with all fields populated.
+func TestSDKHookResponseMessageJSON(t *testing.T) {
+	exitCode := 0
+	original := claudeagent.SDKHookResponseMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "hook-session-123",
+		},
+		TypeField:    "system",
+		SubtypeField: "hook_response",
+		HookName:     "pre-commit",
+		HookEvent:    "before_tool_use",
+		Stdout:       "Hook executed successfully",
+		Stderr:       "Warning: deprecated function",
+		ExitCode:     &exitCode,
+	}
+
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal SDKHookResponseMessage: %v", err)
+	}
+
+	// Unmarshal back
+	var unmarshaled claudeagent.SDKHookResponseMessage
+	if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal SDKHookResponseMessage: %v", err)
+	}
+
+	// Verify all fields match
+	if unmarshaled.UUIDField != original.UUIDField {
+		t.Errorf("UUID mismatch: expected %v, got %v", original.UUIDField, unmarshaled.UUIDField)
+	}
+	if unmarshaled.SessionIDField != original.SessionIDField {
+		t.Errorf("SessionID mismatch: expected %s, got %s", original.SessionIDField, unmarshaled.SessionIDField)
+	}
+	if unmarshaled.TypeField != original.TypeField {
+		t.Errorf("TypeField mismatch: expected %s, got %s", original.TypeField, unmarshaled.TypeField)
+	}
+	if unmarshaled.SubtypeField != original.SubtypeField {
+		t.Errorf("SubtypeField mismatch: expected %s, got %s", original.SubtypeField, unmarshaled.SubtypeField)
+	}
+	if unmarshaled.HookName != original.HookName {
+		t.Errorf("HookName mismatch: expected %s, got %s", original.HookName, unmarshaled.HookName)
+	}
+	if unmarshaled.HookEvent != original.HookEvent {
+		t.Errorf("HookEvent mismatch: expected %s, got %s", original.HookEvent, unmarshaled.HookEvent)
+	}
+	if unmarshaled.Stdout != original.Stdout {
+		t.Errorf("Stdout mismatch: expected %s, got %s", original.Stdout, unmarshaled.Stdout)
+	}
+	if unmarshaled.Stderr != original.Stderr {
+		t.Errorf("Stderr mismatch: expected %s, got %s", original.Stderr, unmarshaled.Stderr)
+	}
+	if unmarshaled.ExitCode == nil || *unmarshaled.ExitCode != *original.ExitCode {
+		t.Errorf("ExitCode mismatch: expected %v, got %v", original.ExitCode, unmarshaled.ExitCode)
+	}
+}
+
+// TestSDKHookResponseMessageNilExitCode verifies nil exit_code handling.
+func TestSDKHookResponseMessageNilExitCode(t *testing.T) {
+	original := claudeagent.SDKHookResponseMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "hook-session",
+		},
+		TypeField:    "system",
+		SubtypeField: "hook_response",
+		HookName:     "pre-commit",
+		HookEvent:    "before_query",
+		Stdout:       "output",
+		Stderr:       "",
+		ExitCode:     nil,
+	}
+
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var unmarshaled claudeagent.SDKHookResponseMessage
+	if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if unmarshaled.ExitCode != nil {
+		t.Errorf("expected nil ExitCode, got %v", unmarshaled.ExitCode)
+	}
+}
+
+// TestSDKHookResponseMessageType verifies Type() method returns "system".
+func TestSDKHookResponseMessageType(t *testing.T) {
+	msg := claudeagent.SDKHookResponseMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField:    "system",
+		SubtypeField: "hook_response",
+		HookName:     "test-hook",
+		HookEvent:    "test-event",
+	}
+
+	if msg.Type() != "system" {
+		t.Errorf("expected type 'system', got %s", msg.Type())
+	}
+}
+
+// TestSDKHookResponseMessageSubtype verifies Subtype() method.
+func TestSDKHookResponseMessageSubtype(t *testing.T) {
+	msg := claudeagent.SDKHookResponseMessage{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField:    "system",
+		SubtypeField: "hook_response",
+		HookName:     "test-hook",
+		HookEvent:    "test-event",
+	}
+
+	if msg.Subtype() != "hook_response" {
+		t.Errorf("expected subtype 'hook_response', got %s", msg.Subtype())
+	}
+}
+
+// TestSDKUserMessageReplayJSON verifies full JSON marshaling/unmarshaling
+// for SDKUserMessageReplay with all fields populated.
+func TestSDKUserMessageReplayJSON(t *testing.T) {
+	parentToolUseID := "parent-tool-123"
+	original := claudeagent.SDKUserMessageReplay{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "replay-session-123",
+		},
+		TypeField: "user",
+		Message: claudeagent.APIUserMessage{
+			Role: "user",
+			Content: []claudeagent.ContentBlock{
+				claudeagent.TextContentBlock{
+					Type: "text",
+					Text: "This is a replayed message",
+				},
+			},
+		},
+		ParentToolUseID: &parentToolUseID,
+		IsSynthetic:     true,
+		IsReplay:        true,
+	}
+
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("failed to marshal SDKUserMessageReplay: %v", err)
+	}
+
+	// Unmarshal back
+	var unmarshaled claudeagent.SDKUserMessageReplay
+	if err := json.Unmarshal(jsonBytes, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal SDKUserMessageReplay: %v", err)
+	}
+
+	// Verify all fields match
+	if unmarshaled.UUIDField != original.UUIDField {
+		t.Errorf("UUID mismatch: expected %v, got %v", original.UUIDField, unmarshaled.UUIDField)
+	}
+	if unmarshaled.SessionIDField != original.SessionIDField {
+		t.Errorf("SessionID mismatch: expected %s, got %s", original.SessionIDField, unmarshaled.SessionIDField)
+	}
+	if unmarshaled.TypeField != original.TypeField {
+		t.Errorf("TypeField mismatch: expected %s, got %s", original.TypeField, unmarshaled.TypeField)
+	}
+	if unmarshaled.ParentToolUseID == nil || *unmarshaled.ParentToolUseID != *original.ParentToolUseID {
+		t.Errorf("ParentToolUseID mismatch: expected %v, got %v", original.ParentToolUseID, unmarshaled.ParentToolUseID)
+	}
+	if unmarshaled.IsSynthetic != original.IsSynthetic {
+		t.Errorf("IsSynthetic mismatch: expected %v, got %v", original.IsSynthetic, unmarshaled.IsSynthetic)
+	}
+	if unmarshaled.IsReplay != original.IsReplay {
+		t.Errorf("IsReplay mismatch: expected %v, got %v", original.IsReplay, unmarshaled.IsReplay)
+	}
+	if unmarshaled.Message.Role != original.Message.Role {
+		t.Errorf("Message.Role mismatch: expected %s, got %s", original.Message.Role, unmarshaled.Message.Role)
+	}
+}
+
+// TestSDKUserMessageReplayIsReplayAlwaysTrue verifies IsReplay is always true.
+func TestSDKUserMessageReplayIsReplayAlwaysTrue(t *testing.T) {
+	msg := claudeagent.SDKUserMessageReplay{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField: "user",
+		Message: claudeagent.APIUserMessage{
+			Role: "user",
+			Content: []claudeagent.ContentBlock{
+				claudeagent.TextContentBlock{
+					Type: "text",
+					Text: "test",
+				},
+			},
+		},
+		IsReplay: true,
+	}
+
+	if !msg.IsReplay {
+		t.Errorf("IsReplay should always be true, got %v", msg.IsReplay)
+	}
+}
+
+// TestSDKUserMessageReplayType verifies Type() method returns "user".
+func TestSDKUserMessageReplayType(t *testing.T) {
+	msg := claudeagent.SDKUserMessageReplay{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      uuid.New(),
+			SessionIDField: "test-session",
+		},
+		TypeField: "user",
+		Message: claudeagent.APIUserMessage{
+			Role: "user",
+			Content: []claudeagent.ContentBlock{
+				claudeagent.TextContentBlock{
+					Type: "text",
+					Text: "test",
+				},
+			},
+		},
+		IsReplay: true,
+	}
+
+	if msg.Type() != "user" {
+		t.Errorf("expected type 'user', got %s", msg.Type())
+	}
+}
+
+// TestSDKUserMessageReplayInterface verifies SDKMessage interface implementation.
+func TestSDKUserMessageReplayInterface(t *testing.T) {
+	testUUID := uuid.New()
+	msg := claudeagent.SDKUserMessageReplay{
+		BaseMessage: claudeagent.BaseMessage{
+			UUIDField:      testUUID,
+			SessionIDField: "replay-session-789",
+		},
+		Message: claudeagent.APIUserMessage{
+			Role: "user",
+			Content: []claudeagent.ContentBlock{
+				claudeagent.TextContentBlock{
+					Type: "text",
+					Text: "test",
+				},
+			},
+		},
+		IsReplay: true,
+	}
+
+	if msg.UUID() != testUUID {
+		t.Errorf("UUID() mismatch: expected %v, got %v", testUUID, msg.UUID())
+	}
+	if msg.SessionID() != "replay-session-789" {
+		t.Errorf("SessionID() mismatch: expected replay-session-789, got %s", msg.SessionID())
+	}
+}
