@@ -733,6 +733,90 @@ type SDKPermissionDenial struct {
 }
 
 // ============================================================================
+// Extension Message Types (TypeScript SDK Parity)
+// ============================================================================
+
+// SDKToolProgressMessage represents real-time tool execution progress updates.
+// It provides visibility into long-running tool operations, including timing
+// information and parent-child relationships for nested tool executions.
+type SDKToolProgressMessage struct {
+	BaseMessage
+	TypeField          string  `json:"type"` // "tool_progress"
+	ToolUseID          string  `json:"tool_use_id"`
+	ToolName           string  `json:"tool_name"`
+	ParentToolUseID    *string `json:"parent_tool_use_id"`
+	ElapsedTimeSeconds float64 `json:"elapsed_time_seconds"`
+}
+
+func (SDKToolProgressMessage) Type() string { return "tool_progress" }
+
+// SDKAuthStatusMessage represents authentication status updates during
+// MCP server authentication flows. It provides real-time feedback about
+// authentication progress, completion, or errors.
+type SDKAuthStatusMessage struct {
+	BaseMessage
+	TypeField        string   `json:"type"` // "auth_status"
+	IsAuthenticating bool     `json:"isAuthenticating"`
+	Output           []string `json:"output"`
+	Error            *string  `json:"error,omitempty"`
+}
+
+func (SDKAuthStatusMessage) Type() string { return "auth_status" }
+
+// SDKStatusMessage represents system-level status notifications such as
+// message compaction operations. It extends SDKSystemMessage with a
+// status-specific subtype.
+type SDKStatusMessage struct {
+	BaseMessage
+	TypeField    string    `json:"type"`    // "system"
+	SubtypeField string    `json:"subtype"` // "status"
+	Status       SDKStatus `json:"status"`
+}
+
+func (SDKStatusMessage) Type() string { return "system" }
+
+// Subtype returns the status message subtype ("status").
+func (SDKStatusMessage) Subtype() string { return "status" }
+
+// SDKHookResponseMessage represents feedback from hook execution, including
+// the hook's output streams (stdout/stderr) and exit code. This provides
+// visibility into hook execution results for debugging and monitoring.
+type SDKHookResponseMessage struct {
+	BaseMessage
+	TypeField    string `json:"type"`    // "system"
+	SubtypeField string `json:"subtype"` // "hook_response"
+	HookName     string `json:"hook_name"`
+	HookEvent    string `json:"hook_event"`
+	Stdout       string `json:"stdout"`
+	Stderr       string `json:"stderr"`
+	ExitCode     *int   `json:"exit_code,omitempty"`
+}
+
+func (SDKHookResponseMessage) Type() string { return "system" }
+
+// Subtype returns the hook response message subtype ("hook_response").
+func (SDKHookResponseMessage) Subtype() string { return "hook_response" }
+
+// SDKUserMessageReplay represents a user message that is being replayed
+// in the context. This extends SDKUserMessage with an isReplay flag to
+// distinguish replayed messages from new user input.
+type SDKUserMessageReplay struct {
+	BaseMessage
+	TypeField       string         `json:"type"` // "user"
+	Message         APIUserMessage `json:"message"`
+	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
+	IsSynthetic     bool           `json:"isSynthetic,omitempty"`
+	IsReplay        bool           `json:"isReplay"` // Always true
+}
+
+func (m SDKUserMessageReplay) Type() string {
+	if m.TypeField != "" {
+		return m.TypeField
+	}
+	return "user"
+}
+
+// ============================================================================
 // Control Protocol Messages
 // ============================================================================
 
@@ -781,6 +865,7 @@ func (SDKControlInterruptRequest) controlRequestVariant() {}
 // MarshalJSON ensures the subtype field is always set to "interrupt".
 func (r SDKControlInterruptRequest) MarshalJSON() ([]byte, error) {
 	type Alias SDKControlInterruptRequest
+
 	return json.Marshal(&struct {
 		SubtypeField string `json:"subtype"`
 		*Alias
@@ -804,6 +889,7 @@ func (SDKControlInitializeRequest) controlRequestVariant() {}
 // MarshalJSON ensures the subtype field is always set to "initialize".
 func (r SDKControlInitializeRequest) MarshalJSON() ([]byte, error) {
 	type Alias SDKControlInitializeRequest
+
 	return json.Marshal(&struct {
 		SubtypeField string `json:"subtype"`
 		*Alias
@@ -828,6 +914,7 @@ func (SDKControlSetPermissionModeRequest) controlRequestVariant() {}
 // MarshalJSON ensures the subtype field is always set to "set_permission_mode".
 func (r SDKControlSetPermissionModeRequest) MarshalJSON() ([]byte, error) {
 	type Alias SDKControlSetPermissionModeRequest
+
 	return json.Marshal(&struct {
 		SubtypeField string `json:"subtype"`
 		*Alias
@@ -852,6 +939,7 @@ func (SDKControlMcpMessageRequest) controlRequestVariant() {}
 // MarshalJSON ensures the subtype field is always set to "mcp_message".
 func (r SDKControlMcpMessageRequest) MarshalJSON() ([]byte, error) {
 	type Alias SDKControlMcpMessageRequest
+
 	return json.Marshal(&struct {
 		SubtypeField string `json:"subtype"`
 		*Alias

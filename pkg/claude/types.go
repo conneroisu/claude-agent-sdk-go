@@ -282,3 +282,55 @@ type CanUseToolFunc func(
 	input map[string]JSONValue,
 	suggestions []PermissionUpdate,
 ) (PermissionResult, error)
+
+// SDKStatus represents system status values for the Claude SDK.
+// This type is used to communicate system state changes such as message compaction.
+type SDKStatus string
+
+const (
+	// SDKStatusCompacting indicates the system is performing message compaction.
+	SDKStatusCompacting SDKStatus = "compacting"
+)
+
+// AccountInfo contains information about the account associated with the API key.
+// This information is returned by query operations and provides details about the
+// authenticated user or organization.
+type AccountInfo struct {
+	Email            *string `json:"email,omitempty"`
+	Organization     *string `json:"organization,omitempty"`
+	SubscriptionType *string `json:"subscriptionType,omitempty"`
+	TokenSource      *string `json:"tokenSource,omitempty"`
+	ApiKeySource     *string `json:"apiKeySource,omitempty"`
+}
+
+// OutputFormatType represents the type of output format requested.
+// Currently supports structured output formats like JSON schema.
+type OutputFormatType string
+
+// BaseOutputFormat provides the common type field for all output format variants.
+// This is extended by specific output format types like JsonSchemaOutputFormat.
+type BaseOutputFormat struct {
+	Type OutputFormatType `json:"type"`
+}
+
+// JsonSchemaOutputFormat specifies a JSON schema constraint for model output.
+// The Schema field defines the expected structure of the model's response using
+// JSON Schema format. This enables structured output generation where the model's
+// response conforms to a predefined schema.
+type JsonSchemaOutputFormat struct {
+	BaseOutputFormat
+	Schema map[string]interface{} `json:"schema,omitempty"`
+}
+
+// OutputFormat is the primary type for specifying output format constraints.
+// Currently aliased to JsonSchemaOutputFormat for JSON schema-based structured output.
+type OutputFormat = JsonSchemaOutputFormat
+
+// SdkPluginConfig describes the configuration for an SDK plugin.
+// Plugins extend SDK functionality through external modules loaded at runtime.
+// The Type field specifies the plugin type, and Path indicates the location
+// of the plugin module.
+type SdkPluginConfig struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
+}
