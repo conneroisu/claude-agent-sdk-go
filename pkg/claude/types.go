@@ -260,6 +260,7 @@ type PermissionResult interface {
 // PermissionAllow represents an allowed permission result.
 type PermissionAllow struct {
 	Behavior           PermissionBehavior   `json:"behavior"` // "allow"
+	ToolUseID          *string              `json:"toolUseID,omitempty"`
 	UpdatedInput       map[string]JSONValue `json:"updatedInput"`
 	UpdatedPermissions []PermissionUpdate   `json:"updatedPermissions,omitempty"`
 }
@@ -269,6 +270,7 @@ func (PermissionAllow) permissionResult() {}
 // PermissionDeny represents a denied permission result.
 type PermissionDeny struct {
 	Behavior  PermissionBehavior `json:"behavior"` // "deny"
+	ToolUseID *string            `json:"toolUseID,omitempty"`
 	Message   string             `json:"message"`
 	Interrupt bool               `json:"interrupt,omitempty"`
 }
@@ -276,11 +278,24 @@ type PermissionDeny struct {
 func (PermissionDeny) permissionResult() {}
 
 // CanUseToolFunc is a function that checks if a tool can be used.
+// Parameters:
+//   - ctx: The context for the permission check
+//   - toolName: The name of the tool being checked
+//   - input: The input parameters for the tool
+//   - suggestions: Suggested permission updates
+//   - toolUseID: Unique identifier for this specific tool use
+//   - agentID: ID of the agent making the request (optional)
+//   - blockedPath: Path that was blocked (optional)
+//   - decisionReason: Reason for the permission decision (optional)
 type CanUseToolFunc func(
 	ctx context.Context,
 	toolName string,
 	input map[string]JSONValue,
 	suggestions []PermissionUpdate,
+	toolUseID string,
+	agentID *string,
+	blockedPath *string,
+	decisionReason *string,
 ) (PermissionResult, error)
 
 // SDKStatus represents system status values for the Claude SDK.
