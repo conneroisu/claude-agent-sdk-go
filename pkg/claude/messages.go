@@ -1225,6 +1225,9 @@ type SDKControlPermissionRequest struct {
 	Input                 map[string]JSONValue `json:"input"`
 	PermissionSuggestions []JSONValue          `json:"permission_suggestions,omitempty"`
 	BlockedPath           *string              `json:"blocked_path,omitempty"`
+	ToolUseID             string               `json:"tool_use_id"`
+	AgentID               *string              `json:"agent_id,omitempty"`
+	DecisionReason        *string              `json:"decision_reason,omitempty"`
 }
 
 func (SDKControlPermissionRequest) Type() string        { return ControlRequest }

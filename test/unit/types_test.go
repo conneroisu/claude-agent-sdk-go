@@ -534,7 +534,7 @@ func TestJsonSchemaOutputFormatWithEmptySchema(t *testing.T) {
 
 	// Empty maps become nil after JSON unmarshal if omitempty is used
 	// This is expected Go/JSON behavior
-	if decoded.Schema != nil && len(decoded.Schema) != 0 {
+	if len(decoded.Schema) != 0 {
 		t.Errorf("expected nil or empty schema, got %d entries", len(decoded.Schema))
 	}
 }
@@ -1101,6 +1101,7 @@ func TestSDKResultMessageWithErrors(t *testing.T) {
 				if len(decoded.Errors) != 0 {
 					t.Errorf("expected empty or nil errors, got %v", decoded.Errors)
 				}
+
 				return
 			}
 

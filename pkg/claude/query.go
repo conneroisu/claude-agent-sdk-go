@@ -257,6 +257,7 @@ func (q *queryImpl) readMessages() {
 			msg, err := q.readMessage()
 			if err != nil {
 				q.handleReadError(err)
+
 				return
 			}
 
@@ -272,6 +273,7 @@ func (q *queryImpl) handleReadError(err error) {
 	if err == io.EOF {
 		return
 	}
+
 	q.errChan <- err
 }
 
@@ -599,8 +601,17 @@ func (q *queryImpl) handleCanUseTool(
 	var suggestions []PermissionUpdate
 	// TODO: Parse permission suggestions when needed
 
-	// Call the user's callback
-	result, err := q.opts.CanUseTool(ctx, req.ToolName, inputMap, suggestions)
+	// Call the user's callback with the new parameters
+	result, err := q.opts.CanUseTool(
+		ctx,
+		req.ToolName,
+		inputMap,
+		suggestions,
+		req.ToolUseID,
+		req.AgentID,
+		req.BlockedPath,
+		req.DecisionReason,
+	)
 	if err != nil {
 		return nil, clauderrs.NewCallbackError(
 			clauderrs.ErrCodeCallbackFailed,
