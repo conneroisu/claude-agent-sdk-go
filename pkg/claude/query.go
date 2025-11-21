@@ -78,7 +78,8 @@ type Query interface {
 	// GetServerInfo returns the initialization result stored during Initialize.
 	GetServerInfo() (map[string]any, error)
 
-	// SetMaxThinkingTokens allows dynamic adjustment of the maximum thinking token budget.
+	// SetMaxThinkingTokens allows dynamic adjustment of the maximum thinking token budget with context support.
+	// The context can be used to cancel the operation or set a timeout.
 	// Pass nil to clear the limit. Returns an error if the query is closed or context is cancelled.
 	SetMaxThinkingTokens(ctx context.Context, maxThinkingTokens *int) error
 
@@ -981,7 +982,8 @@ func (q *queryImpl) SetModel(ctx context.Context, model *string) error {
 	}
 }
 
-// SetMaxThinkingTokens allows dynamic adjustment of the maximum thinking token budget.
+// SetMaxThinkingTokens allows dynamic adjustment of the maximum thinking token budget with context support.
+// The context can be used to cancel the operation or set a timeout.
 // Pass nil to clear the limit. Returns an error if the query is closed or context is cancelled.
 func (q *queryImpl) SetMaxThinkingTokens(ctx context.Context, maxThinkingTokens *int) error {
 	// Create a request with the maxThinkingTokens field
