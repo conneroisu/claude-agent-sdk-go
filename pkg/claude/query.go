@@ -79,8 +79,8 @@ type Query interface {
 	GetServerInfo() (map[string]any, error)
 
 	// SetMaxThinkingTokens allows dynamic adjustment of the maximum thinking token budget.
-	// Pass nil to clear the limit. Returns an error if the query is closed.
-	SetMaxThinkingTokens(maxThinkingTokens *int) error
+	// Pass nil to clear the limit. Returns an error if the query is closed or context is cancelled.
+	SetMaxThinkingTokens(ctx context.Context, maxThinkingTokens *int) error
 
 	// AccountInfo retrieves current account information including balance and rate limits.
 	// Returns *AccountInfo struct with optional fields for account details.
@@ -983,7 +983,7 @@ func (q *queryImpl) SetModel(ctx context.Context, model *string) error {
 
 // SetMaxThinkingTokens allows dynamic adjustment of the maximum thinking token budget.
 // Pass nil to clear the limit. Returns an error if the query is closed or context is cancelled.
-func (q *queryImpl) SetMaxThinkingTokens(maxThinkingTokens *int) error {
+func (q *queryImpl) SetMaxThinkingTokens(ctx context.Context, maxThinkingTokens *int) error {
 	// Create a request with the maxThinkingTokens field
 	request := map[string]any{
 		"subtype":          "setMaxThinkingTokens",
@@ -1026,7 +1026,6 @@ func (q *queryImpl) SetMaxThinkingTokens(maxThinkingTokens *int) error {
 			WithMessageType("control_request")
 	}
 
-	ctx := context.Background()
 	if err := q.proc.Transport().Write(ctx, data); err != nil {
 		q.mu.Lock()
 		delete(q.pendingControlResponses, requestID)
