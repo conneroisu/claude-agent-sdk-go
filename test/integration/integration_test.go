@@ -88,7 +88,7 @@ func TestSetMaxThinkingTokens(t *testing.T) {
 	t.Run("SetMaxThinkingTokensWithPositiveValue", func(t *testing.T) {
 		// Test setting a positive integer value
 		limit := 1000
-		err := query.SetMaxThinkingTokens(&limit)
+		err := query.SetMaxThinkingTokens(context.Background(), &limit)
 		if err != nil {
 			t.Errorf("SetMaxThinkingTokens with positive value failed: %v", err)
 		}
@@ -97,7 +97,7 @@ func TestSetMaxThinkingTokens(t *testing.T) {
 
 	t.Run("SetMaxThinkingTokensWithNil", func(t *testing.T) {
 		// Test clearing the limit with nil
-		err := query.SetMaxThinkingTokens(nil)
+		err := query.SetMaxThinkingTokens(context.Background(), nil)
 		if err != nil {
 			t.Errorf("SetMaxThinkingTokens with nil failed: %v", err)
 		}
@@ -109,7 +109,7 @@ func TestSetMaxThinkingTokens(t *testing.T) {
 		values := []int{500, 2000, 100}
 		for _, val := range values {
 			limit := val
-			err := query.SetMaxThinkingTokens(&limit)
+			err := query.SetMaxThinkingTokens(context.Background(), &limit)
 			if err != nil {
 				t.Errorf("SetMaxThinkingTokens with value %d failed: %v", val, err)
 			} else {
@@ -132,7 +132,7 @@ func TestSetMaxThinkingTokens(t *testing.T) {
 
 		// Try to set max thinking tokens on closed query
 		limit := 500
-		err = cancelQuery.SetMaxThinkingTokens(&limit)
+		err = cancelQuery.SetMaxThinkingTokens(context.Background(), &limit)
 		// We expect an error since the query is closed
 		// The actual error type may vary, but it should not be nil
 		if err == nil {
