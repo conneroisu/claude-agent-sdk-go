@@ -7,8 +7,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/conneroisu/claude-agent-sdk-go/internal/transport"
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/clauderrs"
+	"github.com/connerohnesorge/claude-agent-sdk-go/internal/transport"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/clauderrs"
 	"github.com/google/uuid"
 )
 

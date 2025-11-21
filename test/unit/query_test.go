@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	claudeagent "github.com/conneroisu/claude-agent-sdk-go/pkg/claude"
+	claudeagent "github.com/connerohnesorge/claude-agent-sdk-go/pkg/claude"
 )
 
 func TestIncludePartialMessagesFlag(t *testing.T) {

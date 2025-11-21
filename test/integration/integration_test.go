@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	claudeagent "github.com/conneroisu/claude-agent-sdk-go/pkg/claude"
+	claudeagent "github.com/connerohnesorge/claude-agent-sdk-go/pkg/claude"
 )
 
 func TestBasicQuery(t *testing.T) {
