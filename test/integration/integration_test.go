@@ -58,7 +58,7 @@ func TestBasicQuery(t *testing.T) {
 
 			case *claudeagent.SDKResultMessage:
 				gotResult = true
-				if m.Subtype != "success" {
+				if m.Subtype != claudeagent.ResultSubtypeSuccess {
 					t.Errorf("Expected success result, got %s", m.Subtype)
 				}
 				t.Logf("Query completed in %dms with cost $%.4f", m.DurationMS, m.TotalCostUSD)
