@@ -1,4 +1,4 @@
-module github.com/conneroisu/claude-agent-sdk-go
+module github.com/connerohnesorge/claude-agent-sdk-go
 
 go 1.23
 

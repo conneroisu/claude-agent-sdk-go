@@ -41,6 +41,29 @@ type Options struct {
 	MaxThinkingTokens int
 	MaxTurns          int
 
+	// Budget and output constraints
+	// MaxBudgetUsd enforces a maximum spending limit in USD for API calls during the query session.
+	// Precision is maintained to two decimal places (penny precision). A value of 0 or omission
+	// means no budget enforcement.
+	MaxBudgetUsd float64 `json:"maxBudgetUsd,omitempty"`
+
+	// OutputFormat specifies the desired output format for structured outputs.
+	// When set, the model's responses will conform to the specified JSON schema format.
+	// A nil value uses the default text output format without schema constraints.
+	OutputFormat *JsonSchemaOutputFormat `json:"outputFormat,omitempty"`
+
+	// AllowDangerouslySkipPermissions bypasses permission checks when set to true.
+	// WARNING: This is a security risk. When enabled, tools execute without user approval prompts.
+	// Only use this in controlled environments where the implications of disabling permission
+	// checks are fully understood. In production or untrusted environments, keep this false
+	// to ensure user approval is required for tool execution.
+	AllowDangerouslySkipPermissions bool `json:"allowDangerouslySkipPermissions,omitempty"`
+
+	// Plugins configures SDK plugins for extending functionality.
+	// Plugins provide custom commands, agents, skills, and hooks that extend Claude Code's capabilities.
+	// Currently only local plugins are supported via the 'local' type.
+	Plugins []SdkPluginConfig `json:"plugins,omitempty"`
+
 	// MCP servers
 	McpServers      map[string]McpServerConfig
 	StrictMcpConfig bool
@@ -64,13 +87,17 @@ type Options struct {
 
 // AgentDefinition defines a custom agent.
 //
-// Tools and DisallowedTools are mutually exclusive - specify one or the other.
-// Tools is an allowlist (agent can only use these tools), while DisallowedTools
-// is a denylist (agent can use any tool except these).
+// Tools and DisallowedTools control which tools the agent can use:
+//   - Tools: Explicitly lists allowed tools. If set, only these tools are available.
+//   - DisallowedTools: Lists tools to exclude from the agent's available tools.
+//
+// These fields are mutually exclusive in practice - use one or the other, not both.
+// If both are specified, the CLI will respect both constraints (allow only Tools,
+// but exclude DisallowedTools from that set).
 type AgentDefinition struct {
 	Description     string   `json:"description"`
 	Prompt          string   `json:"prompt"`
-	Tools           []string `json:"tools"`
+	Tools           []string `json:"tools,omitempty"`
 	DisallowedTools []string `json:"disallowedTools,omitempty"`
 	Model           string   `json:"model,omitempty"`
 }

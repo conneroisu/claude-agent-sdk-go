@@ -11,8 +11,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/claude"
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/clauderrs"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/claude"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/clauderrs"
 )
 
 const (
@@ -241,6 +241,10 @@ func canUseToolCallback(
 	toolName string,
 	input map[string]claude.JSONValue,
 	_ []claude.PermissionUpdate,
+	toolUseID string,
+	agentID *string,
+	blockedPath *string,
+	decisionReason *string,
 ) (claude.PermissionResult, error) {
 	// Check for context cancellation
 	select {
@@ -264,29 +268,32 @@ func canUseToolCallback(
 	case toolName == "Read":
 		fmt.Printf("✓ Allowing Read: %s\n", inputStr)
 
-		return claude.PermissionAllow{
-			Behavior: claude.PermissionBehaviorAllow,
+		return &claude.PermissionAllow{
+			Behavior:     claude.PermissionBehaviorAllow,
+			UpdatedInput: input,
 		}, nil
 
 	case toolName == "Glob":
 		fmt.Printf("✓ Allowing Glob: %s\n", inputStr)
 
-		return claude.PermissionAllow{
-			Behavior: claude.PermissionBehaviorAllow,
+		return &claude.PermissionAllow{
+			Behavior:     claude.PermissionBehaviorAllow,
+			UpdatedInput: input,
 		}, nil
 
 	case toolName == "Grep":
 		fmt.Printf("✓ Allowing Grep: %s\n", inputStr)
 
-		return claude.PermissionAllow{
-			Behavior: claude.PermissionBehaviorAllow,
+		return &claude.PermissionAllow{
+			Behavior:     claude.PermissionBehaviorAllow,
+			UpdatedInput: input,
 		}, nil
 
 	// Block bash commands for security
 	case toolName == "Bash":
 		fmt.Printf("🚫 BLOCKED Bash: %s\n", inputStr)
 
-		return claude.PermissionDeny{
+		return &claude.PermissionDeny{
 			Behavior: claude.PermissionBehaviorDeny,
 			Message: "Bash commands are not allowed in " +
 				"this session for security reasons",
@@ -296,7 +303,7 @@ func canUseToolCallback(
 	case toolName == "Write" || toolName == "Edit":
 		fmt.Printf("🚫 BLOCKED %s: %s\n", toolName, inputStr)
 
-		return claude.PermissionDeny{
+		return &claude.PermissionDeny{
 			Behavior: claude.PermissionBehaviorDeny,
 			Message: fmt.Sprintf(
 				"%s operations require explicit approval",
@@ -308,7 +315,7 @@ func canUseToolCallback(
 	case strings.HasPrefix(toolName, "mcp__"):
 		fmt.Printf("🚫 BLOCKED MCP tool: %s\n", toolName)
 
-		return claude.PermissionDeny{
+		return &claude.PermissionDeny{
 			Behavior: claude.PermissionBehaviorDeny,
 			Message:  "MCP tools are disabled in this session",
 		}, nil
@@ -317,8 +324,9 @@ func canUseToolCallback(
 	default:
 		fmt.Printf("✓ Allowing %s: %s\n", toolName, inputStr)
 
-		return claude.PermissionAllow{
-			Behavior: claude.PermissionBehaviorAllow,
+		return &claude.PermissionAllow{
+			Behavior:     claude.PermissionBehaviorAllow,
+			UpdatedInput: input,
 		}, nil
 	}
 }

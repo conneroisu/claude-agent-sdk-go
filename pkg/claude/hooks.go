@@ -76,6 +76,7 @@ type PreToolUseHookInput struct {
 	HookEventName HookEvent `json:"hook_event_name"`
 	ToolName      string    `json:"tool_name"`
 	ToolInput     JSONValue `json:"tool_input"`
+	ToolUseID     string    `json:"tool_use_id"`
 }
 
 func (PreToolUseHookInput) hookInput()           {}
@@ -88,6 +89,7 @@ type PostToolUseHookInput struct {
 	ToolName      string    `json:"tool_name"`
 	ToolInput     JSONValue `json:"tool_input"`
 	ToolResponse  JSONValue `json:"tool_response"`
+	ToolUseID     string    `json:"tool_use_id"`
 }
 
 func (PostToolUseHookInput) hookInput() {}
@@ -98,9 +100,10 @@ func (PostToolUseHookInput) EventName() HookEvent {
 // NotificationHookInput for Notification event.
 type NotificationHookInput struct {
 	BaseHookInput
-	HookEventName HookEvent `json:"hook_event_name"`
-	Message       string    `json:"message"`
-	Title         *string   `json:"title,omitempty"`
+	HookEventName    HookEvent `json:"hook_event_name"`
+	Message          string    `json:"message"`
+	Title            *string   `json:"title,omitempty"`
+	NotificationType string    `json:"notification_type"`
 }
 
 func (NotificationHookInput) hookInput() {}
@@ -145,8 +148,10 @@ func (StopHookInput) EventName() HookEvent { return HookEventStop }
 // SubagentStopHookInput for SubagentStop event.
 type SubagentStopHookInput struct {
 	BaseHookInput
-	HookEventName  HookEvent `json:"hook_event_name"`
-	StopHookActive bool      `json:"stop_hook_active"`
+	HookEventName        HookEvent `json:"hook_event_name"`
+	StopHookActive       bool      `json:"stop_hook_active"`
+	AgentID              string    `json:"agent_id"`
+	AgentTranscriptPath  string    `json:"agent_transcript_path"`
 }
 
 func (SubagentStopHookInput) hookInput() {}
@@ -174,6 +179,34 @@ type SessionEndHookInput struct {
 
 func (SessionEndHookInput) hookInput()           {}
 func (SessionEndHookInput) EventName() HookEvent { return HookEventSessionEnd }
+
+// PermissionRequestHookInput for PermissionRequest event.
+// This hook is triggered when a tool requires permission before execution.
+type PermissionRequestHookInput struct {
+	BaseHookInput
+	HookEventName HookEvent `json:"hook_event_name"`
+	ToolName      string    `json:"tool_name"`
+	ToolInput     JSONValue `json:"tool_input"`
+}
+
+func (PermissionRequestHookInput) hookInput() {}
+func (PermissionRequestHookInput) EventName() HookEvent {
+	return HookEventPermissionRequest
+}
+
+// SubagentStartHookInput for SubagentStart event.
+// This hook is triggered when a subagent begins execution.
+type SubagentStartHookInput struct {
+	BaseHookInput
+	HookEventName HookEvent `json:"hook_event_name"`
+	AgentID       string    `json:"agent_id"`
+	AgentType     string    `json:"agent_type"`
+}
+
+func (SubagentStartHookInput) hookInput() {}
+func (SubagentStartHookInput) EventName() HookEvent {
+	return HookEventSubagentStart
+}
 
 // HookJSONOutput represents output from hook callbacks.
 type HookJSONOutput interface {
@@ -210,9 +243,10 @@ const (
 
 // PreToolUseHookOutput conveys permission decisions for PreToolUse hooks.
 type PreToolUseHookOutput struct {
-	HookEventName            HookEvent `json:"hookEventName"` // "PreToolUse"
-	PermissionDecision       *string   `json:"permissionDecision,omitempty"`
-	PermissionDecisionReason *string   `json:"permissionDecisionReason,omitempty"` //nolint:revive
+	HookEventName            HookEvent               `json:"hookEventName"` // "PreToolUse"
+	PermissionDecision       *string                 `json:"permissionDecision,omitempty"`
+	PermissionDecisionReason *string                 `json:"permissionDecisionReason,omitempty"` //nolint:revive
+	UpdatedInput             *map[string]interface{} `json:"updatedInput,omitempty"`
 }
 
 func (PreToolUseHookOutput) EventName() HookEvent { return HookEventPreToolUse }
@@ -239,12 +273,58 @@ func (SessionStartHookOutput) EventName() HookEvent {
 
 // PostToolUseHookOutput adds tool execution context.
 type PostToolUseHookOutput struct {
-	HookEventName     HookEvent `json:"hookEventName"` // "PostToolUse"
-	AdditionalContext *string   `json:"additionalContext,omitempty"`
+	HookEventName         HookEvent   `json:"hookEventName"` // "PostToolUse"
+	AdditionalContext     *string     `json:"additionalContext,omitempty"`
+	UpdatedMCPToolOutput interface{} `json:"updatedMCPToolOutput,omitempty"`
 }
 
 func (PostToolUseHookOutput) EventName() HookEvent {
 	return HookEventPostToolUse
+}
+
+// PermissionRequestDecision represents a decision type for permission requests.
+// Implement this interface to create custom permission decisions.
+type PermissionRequestDecision interface {
+	permissionRequestDecision()
+}
+
+// PermissionRequestAllow represents an allow decision for a permission request.
+// It allows the tool to execute, optionally with modified input.
+type PermissionRequestAllow struct {
+	Behavior     string                  `json:"behavior"`
+	UpdatedInput *map[string]interface{} `json:"updatedInput,omitempty"`
+}
+
+func (PermissionRequestAllow) permissionRequestDecision() {}
+
+// PermissionRequestDeny represents a deny decision for a permission request.
+// It blocks the tool execution, optionally with a custom message and interrupt flag.
+type PermissionRequestDeny struct {
+	Behavior  string  `json:"behavior"`
+	Message   *string `json:"message,omitempty"`
+	Interrupt *bool   `json:"interrupt,omitempty"`
+}
+
+func (PermissionRequestDeny) permissionRequestDecision() {}
+
+// PermissionRequestHookOutput conveys permission decisions for PermissionRequest hooks.
+type PermissionRequestHookOutput struct {
+	HookEventName HookEvent                 `json:"hookEventName"` // "PermissionRequest"
+	Decision      PermissionRequestDecision `json:"decision"`
+}
+
+func (PermissionRequestHookOutput) EventName() HookEvent {
+	return HookEventPermissionRequest
+}
+
+// SubagentStartHookOutput enriches subagent start events.
+type SubagentStartHookOutput struct {
+	HookEventName     HookEvent `json:"hookEventName"` // "SubagentStart"
+	AdditionalContext *string   `json:"additionalContext,omitempty"`
+}
+
+func (SubagentStartHookOutput) EventName() HookEvent {
+	return HookEventSubagentStart
 }
 
 // HookDecision represents the decision made by a hook. It is a
@@ -280,6 +360,10 @@ type HookCallback func(
 type HookCallbackMatcher struct {
 	Matcher *string        `json:"matcher,omitempty"`
 	Hooks   []HookCallback `json:"-"`
+	// Timeout specifies the maximum duration in milliseconds to wait for hook execution.
+	// If not specified, a default timeout applies. A timeout of 0 or negative value
+	// will use the default timeout behavior.
+	Timeout *int `json:"timeout,omitempty"`
 }
 
 // DecodeHookInput decodes a JSON message into the appropriate HookInput type.
@@ -298,32 +382,49 @@ func DecodeHookInput(data []byte) (HookInput, error) {
 	// Decode based on the event type
 	switch envelope.HookEventName {
 	case HookEventPreToolUse:
-		input = PreToolUseHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete PreToolUseHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	case HookEventPostToolUse:
-		input = PostToolUseHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete PostToolUseHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	case HookEventNotification:
-		input = NotificationHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete NotificationHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	case HookEventUserPromptSubmit:
-		input = UserPromptSubmitHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete UserPromptSubmitHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	case HookEventSessionStart:
-		input = SessionStartHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete SessionStartHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	case HookEventSessionEnd:
-		input = SessionEndHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete SessionEndHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	case HookEventStop:
-		input = StopHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete StopHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	case HookEventSubagentStop:
-		input = SubagentStopHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete SubagentStopHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	case HookEventPreCompact:
-		input = PreCompactHookInput{}
-		err = json.Unmarshal(data, &input)
+		var concrete PreCompactHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
+	case HookEventPermissionRequest:
+		var concrete PermissionRequestHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
+	case HookEventSubagentStart:
+		var concrete SubagentStartHookInput
+		err = json.Unmarshal(data, &concrete)
+		input = concrete
 	default:
 		return nil,
 			fmt.Errorf("unknown hook event type: %s", envelope.HookEventName)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/claude"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/claude"
 )
 
 const (
