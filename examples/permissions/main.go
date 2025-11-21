@@ -11,8 +11,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/claude"
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/clauderrs"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/claude"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/clauderrs"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	claudeagent "github.com/conneroisu/claude-agent-sdk-go/pkg/claude"
+	claudeagent "github.com/connerohnesorge/claude-agent-sdk-go/pkg/claude"
 	"github.com/google/uuid"
 )
 

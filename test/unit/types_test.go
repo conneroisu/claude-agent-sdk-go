@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/claude"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/claude"
 )
 
 func TestPermissionBehavior(t *testing.T) {

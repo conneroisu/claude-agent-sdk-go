@@ -7,7 +7,7 @@ Official Go SDK for Claude Agent, providing programmatic access to Claude's agen
 ## Installation
 
 ```bash
-go get github.com/conneroisu/claude-agent-sdk-go
+go get github.com/connerohnesorge/claude-agent-sdk-go
 ```
 
 ## Prerequisites
@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/claude"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/claude"
 )
 
 const (
