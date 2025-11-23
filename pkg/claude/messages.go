@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/clauderrs"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/clauderrs"
 )
 
 const (
@@ -715,13 +715,32 @@ type SDKResultMessage struct {
 	ModelUsage        map[string]ModelUsage `json:"modelUsage"`
 	PermissionDenials []SDKPermissionDenial `json:"permission_denials"`
 	Result            *string               `json:"result,omitempty"` // Only for success
+	// StructuredOutput contains the structured data returned from queries
+	// configured with OutputFormat. When a query specifies structured output
+	// (e.g., JSON schema), the parsed result is populated here instead of Result.
+	// The data format depends on the OutputFormat specification provided in the query.
+	StructuredOutput interface{} `json:"structured_output,omitempty"`
+	// Errors contains error messages when IsError is true. For error results
+	// (subtype error_during_execution or error_max_turns), this field holds
+	// an array of error message strings describing what went wrong during execution.
+	Errors []string `json:"errors,omitempty"`
 }
 
 func (SDKResultMessage) Type() string { return "result" }
 
+// Result subtype constants define the possible values for SDKResultMessage.Subtype.
 const (
-	ResultSubtypeSuccess              = "success"
-	ResultSubtypeErrorMaxTurns        = "error_max_turns"
+	// ResultSubtypeSuccess indicates the query completed successfully.
+	ResultSubtypeSuccess = "success"
+	// ResultSubtypeErrorMaxTurns indicates the query exceeded the maximum turn limit.
+	ResultSubtypeErrorMaxTurns = "error_max_turns"
+	// ResultSubtypeErrorMaxBudgetUsd indicates the query exceeded the maximum USD budget limit
+	// configured in ClientOptions.MaxBudgetUsd.
+	ResultSubtypeErrorMaxBudgetUsd = "error_max_budget_usd"
+	// ResultSubtypeErrorMaxStructuredOutputRetries indicates the maximum number of structured
+	// output validation retries was exceeded when using OutputFormat configuration.
+	ResultSubtypeErrorMaxStructuredOutputRetries = "error_max_structured_output_retries"
+	// ResultSubtypeErrorDuringExecution indicates an error occurred during query execution.
 	ResultSubtypeErrorDuringExecution = "error_during_execution"
 )
 
@@ -730,6 +749,90 @@ type SDKPermissionDenial struct {
 	ToolName  string               `json:"tool_name"`
 	ToolUseID string               `json:"tool_use_id"`
 	ToolInput map[string]JSONValue `json:"tool_input"`
+}
+
+// ============================================================================
+// Extension Message Types (TypeScript SDK Parity)
+// ============================================================================
+
+// SDKToolProgressMessage represents real-time tool execution progress updates.
+// It provides visibility into long-running tool operations, including timing
+// information and parent-child relationships for nested tool executions.
+type SDKToolProgressMessage struct {
+	BaseMessage
+	TypeField          string  `json:"type"` // "tool_progress"
+	ToolUseID          string  `json:"tool_use_id"`
+	ToolName           string  `json:"tool_name"`
+	ParentToolUseID    *string `json:"parent_tool_use_id"`
+	ElapsedTimeSeconds float64 `json:"elapsed_time_seconds"`
+}
+
+func (SDKToolProgressMessage) Type() string { return "tool_progress" }
+
+// SDKAuthStatusMessage represents authentication status updates during
+// MCP server authentication flows. It provides real-time feedback about
+// authentication progress, completion, or errors.
+type SDKAuthStatusMessage struct {
+	BaseMessage
+	TypeField        string   `json:"type"` // "auth_status"
+	IsAuthenticating bool     `json:"isAuthenticating"`
+	Output           []string `json:"output"`
+	Error            *string  `json:"error,omitempty"`
+}
+
+func (SDKAuthStatusMessage) Type() string { return "auth_status" }
+
+// SDKStatusMessage represents system-level status notifications such as
+// message compaction operations. It extends SDKSystemMessage with a
+// status-specific subtype.
+type SDKStatusMessage struct {
+	BaseMessage
+	TypeField    string    `json:"type"`    // "system"
+	SubtypeField string    `json:"subtype"` // "status"
+	Status       SDKStatus `json:"status"`
+}
+
+func (SDKStatusMessage) Type() string { return "system" }
+
+// Subtype returns the status message subtype ("status").
+func (SDKStatusMessage) Subtype() string { return "status" }
+
+// SDKHookResponseMessage represents feedback from hook execution, including
+// the hook's output streams (stdout/stderr) and exit code. This provides
+// visibility into hook execution results for debugging and monitoring.
+type SDKHookResponseMessage struct {
+	BaseMessage
+	TypeField    string `json:"type"`    // "system"
+	SubtypeField string `json:"subtype"` // "hook_response"
+	HookName     string `json:"hook_name"`
+	HookEvent    string `json:"hook_event"`
+	Stdout       string `json:"stdout"`
+	Stderr       string `json:"stderr"`
+	ExitCode     *int   `json:"exit_code,omitempty"`
+}
+
+func (SDKHookResponseMessage) Type() string { return "system" }
+
+// Subtype returns the hook response message subtype ("hook_response").
+func (SDKHookResponseMessage) Subtype() string { return "hook_response" }
+
+// SDKUserMessageReplay represents a user message that is being replayed
+// in the context. This extends SDKUserMessage with an isReplay flag to
+// distinguish replayed messages from new user input.
+type SDKUserMessageReplay struct {
+	BaseMessage
+	TypeField       string         `json:"type"` // "user"
+	Message         APIUserMessage `json:"message"`
+	ParentToolUseID *string        `json:"parent_tool_use_id,omitempty"`
+	IsSynthetic     bool           `json:"isSynthetic,omitempty"`
+	IsReplay        bool           `json:"isReplay"` // Always true
+}
+
+func (m SDKUserMessageReplay) Type() string {
+	if m.TypeField != "" {
+		return m.TypeField
+	}
+	return "user"
 }
 
 // ============================================================================
@@ -781,6 +884,7 @@ func (SDKControlInterruptRequest) controlRequestVariant() {}
 // MarshalJSON ensures the subtype field is always set to "interrupt".
 func (r SDKControlInterruptRequest) MarshalJSON() ([]byte, error) {
 	type Alias SDKControlInterruptRequest
+
 	return json.Marshal(&struct {
 		SubtypeField string `json:"subtype"`
 		*Alias
@@ -804,6 +908,7 @@ func (SDKControlInitializeRequest) controlRequestVariant() {}
 // MarshalJSON ensures the subtype field is always set to "initialize".
 func (r SDKControlInitializeRequest) MarshalJSON() ([]byte, error) {
 	type Alias SDKControlInitializeRequest
+
 	return json.Marshal(&struct {
 		SubtypeField string `json:"subtype"`
 		*Alias
@@ -828,6 +933,7 @@ func (SDKControlSetPermissionModeRequest) controlRequestVariant() {}
 // MarshalJSON ensures the subtype field is always set to "set_permission_mode".
 func (r SDKControlSetPermissionModeRequest) MarshalJSON() ([]byte, error) {
 	type Alias SDKControlSetPermissionModeRequest
+
 	return json.Marshal(&struct {
 		SubtypeField string `json:"subtype"`
 		*Alias
@@ -852,6 +958,7 @@ func (SDKControlMcpMessageRequest) controlRequestVariant() {}
 // MarshalJSON ensures the subtype field is always set to "mcp_message".
 func (r SDKControlMcpMessageRequest) MarshalJSON() ([]byte, error) {
 	type Alias SDKControlMcpMessageRequest
+
 	return json.Marshal(&struct {
 		SubtypeField string `json:"subtype"`
 		*Alias
@@ -1118,6 +1225,9 @@ type SDKControlPermissionRequest struct {
 	Input                 map[string]JSONValue `json:"input"`
 	PermissionSuggestions []JSONValue          `json:"permission_suggestions,omitempty"`
 	BlockedPath           *string              `json:"blocked_path,omitempty"`
+	ToolUseID             string               `json:"tool_use_id"`
+	AgentID               *string              `json:"agent_id,omitempty"`
+	DecisionReason        *string              `json:"decision_reason,omitempty"`
 }
 
 func (SDKControlPermissionRequest) Type() string        { return ControlRequest }

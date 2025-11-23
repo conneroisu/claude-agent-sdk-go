@@ -13,6 +13,12 @@ const (
 	HookEventStop             HookEvent = "Stop"
 	HookEventSubagentStop     HookEvent = "SubagentStop"
 	HookEventPreCompact       HookEvent = "PreCompact"
+
+	// HookEventPermissionRequest is triggered when a tool requires permission before execution.
+	HookEventPermissionRequest HookEvent = "PermissionRequest"
+
+	// HookEventSubagentStart is triggered when a subagent begins execution.
+	HookEventSubagentStart HookEvent = "SubagentStart"
 )
 
 // HookEvents is a slice of all valid hook events.
@@ -26,4 +32,6 @@ var HookEvents = []HookEvent{
 	HookEventStop,
 	HookEventSubagentStop,
 	HookEventPreCompact,
+	HookEventPermissionRequest,
+	HookEventSubagentStart,
 }

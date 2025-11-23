@@ -7,8 +7,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/conneroisu/claude-agent-sdk-go/internal/transport"
-	"github.com/conneroisu/claude-agent-sdk-go/pkg/clauderrs"
+	"github.com/connerohnesorge/claude-agent-sdk-go/internal/transport"
+	"github.com/connerohnesorge/claude-agent-sdk-go/pkg/clauderrs"
 	"github.com/google/uuid"
 )
 
@@ -77,6 +77,16 @@ type Query interface {
 	McpServerStatus(ctx context.Context) ([]McpServerStatus, error)
 	// GetServerInfo returns the initialization result stored during Initialize.
 	GetServerInfo() (map[string]any, error)
+
+	// SetMaxThinkingTokens allows dynamic adjustment of the maximum thinking token budget.
+	// Pass nil to clear the limit. Returns an error if the query is closed.
+	SetMaxThinkingTokens(maxThinkingTokens *int) error
+
+	// AccountInfo retrieves current account information including balance and rate limits.
+	// Returns *AccountInfo struct with optional fields for account details.
+	// The context can be used to cancel the operation.
+	// Returns an error if the query is closed or if the request fails.
+	AccountInfo(ctx context.Context) (*AccountInfo, error)
 }
 
 // queryImpl implements the Query interface.
@@ -247,6 +257,7 @@ func (q *queryImpl) readMessages() {
 			msg, err := q.readMessage()
 			if err != nil {
 				q.handleReadError(err)
+
 				return
 			}
 
@@ -262,6 +273,7 @@ func (q *queryImpl) handleReadError(err error) {
 	if err == io.EOF {
 		return
 	}
+
 	q.errChan <- err
 }
 
@@ -589,8 +601,17 @@ func (q *queryImpl) handleCanUseTool(
 	var suggestions []PermissionUpdate
 	// TODO: Parse permission suggestions when needed
 
-	// Call the user's callback
-	result, err := q.opts.CanUseTool(ctx, req.ToolName, inputMap, suggestions)
+	// Call the user's callback with the new parameters
+	result, err := q.opts.CanUseTool(
+		ctx,
+		req.ToolName,
+		inputMap,
+		suggestions,
+		req.ToolUseID,
+		req.AgentID,
+		req.BlockedPath,
+		req.DecisionReason,
+	)
 	if err != nil {
 		return nil, clauderrs.NewCallbackError(
 			clauderrs.ErrCodeCallbackFailed,
@@ -957,6 +978,193 @@ func (q *queryImpl) SetModel(ctx context.Context, model *string) error {
 		q.mu.Unlock()
 
 		return ctx.Err()
+	}
+}
+
+// SetMaxThinkingTokens allows dynamic adjustment of the maximum thinking token budget.
+// Pass nil to clear the limit. Returns an error if the query is closed or context is cancelled.
+func (q *queryImpl) SetMaxThinkingTokens(maxThinkingTokens *int) error {
+	// Create a request with the maxThinkingTokens field
+	request := map[string]any{
+		"subtype":          "setMaxThinkingTokens",
+		"maxThinkingTokens": maxThinkingTokens,
+	}
+
+	q.mu.Lock()
+	q.requestCounter++
+	counter := q.requestCounter
+	q.mu.Unlock()
+
+	requestID := fmt.Sprintf(requestIDFormat, counter, uuid.New().String()[:8])
+
+	respChan := make(chan *SDKControlResponse, 1)
+	q.mu.Lock()
+	q.pendingControlResponses[requestID] = respChan
+	q.mu.Unlock()
+
+	controlReq := map[string]any{
+		fieldType:      messageTypeControlRequest,
+		fieldUUID:      uuid.New().String(),
+		fieldSessionID: q.sessionID,
+		fieldRequestID: requestID,
+		fieldRequest:   request,
+	}
+
+	data, err := json.Marshal(controlReq)
+	if err != nil {
+		q.mu.Lock()
+		delete(q.pendingControlResponses, requestID)
+		q.mu.Unlock()
+
+		return clauderrs.NewProtocolError(
+			clauderrs.ErrCodeMessageParseFailed,
+			"failed to marshal SetMaxThinkingTokens request",
+			err,
+		).
+			WithSessionID(q.sessionID).
+			WithRequestID(requestID).
+			WithMessageType("control_request")
+	}
+
+	ctx := context.Background()
+	if err := q.proc.Transport().Write(ctx, data); err != nil {
+		q.mu.Lock()
+		delete(q.pendingControlResponses, requestID)
+		q.mu.Unlock()
+
+		return clauderrs.NewProtocolError(clauderrs.ErrCodeProtocolError, "failed to send SetMaxThinkingTokens request", err).
+			WithSessionID(q.sessionID).
+			WithRequestID(requestID).
+			WithMessageType("control_request")
+	}
+
+	select {
+	case resp := <-respChan:
+		switch r := resp.Response.(type) {
+		case ControlSuccessResponse:
+			return nil
+		case ControlErrorResponse:
+			return clauderrs.NewProtocolError(clauderrs.ErrCodeProtocolError, fmt.Sprintf("SetMaxThinkingTokens request failed: %s", r.Error), nil).
+				WithSessionID(q.sessionID).
+				WithRequestID(requestID).
+				WithMessageType("control_response")
+		default:
+			return clauderrs.NewProtocolError(clauderrs.ErrCodeProtocolError, fmt.Sprintf("unexpected control response type: %T", r), nil).
+				WithSessionID(q.sessionID).
+				WithRequestID(requestID).
+				WithMessageType("control_response")
+		}
+	case <-ctx.Done():
+		q.mu.Lock()
+		delete(q.pendingControlResponses, requestID)
+		q.mu.Unlock()
+
+		return ctx.Err()
+	}
+}
+
+// AccountInfo retrieves current account information including balance and rate limits.
+// Returns *AccountInfo struct with optional fields for account details.
+// The context can be used to cancel the operation.
+// Returns an error if the query is closed or if the request fails.
+func (q *queryImpl) AccountInfo(ctx context.Context) (*AccountInfo, error) {
+	q.mu.Lock()
+	q.requestCounter++
+	counter := q.requestCounter
+	q.mu.Unlock()
+
+	requestID := fmt.Sprintf(requestIDFormat, counter, uuid.New().String()[:8])
+
+	respChan := make(chan *SDKControlResponse, 1)
+	q.mu.Lock()
+	q.pendingControlResponses[requestID] = respChan
+	q.mu.Unlock()
+
+	controlReq := map[string]any{
+		fieldType:      messageTypeControlRequest,
+		fieldUUID:      uuid.New().String(),
+		fieldSessionID: q.sessionID,
+		fieldRequestID: requestID,
+		"request": map[string]any{
+			"subtype": "accountInfo",
+		},
+	}
+
+	data, err := json.Marshal(controlReq)
+	if err != nil {
+		q.mu.Lock()
+		delete(q.pendingControlResponses, requestID)
+		q.mu.Unlock()
+
+		return nil, clauderrs.NewProtocolError(
+			clauderrs.ErrCodeMessageParseFailed,
+			"failed to marshal AccountInfo request",
+			err,
+		).
+			WithSessionID(q.sessionID).
+			WithRequestID(requestID).
+			WithMessageType("control_request")
+	}
+
+	if err := q.proc.Transport().Write(ctx, data); err != nil {
+		q.mu.Lock()
+		delete(q.pendingControlResponses, requestID)
+		q.mu.Unlock()
+
+		return nil, clauderrs.NewProtocolError(
+			clauderrs.ErrCodeProtocolError,
+			"failed to send AccountInfo request",
+			err,
+		).
+			WithSessionID(q.sessionID).
+			WithRequestID(requestID).
+			WithMessageType("control_request")
+	}
+
+	select {
+	case resp := <-respChan:
+		switch r := resp.Response.(type) {
+		case ControlSuccessResponse:
+			// The response should contain account info data
+			accountInfoData, ok := r.Response["data"]
+			if !ok {
+				return nil, clauderrs.NewProtocolError(
+					clauderrs.ErrCodeProtocolError,
+					"account info data not found in response",
+					nil,
+				).
+					WithSessionID(q.sessionID).
+					WithRequestID(requestID).
+					WithMessageType("control_response")
+			}
+
+			// Unmarshal the account info
+			var accountInfo AccountInfo
+			if err := json.Unmarshal(accountInfoData, &accountInfo); err != nil {
+				return nil, clauderrs.NewProtocolError(clauderrs.ErrCodeMessageParseFailed, "failed to parse account info data", err).
+					WithSessionID(q.sessionID).
+					WithRequestID(requestID).
+					WithMessageType("control_response")
+			}
+
+			return &accountInfo, nil
+		case ControlErrorResponse:
+			return nil, clauderrs.NewProtocolError(clauderrs.ErrCodeProtocolError, fmt.Sprintf("AccountInfo request failed: %s", r.Error), nil).
+				WithSessionID(q.sessionID).
+				WithRequestID(requestID).
+				WithMessageType("control_response")
+		default:
+			return nil, clauderrs.NewProtocolError(clauderrs.ErrCodeProtocolError, fmt.Sprintf("unexpected control response type: %T", r), nil).
+				WithSessionID(q.sessionID).
+				WithRequestID(requestID).
+				WithMessageType("control_response")
+		}
+	case <-ctx.Done():
+		q.mu.Lock()
+		delete(q.pendingControlResponses, requestID)
+		q.mu.Unlock()
+
+		return nil, ctx.Err()
 	}
 }
 
